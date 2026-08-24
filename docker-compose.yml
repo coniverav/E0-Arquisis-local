@@ -1,0 +1,74 @@
+services:
+  db:
+    image: postgres:16
+    container_name: energyshark_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: energyshark
+      POSTGRES_PASSWORD: energyshark
+      POSTGRES_DB: energyshark
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U energyshark"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - energyshark_net
+
+  master:
+    build: ./master
+    container_name: energyshark_master
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      DATABASE_URL: postgresql://energyshark:energyshark@db:5432/energyshark
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - energyshark_net
+    develop:
+      watch:
+        # Cambios en el código: se copian al contenedor y uvicorn --reload
+        # se reinicia solo, sin reconstruir la imagen.
+        - action: sync
+          path: ./master/app
+          target: /code/app
+        # Cambios en requirements.txt: sí requieren reconstruir la imagen,
+        # porque hay que reinstalar librerías.
+        - action: rebuild
+          path: ./master/requirements.txt
+
+  connector:
+    build: ./connector
+    container_name: energyshark_connector
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MASTER_URL: http://master:8000
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - energyshark_net
+    develop:
+      watch:
+        # El connector es un script simple sin recarga en caliente,
+        # así que cuando cambia el código reiniciamos el contenedor entero.
+        - action: sync+restart
+          path: ./connector/connector.py
+          target: /code/connector.py
+        - action: rebuild
+          path: ./connector/requirements.txt
+
+networks:
+  energyshark_net:
+    driver: bridge
+
+volumes:
+  db_data:

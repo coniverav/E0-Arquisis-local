@@ -1,26 +1,48 @@
+# Define esquemas Pydantic, es decir, qué forma deben tener los JSON que entran y salen de la API
+
 from datetime import datetime
-from typing import Optional, Any
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, Field, field_validator
 
 
-class EventIn(BaseModel):
-    """Lo que el connector nos envía por HTTP POST cada vez que recibe un mensaje."""
-    idpk: str
-    type: str
-    packageBody: dict[str, Any]
-    receivedAt: Optional[datetime] = None  # si no llega, master pone la hora actual
+class DemandPayload(BaseModel):
+    city: str
+    demand: float
+    unit: str
+
+
+class PackageBodyPayload(BaseModel):
+    demands: list[DemandPayload]
+    validUntil: datetime
+    metaContent: str | None = None
+    constraints: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("validUntil")
+    @classmethod
+    def valid_until_must_have_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("validUntil debe incluir zona horaria (ISO8601 UTC)")
+        return value
+
+
+class EventPayload(BaseModel):
+    idpk: UUID
+    type: Literal["demand-set"]
+    packageBody: PackageBodyPayload
 
 
 class EventOut(BaseModel):
-    # El nombre del campo es igual al de la columna en la base de datos
-    # (snake_case), así la lectura desde el objeto de SQLAlchemy funciona
-    # directo, sin buscar ningún alias. serialization_alias es un nombre
-    # aparte que SOLO se usa al armar el JSON de salida (camelCase).
     id: int
-    idpk: str
+    idpk: UUID
     type: str
-    package_body: dict[str, Any] = Field(serialization_alias="packageBody")
-    #valid_until: Optional[datetime] = Field(default=None, serialization_alias="validUntil")
-    received_at: datetime = Field(serialization_alias="receivedAt")
+    packageBody: PackageBodyPayload
+    receivedAt: datetime
 
-    model_config = ConfigDict(from_attributes=True)
+
+class HistoryOut(BaseModel):
+    page: int
+    limit: int
+    total: int
+    items: list[EventOut]

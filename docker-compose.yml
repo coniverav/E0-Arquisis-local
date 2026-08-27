@@ -1,74 +1,74 @@
 services:
+  # Base de datos compartida por ambas réplicas de master.
   db:
-    image: postgres:16
-    container_name: energyshark_db
+    build: ./db
+    container_name: db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: energyshark
-      POSTGRES_PASSWORD: energyshark
-      POSTGRES_DB: energyshark
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - db_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U energyshark"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - postgres_data:/var/lib/postgresql/data
+    # Solo accesible desde el host; no queda publicado a Internet en EC2.
+    ports:
+      - "127.0.0.1:5432:5432"
     networks:
       - energyshark_net
 
+  # Primera instancia. El nombre "master" es el que usa connector por DNS Docker.
   master:
     build: ./master
-    container_name: energyshark_master
+    container_name: master
     restart: unless-stopped
-    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     environment:
-      DATABASE_URL: postgresql://energyshark:energyshark@db:5432/energyshark
-    ports:
-      - "8000:8000"
+      DATABASE_URL: ${DATABASE_URL}
+      INSTANCE_NAME: master
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:8000"
     networks:
       - energyshark_net
-    develop:
-      watch:
-        # Cambios en el código: se copian al contenedor y uvicorn --reload
-        # se reinicia solo, sin reconstruir la imagen.
-        - action: sync
-          path: ./master/app
-          target: /code/app
-        # Cambios en requirements.txt: sí requieren reconstruir la imagen,
-        # porque hay que reinstalar librerías.
-        - action: rebuild
-          path: ./master/requirements.txt
 
+  # Segunda instancia para la parte variable de balanceo de carga.
+  master2:
+    build: ./master
+    container_name: master2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      INSTANCE_NAME: master2
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8002:8000"
+    networks:
+      - energyshark_net
+
+  # Consumidor RabbitMQ independiente de la API web.
   connector:
     build: ./connector
-    container_name: energyshark_connector
+    container_name: connector
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      MASTER_URL: http://master:8000
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+      MASTER_URL: ${MASTER_URL}
+      CONNECTOR_RETRY_SECONDS: ${CONNECTOR_RETRY_SECONDS}
+      HTTP_RETRY_SECONDS: ${HTTP_RETRY_SECONDS}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS}
     depends_on:
       master:
         condition: service_healthy
     networks:
       - energyshark_net
-    develop:
-      watch:
-        # El connector es un script simple sin recarga en caliente,
-        # así que cuando cambia el código reiniciamos el contenedor entero.
-        - action: sync+restart
-          path: ./connector/connector.py
-          target: /code/connector.py
-        - action: rebuild
-          path: ./connector/requirements.txt
 
 networks:
   energyshark_net:
-    driver: bridge
+    name: energyshark_net
 
 volumes:
-  db_data:
+  postgres_data:

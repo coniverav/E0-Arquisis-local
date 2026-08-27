@@ -1,0 +1,33 @@
+# NGINX DEBE instalarse en el HOST EC2, NO dentro de Docker.
+# Este archivo ya implementa la parte variable de balanceo de carga.
+
+upstream energyshark_backend {
+    # Cada réplica es individualmente alcanzable desde el host.
+    server 127.0.0.1:8001 max_fails=3 fail_timeout=10s;
+    server 127.0.0.1:8002 max_fails=3 fail_timeout=10s;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __DOMAIN__ www.__DOMAIN__;
+
+    # Necesario para el challenge HTTP-01 inicial de Let's Encrypt.
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # El POST del connector no debe quedar expuesto al público.
+    location ^~ /internal/ {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://energyshark_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

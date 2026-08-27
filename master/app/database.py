@@ -1,22 +1,22 @@
-import os
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+# Hace la conexión con la base de datos PostgreSQL y crea las tablas si no existen
+# También define un generador de sesiones SQLAlchemy/SQLModel
 
-# La URL de la base de datos se arma con variables de entorno.
-# En docker-compose se las pasamos automáticamente, no hay que escribirlas a mano.
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://energyshark:energyshark@db:5432/energyshark",
-)
+from sqlmodel import SQLModel, Session, create_engine
 
+from .config import DATABASE_URL
+
+# pool_pre_ping evita reutilizar conexiones TCP muertas después de pausas/reinicios.
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+def create_db_and_tables() -> None:
+    """Crea las tablas de forma segura cuando master1/master2 arrancan a la vez."""
+    with engine.begin() as connection:
+        # Lock transaccional de PostgreSQL: solo una réplica ejecuta create_all a la vez.
+        connection.exec_driver_sql("SELECT pg_advisory_xact_lock(2173)") # Lock arbitrario, pero fijo, para que master1/master2 no se pisen
+        SQLModel.metadata.create_all(connection)
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session

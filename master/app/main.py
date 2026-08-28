@@ -27,15 +27,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
-@app.middleware("http")
-async def identify_replica(request, call_next):
-    """Header útil para demostrar el balanceo entre master y master2."""
-    response = await call_next(request)
-    response.headers["X-EnergyShark-Instance"] = INSTANCE_NAME
-    return response
-
-
 def _event_to_out(session: Session, event: Event) -> EventOut:
     demands = session.exec(
         select(Demand).where(Demand.event_id == event.id).order_by(Demand.id)

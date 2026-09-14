@@ -6,7 +6,6 @@ from uuid import UUID
 
 @dataclass(frozen=True)
 class ProtocolEnvelope:
-    
     #Campos obligatorios presentes en todo mensaje del protocolo.
     idpk: UUID
     msg_id: UUID
@@ -26,3 +25,15 @@ class ProtocolEnvelope:
     #Mensaje original para conservar campos no modelados explícitamente
     #como reason, code u otros datos propios de ciertos tipos.
     raw: dict[str, Any] | None = None
+
+@dataclass(frozen=True)
+class ValidationResult:
+    #Resultado de validar un mensaje contra las reglas del protocolo.
+
+    #Es válido o no
+    valid: bool
+
+    #La razón, código y mensaje
+    reason: str | None = None
+    code: int | None = None
+    message: str | None = None

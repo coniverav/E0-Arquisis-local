@@ -90,7 +90,7 @@ class CycleSummaryOut(BaseModel):
     budgetBalance: Decimal
     energyBalance: Decimal
 
-    lastOperation: str | None
+    lastOperationType: str | None
     lastOperationAt: datetime | None
 
     reported: bool

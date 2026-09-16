@@ -1,9 +1,10 @@
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
 import ssl
+
+from protocol.intake import DiscardMessage, decode_incoming_payload
 
 import aio_pika
 import httpx
@@ -88,9 +89,12 @@ async def consume_forever() -> None:
                     async with queue.iterator() as iterator:
                         async for message in iterator:
                             try:
-                                payload = json.loads(message.body.decode("utf-8"))
-                            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                                logger.error("Mensaje no es JSON válido; se descarta: %s", exc)
+                                payload = decode_incoming_payload(message.body)
+                            except DiscardMessage as exc:
+                                logger.error(
+                                    "Mensaje descartado sin respuesta de protocolo: %s",
+                                    exc,
+                                )
                                 await message.reject(requeue=False)
                                 continue
 

@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY connector.py healthcheck.py ./
+COPY protocol ./protocol
 
 # File checking: no hace falta exponer una API HTTP para connector.
 HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \

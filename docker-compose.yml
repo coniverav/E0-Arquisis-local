@@ -15,6 +15,20 @@ services:
       - "127.0.0.1:5432:5432"
     networks:
       - energyshark_net
+  
+  # Aplica las migraciones versionadas antes de iniciar las réplicas del backend.
+  migrate:
+    build: ./master
+    container_name: migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - energyshark_net
 
   # Primera instancia. El nombre "master" es el que usa connector por DNS Docker.
   master:
@@ -27,6 +41,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8001:8000"
     networks:
@@ -43,6 +59,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - "127.0.0.1:8002:8000"
     networks:

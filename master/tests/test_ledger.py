@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlmodel import Session
 
-from app.database import create_db_and_tables, engine
+from app.database import engine, run_migrations
 from app.models import Cycle
 from app.services.ledger import (
     apply_ledger_effect,
@@ -17,8 +17,8 @@ class LedgerServiceTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        # Garantiza que las tablas E1 existan.
-        create_db_and_tables()
+        # Garantiza que el esquema versionado E1 esté actualizado.
+        run_migrations()
 
     def setUp(self):
         """

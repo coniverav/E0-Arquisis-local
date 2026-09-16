@@ -291,3 +291,45 @@ class NegotiationReport(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
+#Error de negocio recibido desde la central mediante el protocolo v2.
+class ProtocolError(SQLModel, table=True):
+    __tablename__ = "protocol_errors"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    msg_id: str = Field(index=True, unique=True, nullable=False)
+
+    cycle_id: str = Field(index=True, nullable=False)
+
+    reason: str = Field(index=True, nullable=False)
+    code: int = Field(nullable=False)
+
+    target_msg_id: str = Field(index=True, nullable=False)
+
+    message: str = Field(sa_column=Column(Text, nullable=False))
+
+    cap: Optional[float] = Field(default=None, nullable=True)
+    spare: Optional[float] = Field(default=None, nullable=True)
+
+    raw: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False),
+    )
+
+    timestamp: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
+
+    received_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )

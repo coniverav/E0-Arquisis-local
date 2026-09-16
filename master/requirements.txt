@@ -3,3 +3,4 @@ uvicorn[standard]>=0.30,<1
 sqlmodel>=0.0.22,<0.1
 psycopg[binary]>=3.2,<4
 alembic>=1.13,<2
+httpx2

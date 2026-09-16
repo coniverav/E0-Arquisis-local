@@ -55,10 +55,10 @@ class LedgerEntryOut(BaseModel):
 
     budgetDelta: Decimal
     energyDelta: Decimal
-    
+
     budgetAfter: Decimal
     energyAfter: Decimal
-    
+
     appliedAt: datetime
     details: dict[str, Any]
 
@@ -159,3 +159,19 @@ class ProtocolMessageIn(BaseModel):
             )
 
         return value
+
+class OutboundMessageAuditIn(BaseModel):
+    msgId: UUID
+    idpk: UUID
+    type: str
+
+    cycleId: str | None = None
+    targetMsgId: str | None = None
+    routingKey: str | None = None
+
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OutboundMessageResultIn(BaseModel):
+    status: Literal["PUBLISHED", "FAILED"]
+    error: str | None = None

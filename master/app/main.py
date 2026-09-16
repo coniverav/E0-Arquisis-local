@@ -9,9 +9,16 @@ from sqlmodel import Session, select
 
 from .config import INSTANCE_NAME
 from .database import engine, get_session
-from .models import Demand, Event
-from .schemas import EventOut, EventPayload, HistoryOut, PackageBodyPayload, DemandPayload
-
+from .models import Demand, Event, ProtocolError
+from .schemas import (
+    DemandPayload,
+    EventOut,
+    EventPayload,
+    HistoryOut,
+    PackageBodyPayload,
+    ProtocolErrorOut,
+    ProtocolErrorPayload,
+)
 from .routers.cycles import router as cycles_router
 from .routers.internal_messages import router as internal_messages_router
 from .routers.message_audit import router as message_audit_router
@@ -44,6 +51,23 @@ def _event_to_out(session: Session, event: Event) -> EventOut:
             constraints=event.constraints,
         ),
         receivedAt=event.received_at,
+    )
+
+#Convierte un error persistido al schema de salida de la API.
+def _protocol_error_to_out(error: ProtocolError) -> ProtocolErrorOut:
+    return ProtocolErrorOut(
+        id=error.id,
+        idpk=UUID(error.idpk),
+        msgId=UUID(error.msg_id),
+        cycleId=error.cycle_id,
+        reason=error.reason,
+        code=error.code,
+        target=UUID(error.target_msg_id),
+        message=error.message,
+        cap=error.cap,
+        spare=error.spare,
+        timestamp=error.timestamp,
+        receivedAt=error.received_at,
     )
 
 
@@ -124,6 +148,59 @@ def ingest_event(payload: EventPayload, session: Session = Depends(get_session))
 
     return _event_to_out(session, event)
 
+#Persiste un mensaje error recibido desde la central.
+@app.post("/internal/protocol/errors", response_model=ProtocolErrorOut)
+def ingest_protocol_error(
+    payload: ProtocolErrorPayload,
+    session: Session = Depends(get_session),
+) -> ProtocolErrorOut:
+
+    #msgId identifica al mensaje concreto y evita persistir una redelivery dos veces.
+    existing = session.exec(
+        select(ProtocolError).where(
+            ProtocolError.msg_id == str(payload.msgId)
+        )
+    ).first()
+
+    if existing:
+        return _protocol_error_to_out(existing)
+
+    error = ProtocolError(
+        idpk=str(payload.idpk),
+        msg_id=str(payload.msgId),
+        cycle_id=payload.cycleId,
+        reason=payload.reason,
+        code=payload.code,
+        target_msg_id=str(payload.data.target),
+        message=payload.data.message,
+        cap=payload.data.cap,
+        spare=payload.data.spare,
+        raw=payload.model_dump(mode="json"),
+        timestamp=payload.timestamp.astimezone(timezone.utc),
+        received_at=datetime.now(timezone.utc),
+    )
+
+    try:
+        session.add(error)
+        session.commit()
+        session.refresh(error)
+
+    except IntegrityError:
+        #Dos réplicas podrían intentar persistir el mismo msgId simultáneamente.
+        session.rollback()
+
+        existing = session.exec(
+            select(ProtocolError).where(
+                ProtocolError.msg_id == str(payload.msgId)
+            )
+        ).first()
+
+        if not existing:
+            raise
+
+        error = existing
+
+    return _protocol_error_to_out(error)
 
 @app.get("/history/{event_id}", response_model=EventOut)
 def history_detail(event_id: int, session: Session = Depends(get_session)) -> EventOut:
@@ -223,3 +300,4 @@ def history(
         total=total,
         items=[_event_to_out(session, event) for event in events],
     )
+

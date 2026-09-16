@@ -292,6 +292,49 @@ class NegotiationReport(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
+#Error de negocio recibido desde la central mediante el protocolo v2.
+class ProtocolError(SQLModel, table=True):
+    __tablename__ = "protocol_errors"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    msg_id: str = Field(index=True, unique=True, nullable=False)
+
+    cycle_id: str = Field(index=True, nullable=False)
+
+    reason: str = Field(index=True, nullable=False)
+    code: int = Field(nullable=False)
+
+    target_msg_id: str = Field(index=True, nullable=False)
+
+    message: str = Field(sa_column=Column(Text, nullable=False))
+
+    cap: Optional[float] = Field(default=None, nullable=True)
+    spare: Optional[float] = Field(default=None, nullable=True)
+
+    raw: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False),
+    )
+
+    timestamp: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
+
+    received_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
+
+
 class InboundMessage(SQLModel, table=True):
     """
     Evidencia durable de cada recepción de un mensaje del protocolo.
@@ -310,29 +353,18 @@ class InboundMessage(SQLModel, table=True):
     message_type: Optional[str] = Field(default=None, index=True)
     cycle_id: Optional[str] = Field(default=None, index=True)
 
-    # Payload parseado cuando existe.
     payload: Optional[dict[str, Any]] = Field(
         default=None,
         sa_column=Column(JSONB, nullable=True),
     )
 
-    # Permite conservar evidencia incluso de mensajes que no puedan
-    # representarse correctamente como JSON.
     raw_payload: Optional[str] = Field(
         default=None,
         sa_column=Column(Text, nullable=True),
     )
 
-    # Ejemplos:
-    # RECEIVED
-    # PROCESSED
-    # DUPLICATE
-    # DISCARDED
-    # NACKED
-    # FAILED
     status: str = Field(index=True, nullable=False)
 
-    # Metadata para descartes, NACK y otros resultados auditables.
     reason_code: Optional[str] = Field(default=None, index=True)
 
     reason: Optional[str] = Field(
@@ -387,10 +419,7 @@ class OutboundMessage(SQLModel, table=True):
     # Ruta de publicación cuando esté disponible.
     routing_key: Optional[str] = Field(default=None)
 
-    # Ejemplos:
-    # PENDING
-    # PUBLISHED
-    # FAILED
+    # PENDING / PUBLISHED / FAILED
     status: str = Field(index=True, nullable=False)
 
     attempt_count: int = Field(default=0, nullable=False)
@@ -408,4 +437,3 @@ class OutboundMessage(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
-    

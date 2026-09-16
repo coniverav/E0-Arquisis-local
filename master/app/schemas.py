@@ -5,7 +5,7 @@ from typing import Any, Literal
 from uuid import UUID
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class DemandPayload(BaseModel):
@@ -90,7 +90,7 @@ class CycleSummaryOut(BaseModel):
     budgetBalance: Decimal
     energyBalance: Decimal
 
-    lastOperation: str | None
+    lastOperationType: str | None
     lastOperationAt: datetime | None
 
     reported: bool
@@ -160,6 +160,92 @@ class ProtocolMessageIn(BaseModel):
 
         return value
 
+#Códigos de error
+ERROR_CODES = {
+    "CYCLE_UNKNOWN": 404,
+    "CYCLE_EXPIRED": 410,
+    "PRICE_ABOVE_CAP": 422,
+    "OVER_CAPACITY": 409,
+}
+
+
+class ProtocolErrorDataPayload(BaseModel):
+    target: UUID
+    message: str
+    cap: float | None = None
+    spare: float | None = None
+
+
+class ProtocolErrorPayload(BaseModel):
+    idpk: UUID
+    msgId: UUID
+    type: Literal["error"]
+    timestamp: datetime
+    sender: Literal["central"]
+    cycleId: str
+
+    reason: Literal[
+        "CYCLE_UNKNOWN",
+        "CYCLE_EXPIRED",
+        "PRICE_ABOVE_CAP",
+        "OVER_CAPACITY",
+    ]
+
+    code: int
+    data: ProtocolErrorDataPayload
+
+    @field_validator("timestamp")
+    @classmethod
+    def timestamp_must_have_timezone(
+        cls,
+        value: datetime,
+    ) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("timestamp debe incluir zona horaria")
+
+        return value
+
+    @model_validator(mode="after")
+    def validate_error(self):
+        expected_code = ERROR_CODES[self.reason]
+
+        if self.code != expected_code:
+            raise ValueError(
+                f"{self.reason} requiere code {expected_code}"
+            )
+
+        if (
+            self.reason == "PRICE_ABOVE_CAP"
+            and self.data.cap is None
+        ):
+            raise ValueError(
+                "PRICE_ABOVE_CAP requiere data.cap"
+            )
+
+        if (
+            self.reason == "OVER_CAPACITY"
+            and self.data.spare is None
+        ):
+            raise ValueError(
+                "OVER_CAPACITY requiere data.spare"
+            )
+
+        return self
+
+
+class ProtocolErrorOut(BaseModel):
+    id: int
+    idpk: UUID
+    msgId: UUID
+    cycleId: str
+    reason: str
+    code: int
+    target: UUID
+    message: str
+    cap: float | None = None
+    spare: float | None = None
+    timestamp: datetime
+    receivedAt: datetime
 class OutboundMessageAuditIn(BaseModel):
     msgId: UUID
     idpk: UUID

@@ -5,6 +5,7 @@ from pathlib import Path
 import ssl
 
 from protocol.intake import DiscardMessage, decode_incoming_payload
+from protocol.routing import select_master_url
 
 import aio_pika
 import httpx
@@ -18,6 +19,7 @@ logger = logging.getLogger("connector")
 RABBITMQ_URL = os.environ["RABBITMQ_URL"]
 RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
 MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/events")
+MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 CONNECTOR_RETRY_SECONDS = float(os.getenv("CONNECTOR_RETRY_SECONDS", "5"))
 HTTP_RETRY_SECONDS = float(os.getenv("HTTP_RETRY_SECONDS", "2"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
@@ -32,10 +34,14 @@ async def heartbeat() -> None:
         await asyncio.sleep(10)
 
 
-async def forward_to_master(client: httpx.AsyncClient, payload: dict) -> str:
+async def forward_to_master(
+    client: httpx.AsyncClient,
+    payload: dict,
+    url: str = MASTER_URL,
+) -> str:
     """Devuelve 'ack', 'drop' o 'retry' según la respuesta HTTP de master."""
     try:
-        response = await client.post(MASTER_URL, json=payload)
+        response = await client.post(url, json=payload)
     except httpx.HTTPError as exc:
         logger.warning("master no disponible: %s", exc)
         return "retry"
@@ -98,7 +104,17 @@ async def consume_forever() -> None:
                                 await message.reject(requeue=False)
                                 continue
 
-                            result = await forward_to_master(client, payload)
+                            master_url = select_master_url(
+                                payload,
+                                default_url=MASTER_URL,
+                                error_url=MASTER_ERROR_URL,
+                            )
+
+                            result = await forward_to_master(
+                                client,
+                                payload,
+                                url=master_url,
+                            )
 
                             if result == "ack":
                                 # ACK solo después de persistir con éxito en master/PostgreSQL.

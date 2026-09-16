@@ -12,6 +12,14 @@ from ..models import (
 )
 from ..schemas import ProtocolMessageIn
 from ..services.ledger import apply_ledger_effect
+from ..services.message_audit import (
+    INBOUND_DUPLICATE,
+    INBOUND_FAILED,
+    INBOUND_NOT_PROCESSED,
+    INBOUND_PROCESSED,
+    mark_inbound_result,
+    record_inbound_message,
+)
 
 
 router = APIRouter(
@@ -31,7 +39,6 @@ def _decimal(value) -> Decimal:
 def _require_cycle_id(
     payload: ProtocolMessageIn,
 ) -> str:
-
     if payload.cycleId is None:
         raise HTTPException(
             status_code=422,
@@ -57,17 +64,12 @@ def _get_or_create_cycle(
 
     cycle = Cycle(
         cycle_id=cycle_id,
-
         opening_budget_balance=Decimal("0"),
         opening_energy_balance=Decimal("0"),
-
         budget_balance=Decimal("0"),
         energy_balance=Decimal("0"),
-
         last_sequence=0,
-
         status_payload={},
-
         created_at=datetime.now(timezone.utc),
     )
 
@@ -85,10 +87,25 @@ def ingest_protocol_message(
     """
     Procesa mensajes E1 ya validados por el connector.
 
-    La transacción se confirma una sola vez al final.
+    La recepción se persiste primero como evidencia durable.
+    La lógica de negocio y el resultado de auditoría se confirman
+    posteriormente dentro de una misma transacción.
     """
 
     now = datetime.now(timezone.utc)
+
+    # La recepción queda persistida antes de procesar el mensaje.
+    audit_message = record_inbound_message(
+        session,
+        msg_id=str(payload.msgId) if payload.msgId is not None else None,
+        idpk=str(payload.idpk) if payload.idpk is not None else None,
+        message_type=payload.type,
+        payload=payload.model_dump(mode="json"),
+        cycle_id=payload.cycleId,
+        sender=getattr(payload, "sender", None),
+    )
+
+    audit_status = INBOUND_PROCESSED
 
     try:
 
@@ -104,8 +121,15 @@ def ingest_protocol_message(
                 cycle_id,
             )
 
-            # Redelivery del mismo status.
+            # Redelivery del mismo status-statement.
             if cycle.status_idpk == str(payload.idpk):
+                mark_inbound_result(
+                    session,
+                    audit_message,
+                    status=INBOUND_DUPLICATE,
+                    reason="status-statement already applied",
+                )
+
                 return {
                     "status": "duplicate",
                     "type": payload.type,
@@ -129,7 +153,7 @@ def ingest_protocol_message(
             new_opening_energy = generation - consumption
 
             # Si el ciclo placeholder ya tenía movimientos,
-            # solo ajustamos la diferencia de la línea base.
+            # se ajusta solo la diferencia respecto de la línea base.
             difference = (
                 new_opening_energy
                 - cycle.opening_energy_balance
@@ -174,7 +198,7 @@ def ingest_protocol_message(
 
             because_of = payload.data.get("becauseOf")
 
-            # Si trae cityId, estamos registrando una transferencia
+            # Si trae cityId, corresponde a una transferencia
             # emitida por nuestra ciudad.
             if payload.cityId is not None:
 
@@ -183,7 +207,7 @@ def ingest_protocol_message(
 
             else:
 
-                # Transferencia de la central.
+                # Transferencia recibida desde la central.
                 operation_type = (
                     "PAYMENT_RECEIVED"
                     if because_of is not None
@@ -192,7 +216,7 @@ def ingest_protocol_message(
 
                 budget_delta = quantity
 
-            entry, applied = apply_ledger_effect(
+            _, applied = apply_ledger_effect(
                 session,
                 cycle_id=cycle_id,
                 idpk=str(payload.idpk),
@@ -203,7 +227,10 @@ def ingest_protocol_message(
                 details=payload.model_dump(mode="json"),
             )
 
-            # Si corresponde a una negociación, actualizamos su estado.
+            if not applied:
+                audit_status = INBOUND_DUPLICATE
+
+            # Si corresponde a una negociación, se actualiza su estado.
             if because_of is not None:
 
                 negotiation = session.exec(
@@ -217,13 +244,13 @@ def ingest_protocol_message(
                     negotiation.payment_quantity = quantity
                     negotiation.status = "PAID"
                     negotiation.updated_at = now
+
                     session.add(negotiation)
 
         # ---------------------------------------------------------
         # DEMAND-STATEMENT
         # ---------------------------------------------------------
-        # Observación:
-        # La fórmula utilizada para demand-statement es:
+        # Convención:
         # energy_delta = quantity
         # budget_delta = -(quantity * value_per_kwh)
         elif payload.type == "demand-statement":
@@ -245,15 +272,14 @@ def ingest_protocol_message(
                 balance["valuePerKwh"]
             )
 
-            # Esta fórmula funciona tanto para quantity
-            # positiva como negativa.
+            # Funciona tanto para quantity positiva como negativa.
             energy_delta = quantity
 
             budget_delta = -(
                 quantity * value_per_kwh
             )
 
-            entry, applied = apply_ledger_effect(
+            _, applied = apply_ledger_effect(
                 session,
                 cycle_id=cycle_id,
                 idpk=str(payload.idpk),
@@ -263,6 +289,9 @@ def ingest_protocol_message(
                 energy_delta=energy_delta,
                 details=payload.model_dump(mode="json"),
             )
+
+            if not applied:
+                audit_status = INBOUND_DUPLICATE
 
         # ---------------------------------------------------------
         # NEGOTIATION-PROPOSAL
@@ -288,28 +317,25 @@ def ingest_protocol_message(
                     cycle_id=cycle_id,
                     idpk=str(payload.idpk),
                     latest_msg_id=str(payload.msgId),
-
                     direction=payload.data["direction"],
-
                     requested_quantity=_decimal(
                         payload.data["quantity"]
                     ),
-
                     offered_price=_decimal(
                         payload.data["pricePerEnergy"]
                     ),
-
                     status="PROPOSED",
-
                     deadline_at=(
                         now + timedelta(seconds=30)
                     ),
-
                     created_at=now,
                     updated_at=now,
                 )
 
                 session.add(negotiation)
+
+            else:
+                audit_status = INBOUND_DUPLICATE
 
         # ---------------------------------------------------------
         # ACK
@@ -329,6 +355,7 @@ def ingest_protocol_message(
             if negotiation is not None:
                 negotiation.status = "ACKNOWLEDGED"
                 negotiation.updated_at = now
+
                 session.add(negotiation)
 
         # ---------------------------------------------------------
@@ -358,7 +385,7 @@ def ingest_protocol_message(
                 energy_delta = quantity
                 operation_type = "TAKE_CONFIRMED"
 
-            entry, applied = apply_ledger_effect(
+            _, applied = apply_ledger_effect(
                 session,
                 cycle_id=cycle_id,
                 idpk=str(payload.idpk),
@@ -368,6 +395,9 @@ def ingest_protocol_message(
                 energy_delta=energy_delta,
                 details=payload.model_dump(mode="json"),
             )
+
+            if not applied:
+                audit_status = INBOUND_DUPLICATE
 
             target = str(
                 payload.data["target"]
@@ -385,8 +415,8 @@ def ingest_protocol_message(
                 negotiation.confirmed_energy = quantity
                 negotiation.confirmed_price = price
 
-                # El transfer posterior usa becauseOf
-                # apuntando al msgId de esta confirmación.
+                # El transfer posterior utiliza becauseOf apuntando
+                # al msgId de esta confirmación.
                 negotiation.latest_msg_id = str(
                     payload.msgId
                 )
@@ -402,7 +432,7 @@ def ingest_protocol_message(
 
             cycle_id = _require_cycle_id(payload)
 
-            cycle = _get_or_create_cycle(
+            _get_or_create_cycle(
                 session,
                 cycle_id,
             )
@@ -419,32 +449,50 @@ def ingest_protocol_message(
                     cycle_id=cycle_id,
                     msg_id=str(payload.msgId),
                     idpk=str(payload.idpk),
-
                     budget_balance=_decimal(
                         payload.data["budgetBalance"]
                     ),
-
                     energy_balance=_decimal(
                         payload.data["energyBalance"]
                     ),
-
                     payload=payload.model_dump(
                         mode="json"
                     ),
-
                     created_at=now,
                     sent_at=now,
                 )
 
                 session.add(report)
 
+            else:
+                audit_status = INBOUND_DUPLICATE
+
+        # ---------------------------------------------------------
+        # MENSAJES TODAVÍA NO PROCESADOS POR ESTA CAPA
+        # ---------------------------------------------------------
         else:
+
+            mark_inbound_result(
+                session,
+                audit_message,
+                status=INBOUND_NOT_PROCESSED,
+                reason="message type not processed by ledger",
+            )
+
             return {
                 "status": "not_processed_by_ledger",
                 "type": payload.type,
             }
 
-        # ÚNICO commit de todo el mensaje.
+        # El efecto de negocio y su resultado de auditoría
+        # quedan confirmados dentro de la misma transacción.
+        mark_inbound_result(
+            session,
+            audit_message,
+            status=audit_status,
+            commit=False,
+        )
+
         session.commit()
 
         return {
@@ -453,6 +501,19 @@ def ingest_protocol_message(
             "cycleId": payload.cycleId,
         }
 
-    except Exception:
+    except Exception as exc:
         session.rollback()
+
+        # La recepción inicial ya fue persistida antes del procesamiento.
+        # Después del rollback se deja evidencia del fallo.
+        try:
+            mark_inbound_result(
+                session,
+                audit_message,
+                status=INBOUND_FAILED,
+                reason=str(exc),
+            )
+        except Exception:
+            session.rollback()
+
         raise

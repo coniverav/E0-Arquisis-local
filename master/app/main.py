@@ -21,6 +21,7 @@ from .schemas import (
 )
 from .routers.cycles import router as cycles_router
 from .routers.internal_messages import router as internal_messages_router
+from .routers.message_audit import router as message_audit_router
 
 app = FastAPI(
     title="EnergyShark E1",
@@ -29,6 +30,7 @@ app = FastAPI(
 
 app.include_router(cycles_router)
 app.include_router(internal_messages_router)
+app.include_router(message_audit_router)
 
 
 def _event_to_out(session: Session, event: Event) -> EventOut:

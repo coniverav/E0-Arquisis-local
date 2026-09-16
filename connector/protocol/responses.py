@@ -29,3 +29,35 @@ def build_ack(
             "target": str(message.msg_id),
         },
     }
+
+#Construye un NACK del protocolo v2 para un mensaje rechazado.
+def build_nack(
+    target_msg_id: str,
+    reason: str,
+    code: int,
+    message: str,
+    city_id: str,
+    cycle_id: str | None = None,
+    timestamp: datetime | None = None,
+) -> dict:
+
+    created_at = timestamp or datetime.now(timezone.utc)
+
+    data = {
+        "target": target_msg_id,
+        "message": message,
+    }
+
+    if cycle_id is not None:
+        data["cycleId"] = cycle_id
+
+    return {
+        "idpk": str(uuid4()),
+        "msgId": str(uuid4()),
+        "type": "nack",
+        "timestamp": created_at.isoformat().replace("+00:00", "Z"),
+        "cityId": city_id,
+        "reason": reason,
+        "code": code,
+        "data": data,
+    }

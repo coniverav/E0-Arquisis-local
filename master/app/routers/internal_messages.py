@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from ..database import get_session
 from ..models import (
     Cycle,
+    DistanceTable,
     Negotiation,
     NegotiationReport,
 )
@@ -291,6 +292,32 @@ def ingest_protocol_message(
             )
 
             if not applied:
+                audit_status = INBOUND_DUPLICATE
+
+                # ---------------------------------------------------------
+        # DISTANCE-TABLE
+        # ---------------------------------------------------------
+        elif payload.type == "distance-table":
+
+            existing = session.exec(
+                select(DistanceTable).where(
+                    DistanceTable.idpk == str(payload.idpk)
+                )
+            ).first()
+
+            if existing is None:
+
+                distance_table = DistanceTable(
+                    msg_id=str(payload.msgId),
+                    idpk=str(payload.idpk),
+                    source_timestamp=payload.timestamp,
+                    distances=payload.data["distances"],
+                    received_at=now,
+                )
+
+                session.add(distance_table)
+
+            else:
                 audit_status = INBOUND_DUPLICATE
 
         # ---------------------------------------------------------

@@ -292,7 +292,7 @@ class NegotiationReport(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
-#Error de negocio recibido desde la central mediante el protocolo v2.
+# Error de negocio recibido desde la central mediante el protocolo v2.
 class ProtocolError(SQLModel, table=True):
     __tablename__ = "protocol_errors"
 
@@ -334,6 +334,65 @@ class ProtocolError(SQLModel, table=True):
         )
     )
 
+class DistanceTable(SQLModel, table=True):
+    """
+    Versiones recibidas de la distance-table.
+
+    Se conservan las versiones recibidas y la vigente se determina
+    utilizando el timestamp del mensaje.
+    """
+
+    __tablename__ = "distance_tables"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "msg_id",
+            name="uq_distance_table_msg_id",
+        ),
+        UniqueConstraint(
+            "idpk",
+            name="uq_distance_table_idpk",
+        ),
+    )
+
+    id: Optional[int] = Field(
+        default=None,
+        primary_key=True,
+    )
+
+    msg_id: str = Field(
+        index=True,
+        nullable=False,
+    )
+
+    idpk: str = Field(
+        index=True,
+        nullable=False,
+    )
+
+    source_timestamp: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
+
+    distances: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+        ),
+    )
+
+    received_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
 
 class InboundMessage(SQLModel, table=True):
     """

@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
 from uuid import UUID
@@ -9,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from .config import INSTANCE_NAME
-from .database import create_db_and_tables, engine, get_session
+from .database import engine, get_session
 from .models import Demand, Event, ProtocolError
 from .schemas import (
     DemandPayload,
@@ -20,21 +19,12 @@ from .schemas import (
     ProtocolErrorOut,
     ProtocolErrorPayload,
 )
-
 from .routers.cycles import router as cycles_router
 from .routers.internal_messages import router as internal_messages_router
-
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    # Al iniciar master, crea tablas si aún no existen.
-    create_db_and_tables()
-    yield
-
 
 app = FastAPI(
     title="EnergyShark E1",
     version="2.0.0",
-    lifespan=lifespan,
 )
 
 app.include_router(cycles_router)

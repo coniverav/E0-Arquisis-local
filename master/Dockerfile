@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
+# Migraciones versionadas de PostgreSQL.
+COPY alembic.ini ./alembic.ini
+COPY alembic ./alembic
 
 # temporal mente se copian los tests para que se puedan ejecutar en el contenedor:
 COPY tests ./tests

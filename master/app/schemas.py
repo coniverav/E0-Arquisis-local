@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
+from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -46,3 +47,115 @@ class HistoryOut(BaseModel):
     limit: int
     total: int
     items: list[EventOut]
+
+
+class LedgerEntryOut(BaseModel):
+    sequence: int
+    operationType: str
+
+    budgetDelta: Decimal
+    energyDelta: Decimal
+    
+    budgetAfter: Decimal
+    energyAfter: Decimal
+    
+    appliedAt: datetime
+    details: dict[str, Any]
+
+class NegotiationOut(BaseModel):
+    id: int
+    idpk: str
+    direction: str
+    requestedQuantity: Decimal
+    offeredPrice: Decimal
+    status: str
+
+    confirmedEnergy: Decimal | None = None
+    confirmedPrice: Decimal | None = None
+    paymentQuantity: Decimal | None = None
+
+    deadlineAt: datetime | None = None
+
+class NegotiationReportOut(BaseModel):
+    msgId: str
+    idpk: str
+    budgetBalance: Decimal
+    energyBalance: Decimal
+    createdAt: datetime
+    sentAt: datetime | None = None
+
+class CycleSummaryOut(BaseModel):
+    cycleId: str
+
+    budgetBalance: Decimal
+    energyBalance: Decimal
+
+    lastOperation: str | None
+    lastOperationAt: datetime | None
+
+    reported: bool
+
+class CyclesOut(BaseModel):
+    total: int
+    items: list[CycleSummaryOut]
+
+class CycleDetailOut(BaseModel):
+
+    cycleId: str
+
+    statusStatement: dict[str, Any]
+
+    fundsReceived: list[LedgerEntryOut]
+    demandStatements: list[LedgerEntryOut]
+
+    negotiations: list[NegotiationOut]
+
+    negotiationReport: NegotiationReportOut | None
+
+    finalBudgetBalance: Decimal
+    finalEnergyBalance: Decimal
+
+    lastOperation: LedgerEntryOut | None
+
+    reconstructedBudgetBalance: Decimal
+    reconstructedEnergyBalance: Decimal
+    snapshotConsistent: bool
+
+    ledger: list[LedgerEntryOut]
+
+class ProtocolMessageIn(BaseModel):
+    """
+    Envelope base de los mensajes del protocolo E1.
+    """
+
+    idpk: UUID
+    msgId: UUID
+    type: str
+    timestamp: datetime
+
+    # Los mensajes asociados a ciclos lo incluyen.
+    cycleId: str | None = None
+
+    # Mensajes enviados por la central.
+    sender: str | None = None
+
+    # Mensajes enviados por nuestra ciudad.
+    cityId: str | None = None
+
+    # En E1 el contenido viaja en data,
+    # reemplazando packageBody de E0.
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("timestamp")
+    @classmethod
+    def timestamp_must_have_timezone(
+        cls,
+        value: datetime,
+    ) -> datetime:
+
+        if value.tzinfo is None:
+            raise ValueError(
+                "timestamp debe incluir zona horaria"
+            )
+
+        return value

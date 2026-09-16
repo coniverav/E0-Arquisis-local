@@ -12,6 +12,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
+
+# temporal mente se copian los tests para que se puedan ejecutar en el contenedor:
+COPY tests ./tests
+
+
 EXPOSE 8000
 
 # Comprueba tanto FastAPI como la conexión a PostgreSQL mediante /health.

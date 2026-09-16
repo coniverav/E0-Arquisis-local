@@ -13,6 +13,8 @@ from .database import create_db_and_tables, engine, get_session
 from .models import Demand, Event
 from .schemas import EventOut, EventPayload, HistoryOut, PackageBodyPayload, DemandPayload
 
+from .routers.cycles import router as cycles_router
+from .routers.internal_messages import router as internal_messages_router
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -22,10 +24,14 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="EnergyShark E0",
-    version="1.0.0",
+    title="EnergyShark E1",
+    version="2.0.0",
     lifespan=lifespan,
 )
+
+app.include_router(cycles_router)
+app.include_router(internal_messages_router)
+
 
 def _event_to_out(session: Session, event: Event) -> EventOut:
     demands = session.exec(

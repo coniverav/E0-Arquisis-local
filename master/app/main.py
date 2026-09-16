@@ -300,3 +300,4 @@ def history(
         total=total,
         items=[_event_to_out(session, event) for event in events],
     )
+

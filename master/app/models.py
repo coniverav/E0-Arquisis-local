@@ -333,3 +333,107 @@ class ProtocolError(SQLModel, table=True):
             index=True,
         )
     )
+
+
+class InboundMessage(SQLModel, table=True):
+    """
+    Evidencia durable de cada recepción de un mensaje del protocolo.
+
+    Un msgId NO es único en esta tabla porque una redelivery debe poder
+    registrarse como una nueva recepción para efectos de auditoría.
+    """
+
+    __tablename__ = "inbound_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    msg_id: Optional[str] = Field(default=None, index=True)
+    idpk: Optional[str] = Field(default=None, index=True)
+
+    message_type: Optional[str] = Field(default=None, index=True)
+    cycle_id: Optional[str] = Field(default=None, index=True)
+
+    payload: Optional[dict[str, Any]] = Field(
+        default=None,
+        sa_column=Column(JSONB, nullable=True),
+    )
+
+    raw_payload: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+
+    status: str = Field(index=True, nullable=False)
+
+    reason_code: Optional[str] = Field(default=None, index=True)
+
+    reason: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+
+    sender: Optional[str] = Field(default=None)
+
+    received_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+    processed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class OutboundMessage(SQLModel, table=True):
+    """
+    Evidencia e intención durable de publicaciones hacia RabbitMQ.
+
+    Esta tabla sirve como base para el mecanismo outbox definido en AD1.
+    """
+
+    __tablename__ = "outbound_messages"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "msg_id",
+            name="uq_outbound_message_msg_id",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    msg_id: str = Field(index=True, nullable=False)
+    idpk: str = Field(index=True, nullable=False)
+
+    message_type: str = Field(index=True, nullable=False)
+    cycle_id: Optional[str] = Field(default=None, index=True)
+
+    payload: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False),
+    )
+
+    # ACK/NACK/give/take pueden referenciar otro mensaje.
+    target_msg_id: Optional[str] = Field(default=None, index=True)
+
+    # Ruta de publicación cuando esté disponible.
+    routing_key: Optional[str] = Field(default=None)
+
+    # PENDING / PUBLISHED / FAILED
+    status: str = Field(index=True, nullable=False)
+
+    attempt_count: int = Field(default=0, nullable=False)
+
+    last_error: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+    published_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )

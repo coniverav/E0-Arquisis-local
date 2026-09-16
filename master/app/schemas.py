@@ -123,6 +123,14 @@ class CycleDetailOut(BaseModel):
 
     ledger: list[LedgerEntryOut]
 
+class DistanceTableOut(BaseModel):
+    id: int
+    msgId: str
+    idpk: str
+    timestamp: datetime
+    receivedAt: datetime
+    distances: dict[str, Any]
+
 class ProtocolMessageIn(BaseModel):
     """
     Envelope base de los mensajes del protocolo E1.

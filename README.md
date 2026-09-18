@@ -15,6 +15,11 @@ y no se versiona en GitHub por contener credenciales privadas. En este repositor
 ssh -i "arquisis-keys.pem" ubuntu@ec2-18-116-213-143.us-east-2.compute.amazonaws.com
 ```
 
+## Documentación de arquitectura (E1)
+- Flujo componente a componente: `docs/architecture/FLUJO_ARQUITECTURA.md`
+- Diagrama editable: `docs/architecture/UML_E1.drawio` (abrir con [draw.io](https://app.diagrams.net) o la extensión Draw.io de VS Code)
+- Diagrama exportado: `docs/architecture/UML_E1.drawio.svg` (vista previa sin necesidad de editor)
+
 ## Puntos logrados
 
 ### Requisitos funcionales (10pts):

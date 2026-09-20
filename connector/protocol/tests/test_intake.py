@@ -46,3 +46,32 @@ def test_discard_json_that_is_not_object():
 
     with pytest.raises(DiscardMessage):
         decode_incoming_payload(body)
+
+#Un JSON válido sin msgId debe descartarse sin respuesta de protocolo, pero conserva el payload parseado para poder registrar su auditoría.
+def test_discard_without_msgid_keeps_parsed_payload():
+    body = b'''
+    {
+        "idpk": "550e8400-e29b-41d4-a716-446655440000",
+        "type": "status-statement",
+        "cycleId": "cycle-test"
+    }
+    '''
+
+    with pytest.raises(DiscardMessage) as captured:
+        decode_incoming_payload(body)
+
+    discarded = captured.value
+
+    assert discarded.payload is not None
+    assert (
+        discarded.payload["idpk"]
+        == "550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert (
+        discarded.payload["type"]
+        == "status-statement"
+    )
+    assert (
+        discarded.payload["cycleId"]
+        == "cycle-test"
+    )

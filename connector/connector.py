@@ -4,6 +4,9 @@ import os
 from pathlib import Path
 import ssl
 
+from protocol.dispatch import dispatch_protocol_response
+from protocol.handler import plan_protocol_response
+from protocol.publisher import build_city_user_id
 from protocol.intake import DiscardMessage, decode_incoming_payload
 from protocol.routing import select_master_url
 
@@ -20,9 +23,14 @@ RABBITMQ_URL = os.environ["RABBITMQ_URL"]
 RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
 MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/events")
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
+MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
 CONNECTOR_RETRY_SECONDS = float(os.getenv("CONNECTOR_RETRY_SECONDS", "5"))
 HTTP_RETRY_SECONDS = float(os.getenv("HTTP_RETRY_SECONDS", "2"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
+
+CITY_ID = os.environ["CITY_ID"]
+RABBITMQ_OUTBOUND_EXCHANGE = os.environ["RABBITMQ_OUTBOUND_EXCHANGE"]
+RABBITMQ_CENTRAL_ROUTING_KEY = os.environ["RABBITMQ_CENTRAL_ROUTING_KEY"]
 
 HEARTBEAT = Path("/tmp/energyshark_connector_heartbeat")
 
@@ -62,6 +70,79 @@ async def forward_to_master(
     logger.warning("master respondió %s; se reintentará", response.status_code)
     return "retry"
 
+#Construye la evidencia que se enviará al master para un mensaje descartado antes de entrar al procesamiento normal del protocolo.
+def build_discard_audit_payload(
+    body: bytes,
+    exc: DiscardMessage,
+) -> dict:
+    parsed_payload = exc.payload
+
+    return {
+        "status": "DISCARDED",
+        "msgId": (
+            str(parsed_payload.get("msgId"))
+            if parsed_payload is not None
+            and parsed_payload.get("msgId") is not None
+            else None
+        ),
+        "idpk": (
+            str(parsed_payload.get("idpk"))
+            if parsed_payload is not None
+            and parsed_payload.get("idpk") is not None
+            else None
+        ),
+        "type": (
+            parsed_payload.get("type")
+            if parsed_payload is not None
+            else None
+        ),
+        "cycleId": (
+            parsed_payload.get("cycleId")
+            if parsed_payload is not None
+            else None
+        ),
+        "sender": (
+            parsed_payload.get("sender")
+            if parsed_payload is not None
+            else None
+        ),
+        "payload": parsed_payload,
+        "rawPayload": body.decode(
+            "utf-8",
+            errors="replace",
+        ),
+        "reason": str(exc),
+    }
+
+#Construye la evidencia del mensaje original rechazado mediante un NACK del protocolo.
+def build_nack_audit_payload(
+    payload: dict,
+    response: dict,
+) -> dict:
+    data = response.get("data", {})
+
+    return {
+        "status": "NACKED",
+        "msgId": (
+            str(payload.get("msgId"))
+            if payload.get("msgId") is not None
+            else None
+        ),
+        "idpk": (
+            str(payload.get("idpk"))
+            if payload.get("idpk") is not None
+            else None
+        ),
+        "type": payload.get("type"),
+        "cycleId": payload.get("cycleId"),
+        "sender": payload.get("sender"),
+        "payload": payload,
+        "reasonCode": response.get("reason"),
+        "reason": data.get(
+            "message",
+            "Mensaje rechazado por el protocolo",
+        ),
+    }
 
 async def consume_forever() -> None:
     # create_default_context() usa las CA públicas del sistema y MANTIENE la verificación TLS.
@@ -89,6 +170,16 @@ async def consume_forever() -> None:
                 # Las credenciales observer solo pueden CONSUMIR la topología del servidor.
                 queue = await channel.get_queue(RABBITMQ_QUEUE, ensure=False)
 
+                #Se obtiene el exchange existente sin declarar topología nueva.
+                exchange = await channel.get_exchange(
+                    RABBITMQ_OUTBOUND_EXCHANGE,
+                    ensure=False,
+                )
+
+                city_user_id = build_city_user_id(
+                    CITY_ID
+                )
+
                 logger.info("Conectado. Esperando eventos en %s", RABBITMQ_QUEUE)
 
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
@@ -101,7 +192,87 @@ async def consume_forever() -> None:
                                     "Mensaje descartado sin respuesta de protocolo: %s",
                                     exc,
                                 )
-                                await message.reject(requeue=False)
+
+                                audit_payload = build_discard_audit_payload(
+                                    message.body,
+                                    exc,
+                                )
+
+                                audit_result = await forward_to_master(
+                                    client,
+                                    audit_payload,
+                                    url=MASTER_AUDIT_URL,
+                                )
+
+                                if audit_result == "ack":
+                                    #La evidencia quedó persistida. El mensaje inválido puede eliminarse definitivamente de la cola.
+                                    await message.reject(requeue=False)
+
+                                elif audit_result == "retry":
+                                    #Si master/DB no están disponibles, no perdemos la evidencia del descarte.
+                                    await message.reject(requeue=True)
+                                    await asyncio.sleep(
+                                        HTTP_RETRY_SECONDS
+                                    )
+
+                                else:
+                                    #Un error del estilo 400 desde el endpoint de auditoría indica un problema permanente con el registro enviado.
+                                    logger.error(
+                                        "master rechazó la auditoría del mensaje descartado"
+                                    )
+                                    await message.reject(requeue=False)
+
+                                continue
+
+                            #El mensaje sobrevivió al intake. Ahora se parsea y valida a nivel de protocolo.
+                            handling = plan_protocol_response(
+                                payload,
+                                city_id=CITY_ID,
+                            )
+
+                            if handling.action == "nack":
+                                audit_payload = build_nack_audit_payload(
+                                    payload,
+                                    handling.response,
+                                )
+
+                                audit_result = await forward_to_master(
+                                    client,
+                                    audit_payload,
+                                    url=MASTER_AUDIT_URL,
+                                )
+
+                                if audit_result == "retry":
+                                    #Si no pudimos persistir la evidencia, el mensaje vuelve a la cola.
+                                    await message.reject(
+                                        requeue=True
+                                    )
+                                    await asyncio.sleep(
+                                        HTTP_RETRY_SECONDS
+                                    )
+                                    continue
+
+                                if audit_result == "drop":
+                                    #La auditoría fue rechazada de forma permanente.
+                                    logger.error(
+                                        "master rechazó la auditoría del NACK"
+                                    )
+                                    await message.reject(
+                                        requeue=False
+                                    )
+                                    continue
+
+                                await dispatch_protocol_response(
+                                    result=handling,
+                                    exchange=exchange,
+                                    routing_key=(
+                                        RABBITMQ_CENTRAL_ROUTING_KEY
+                                    ),
+                                    user_id=city_user_id,
+                                )
+
+                                #El rechazo quedó auditado y el NACK fue publicado correctamente.
+                                await message.ack()
                                 continue
 
                             master_url = select_master_url(

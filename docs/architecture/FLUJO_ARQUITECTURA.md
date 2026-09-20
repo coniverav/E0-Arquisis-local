@@ -1,4 +1,4 @@
-# Flujo de Arquitectura — Todas las Cajitas del Diagrama
+# Flujo de Arquitectura
 
 Resumen conciso del flujo componente a componente basado en [UML_E1.drawio](UML_E1.drawio).
 
@@ -25,7 +25,7 @@ Resumen conciso del flujo componente a componente basado en [UML_E1.drawio](UML_
 
 ---
 
-## 2. Flujo Completo Integrando Todas las Cajitas
+## 2. Flujo Completo Integrando
 
 ### Paso a Paso:
 

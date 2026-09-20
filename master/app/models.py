@@ -394,6 +394,25 @@ class DistanceTable(SQLModel, table=True):
         )
     )
 
+#Registro canónico de idpk cuya operación fue procesada exitosamente.
+#La PK global garantiza que un mismo idpk no pueda ser reclamado simultáneamente por dos réplicas de master.
+class ProcessedIdpk(SQLModel, table=True):
+    __tablename__ = "processed_idpks"
+
+    idpk: str = Field(primary_key=True)
+
+    msg_id: str = Field(index=True, nullable=False)
+    message_type: str = Field(index=True, nullable=False)
+    cycle_id: Optional[str] = Field(default=None, index=True)
+
+    processed_at: datetime = Field(
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=False,
+            index=True,
+        )
+    )
+
 class InboundMessage(SQLModel, table=True):
     """
     Evidencia durable de cada recepción de un mensaje del protocolo.

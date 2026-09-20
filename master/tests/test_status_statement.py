@@ -9,7 +9,7 @@ from sqlmodel import Session
 
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import Cycle, InboundMessage
+from app.models import Cycle, InboundMessage, ProcessedIdpk
 
 
 class StatusStatementTests(unittest.TestCase):
@@ -30,6 +30,12 @@ class StatusStatementTests(unittest.TestCase):
             session.exec(
                 delete(InboundMessage).where(
                     InboundMessage.cycle_id == self.cycle_id
+                )
+            )
+
+            session.exec(
+                delete(ProcessedIdpk).where(
+                    ProcessedIdpk.cycle_id == self.cycle_id
                 )
             )
 

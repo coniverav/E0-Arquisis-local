@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import Cycle, InboundMessage, LedgerEntry
+from app.models import Cycle, InboundMessage, LedgerEntry, ProcessedIdpk
 
 
 class DemandStatementTests(unittest.TestCase):
@@ -33,6 +33,12 @@ class DemandStatementTests(unittest.TestCase):
             session.exec(
                 delete(LedgerEntry).where(
                     LedgerEntry.cycle_id == self.cycle_id
+                )
+            )
+
+            session.exec(
+                delete(ProcessedIdpk).where(
+                    ProcessedIdpk.cycle_id == self.cycle_id
                 )
             )
 

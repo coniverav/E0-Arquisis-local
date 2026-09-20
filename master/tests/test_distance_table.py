@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import DistanceTable, InboundMessage
+from app.models import DistanceTable, InboundMessage, ProcessedIdpk
 
 
 class DistanceTableTests(unittest.TestCase):
@@ -37,6 +37,14 @@ class DistanceTableTests(unittest.TestCase):
             session.exec(
                 delete(DistanceTable).where(
                     DistanceTable.idpk.in_(
+                        self.created_idpks
+                    )
+                )
+            )
+
+            session.exec(
+                delete(ProcessedIdpk).where(
+                    ProcessedIdpk.idpk.in_(
                         self.created_idpks
                     )
                 )

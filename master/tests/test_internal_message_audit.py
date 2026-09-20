@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import Cycle, InboundMessage
+from app.models import Cycle, InboundMessage, ProcessedIdpk
 
 
 class InternalMessageAuditTests(unittest.TestCase):
@@ -28,6 +28,12 @@ class InternalMessageAuditTests(unittest.TestCase):
             session.exec(
                 delete(InboundMessage).where(
                     InboundMessage.cycle_id == self.cycle_id
+                )
+            )
+
+            session.exec(
+                delete(ProcessedIdpk).where(
+                    ProcessedIdpk.cycle_id == self.cycle_id
                 )
             )
 
@@ -132,7 +138,7 @@ class InternalMessageAuditTests(unittest.TestCase):
 
             self.assertEqual(
                 duplicate.reason,
-                "status-statement already applied",
+                "idpk already processed",
             )
 
 

@@ -21,7 +21,19 @@ from ..services.message_audit import (
     mark_inbound_result,
     record_inbound_message,
 )
+from ..services.idempotency import claim_idpk
 
+IDEMPOTENT_MESSAGE_TYPES = {
+    "status-statement",
+    "transfer",
+    "demand-statement",
+    "distance-table",
+    "negotiation-proposal",
+    "ack",
+    "give",
+    "take",
+    "negotiation-report",
+}
 
 router = APIRouter(
     prefix="/internal",
@@ -109,10 +121,32 @@ def ingest_protocol_message(
     audit_status = INBOUND_PROCESSED
 
     try:
+        if payload.type in IDEMPOTENT_MESSAGE_TYPES:
+            claimed = claim_idpk(
+                session,
+                idpk=str(payload.idpk),
+                msg_id=str(payload.msgId),
+                message_type=payload.type,
+                cycle_id=payload.cycleId,
+            )
 
-        # ---------------------------------------------------------
-        # STATUS-STATEMENT
-        # ---------------------------------------------------------
+            if not claimed:
+                mark_inbound_result(
+                    session,
+                    audit_message,
+                    status=INBOUND_DUPLICATE,
+                    reason="idpk already processed",
+                    commit=False,
+                )
+
+                session.commit()
+
+                return {
+                    "status": "duplicate",
+                    "type": payload.type,
+                    "cycleId": payload.cycleId,
+                }
+
         if payload.type == "status-statement":
 
             cycle_id = _require_cycle_id(payload)
@@ -181,9 +215,6 @@ def ingest_protocol_message(
 
             session.add(cycle)
 
-        # ---------------------------------------------------------
-        # TRANSFER
-        # ---------------------------------------------------------
         elif payload.type == "transfer":
 
             cycle_id = _require_cycle_id(payload)
@@ -248,9 +279,6 @@ def ingest_protocol_message(
 
                     session.add(negotiation)
 
-        # ---------------------------------------------------------
-        # DEMAND-STATEMENT
-        # ---------------------------------------------------------
         # Convención:
         # energy_delta = quantity
         # budget_delta = -(quantity * value_per_kwh)
@@ -294,9 +322,6 @@ def ingest_protocol_message(
             if not applied:
                 audit_status = INBOUND_DUPLICATE
 
-                # ---------------------------------------------------------
-        # DISTANCE-TABLE
-        # ---------------------------------------------------------
         elif payload.type == "distance-table":
 
             existing = session.exec(
@@ -320,9 +345,6 @@ def ingest_protocol_message(
             else:
                 audit_status = INBOUND_DUPLICATE
 
-        # ---------------------------------------------------------
-        # NEGOTIATION-PROPOSAL
-        # ---------------------------------------------------------
         elif payload.type == "negotiation-proposal":
 
             cycle_id = _require_cycle_id(payload)
@@ -364,9 +386,6 @@ def ingest_protocol_message(
             else:
                 audit_status = INBOUND_DUPLICATE
 
-        # ---------------------------------------------------------
-        # ACK
-        # ---------------------------------------------------------
         elif payload.type == "ack":
 
             target = str(
@@ -385,9 +404,6 @@ def ingest_protocol_message(
 
                 session.add(negotiation)
 
-        # ---------------------------------------------------------
-        # GIVE / TAKE
-        # ---------------------------------------------------------
         elif payload.type in {"give", "take"}:
 
             cycle_id = _require_cycle_id(payload)
@@ -452,9 +468,6 @@ def ingest_protocol_message(
 
                 session.add(negotiation)
 
-        # ---------------------------------------------------------
-        # NEGOTIATION-REPORT
-        # ---------------------------------------------------------
         elif payload.type == "negotiation-report":
 
             cycle_id = _require_cycle_id(payload)
@@ -494,9 +507,6 @@ def ingest_protocol_message(
             else:
                 audit_status = INBOUND_DUPLICATE
 
-        # ---------------------------------------------------------
-        # MENSAJES TODAVÍA NO PROCESADOS POR ESTA CAPA
-        # ---------------------------------------------------------
         else:
 
             mark_inbound_result(

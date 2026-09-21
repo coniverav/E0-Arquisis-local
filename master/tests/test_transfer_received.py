@@ -13,6 +13,7 @@ from app.models import (
     Cycle,
     InboundMessage,
     LedgerEntry,
+    ProcessedIdpk,
 )
 
 
@@ -40,6 +41,12 @@ class TransferReceivedTests(unittest.TestCase):
             session.exec(
                 delete(LedgerEntry).where(
                     LedgerEntry.cycle_id == self.cycle_id
+                )
+            )
+
+            session.exec(
+                delete(ProcessedIdpk).where(
+                    ProcessedIdpk.cycle_id == self.cycle_id
                 )
             )
 

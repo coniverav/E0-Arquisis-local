@@ -4,5 +4,5 @@ sqlmodel>=0.0.22,<0.1
 psycopg[binary]>=3.2,<4
 alembic>=1.13,<2
 httpx2
-pytest
+cryptography
 PyJWT>=2.8,<3

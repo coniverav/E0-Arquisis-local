@@ -27,3 +27,7 @@ CYCLE_SCHEDULER_POLL_SECONDS = float(
         "5",
     )
 )
+
+AUTH_JWKS_URL = None  # Placeholder para la URL del JWKS del proveedor de identidad
+AUTH_AUDIENCE = None  # Placeholder para el audience esperado en los JWT
+AUTH_ISSUER = None  # Placeholder para el issuer esperado en los JWT

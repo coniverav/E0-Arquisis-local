@@ -2,7 +2,13 @@ import json
 
 #Mensaje que debe descartarse sin generar una respuesta de protocolo.
 class DiscardMessage(ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        payload: dict | None = None,
+    ):
+        super().__init__(message)
+        self.payload = payload
 
 #Decodifica el body recibido desde RabbitMQ.
 #Solo clasifica los casos que deben descartarse sin respuesta. Mensajes no parseables y mensajes sin msgId.
@@ -18,6 +24,6 @@ def decode_incoming_payload(body: bytes) -> dict:
 
     #Sin msgId no existe un mensaje válido al cual responder.
     if "msgId" not in payload:
-        raise DiscardMessage("El mensaje no contiene msgId")
+        raise DiscardMessage("El mensaje no contiene msgId", payload=payload,)
 
     return payload

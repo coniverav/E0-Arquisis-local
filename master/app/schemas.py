@@ -254,6 +254,7 @@ class ProtocolErrorOut(BaseModel):
     spare: float | None = None
     timestamp: datetime
     receivedAt: datetime
+
 class OutboundMessageAuditIn(BaseModel):
     msgId: UUID
     idpk: UUID
@@ -265,7 +266,57 @@ class OutboundMessageAuditIn(BaseModel):
 
     payload: dict[str, Any] = Field(default_factory=dict)
 
-
 class OutboundMessageResultIn(BaseModel):
     status: Literal["PUBLISHED", "FAILED"]
     error: str | None = None
+
+#Evidencia de un mensaje rechazado por el connector antes de llegar al procesamiento normal del master.
+class InboundMessageAuditIn(BaseModel):
+    status: Literal["DISCARDED", "NACKED"]
+
+    msgId: str | None = None
+    idpk: str | None = None
+    type: str | None = None
+    cycleId: str | None = None
+    sender: str | None = None
+
+    payload: dict[str, Any] | None = None
+    rawPayload: str | None = None
+
+    reasonCode: str | None = None
+    reason: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_nacked_reason_code(self):
+        if self.status == "NACKED" and self.reasonCode is None:
+            raise ValueError(
+                "NACKED requiere reasonCode"
+            )
+
+        return self
+
+class InboundMessageAuditOut(BaseModel):
+    id: int
+
+    msgId: str | None
+    idpk: str | None
+    type: str | None
+    cycleId: str | None
+
+    status: str
+    reasonCode: str | None
+    reason: str | None
+
+    receivedAt: datetime
+    processedAt: datetime | None
+
+    #Para DUPLICATE apunta al mensaje que obtuvo originalmente el claim del idpk. Para NACKED/DISCARDED identifica, cuando
+    #existe, el mensaje recibido que produjo el registro.
+    relatedMsgId: str | None
+
+    payload: dict[str, Any] | None
+    rawPayload: str | None
+
+class InboundMessageAuditListOut(BaseModel):
+    total: int
+    items: list[InboundMessageAuditOut]

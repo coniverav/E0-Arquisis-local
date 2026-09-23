@@ -42,6 +42,9 @@ services:
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_ISSUER: ${AUTH_ISSUER:-}
     depends_on:
       db:
         condition: service_healthy
@@ -64,6 +67,9 @@ services:
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_ISSUER: ${AUTH_ISSUER:-}
     depends_on:
       db:
         condition: service_healthy

@@ -5,8 +5,25 @@ import aio_pika
 def build_city_user_id(city_id: str) -> str:
     return f"city.{city_id}"
 
-#Construye un mensaje AMQP listo para publicar.
-def build_amqp_message(payload: dict, user_id: str) -> aio_pika.Message:
+#Construye un mensaje AMQP y garantiza que la identidad del payload coincida con la propiedad user_id.
+def build_amqp_message(
+    payload: dict,
+    user_id: str,
+) -> aio_pika.Message:
+    city_id = payload.get("cityId")
+
+    if not city_id:
+        raise ValueError(
+            "Toda publicación de la ciudad debe incluir cityId"
+        )
+
+    expected_user_id = build_city_user_id(city_id)
+
+    if user_id != expected_user_id:
+        raise ValueError(
+            "cityId y AMQP user_id no representan la misma ciudad"
+        )
+
     return aio_pika.Message(
         body=json.dumps(payload).encode("utf-8"),
         content_type="application/json",
@@ -20,7 +37,10 @@ async def publish_protocol_message(
     payload: dict,
     user_id: str,
 ) -> None:
-    message = build_amqp_message(payload, user_id)
+    message = build_amqp_message(
+        payload,
+        user_id,
+    )
 
     await exchange.publish(
         message,

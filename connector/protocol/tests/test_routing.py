@@ -1,6 +1,6 @@
 from protocol.routing import select_master_url
 
-DEFAULT_URL = "http://master:8000/internal/events"
+DEFAULT_URL = "http://master:8000/internal/messages"
 ERROR_URL = "http://master:8000/internal/protocol/errors"
 
 #Un mensaje error debe enviarse al endpoint específico de errores.

@@ -21,7 +21,7 @@ logger = logging.getLogger("connector")
 
 RABBITMQ_URL = os.environ["RABBITMQ_URL"]
 RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
-MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/events")
+MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/messages",)
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
 CONNECTOR_RETRY_SECONDS = float(os.getenv("CONNECTOR_RETRY_SECONDS", "5"))
@@ -143,6 +143,22 @@ def build_nack_audit_payload(
             "Mensaje rechazado por el protocolo",
         ),
     }
+
+async def complete_successful_message(
+    handling,
+    message,
+    exchange,
+    city_user_id: str,
+) -> None:
+    if handling.action == "ack":
+        await dispatch_protocol_response(
+            result=handling,
+            exchange=exchange,
+            routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+            user_id=city_user_id,
+        )
+
+    await message.ack()
 
 async def consume_forever() -> None:
     # create_default_context() usa las CA públicas del sistema y MANTIENE la verificación TLS.
@@ -288,12 +304,18 @@ async def consume_forever() -> None:
                             )
 
                             if result == "ack":
-                                # ACK solo después de persistir con éxito en master/PostgreSQL.
-                                await message.ack()
+                                await complete_successful_message(
+                                    handling=handling,
+                                    message=message,
+                                    exchange=exchange,
+                                    city_user_id=city_user_id,
+                                )
+
                             elif result == "drop":
                                 await message.reject(requeue=False)
+
                             else:
-                                # Si master/DB fallan, el evento vuelve a RabbitMQ.
+                                #Si master/DB fallan, el evento vuelve a RabbitMQ.
                                 await message.reject(requeue=True)
                                 await asyncio.sleep(HTTP_RETRY_SECONDS)
 

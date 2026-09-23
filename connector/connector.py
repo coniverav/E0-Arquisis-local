@@ -24,6 +24,7 @@ RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
 MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/messages",)
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
+MASTER_OUTBOUND_AUDIT_URL = os.getenv("MASTER_OUTBOUND_AUDIT_URL", "http://master:8000/internal/audit/outbound",)
 CONNECTOR_RETRY_SECONDS = float(os.getenv("CONNECTOR_RETRY_SECONDS", "5"))
 HTTP_RETRY_SECONDS = float(os.getenv("HTTP_RETRY_SECONDS", "2"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
@@ -144,18 +145,115 @@ def build_nack_audit_payload(
         ),
     }
 
+def build_outbound_audit_payload(
+    response: dict,
+    routing_key: str,
+) -> dict:
+    data = response.get("data") or {}
+
+    return {
+        "msgId": str(response["msgId"]),
+        "idpk": str(response["idpk"]),
+        "type": response["type"],
+        "cycleId": response.get("cycleId"),
+        "targetMsgId": (
+            str(data.get("target"))
+            if data.get("target") is not None
+            else None
+        ),
+        "routingKey": routing_key,
+        "payload": response,
+    }
+
+
+async def register_outbound_pending(
+    client: httpx.AsyncClient,
+    response: dict,
+    routing_key: str,
+) -> None:
+    audit_payload = build_outbound_audit_payload(
+        response,
+        routing_key,
+    )
+
+    result = await forward_to_master(
+        client,
+        audit_payload,
+        url=MASTER_OUTBOUND_AUDIT_URL,
+    )
+
+    if result != "ack":
+        raise RuntimeError(
+            "No fue posible persistir auditoría outbound PENDING"
+        )
+
+
+async def register_outbound_result(
+    client: httpx.AsyncClient,
+    msg_id: str,
+    *,
+    status: str,
+    error: str | None = None,
+) -> None:
+    payload = {
+        "status": status,
+    }
+
+    if error is not None:
+        payload["error"] = error
+
+    result = await forward_to_master(
+        client,
+        payload,
+        url=(
+            f"{MASTER_OUTBOUND_AUDIT_URL}/"
+            f"{msg_id}/result"
+        ),
+    )
+
+    if result != "ack":
+        raise RuntimeError(
+            f"No fue posible registrar resultado outbound {status}"
+        )
+
 async def complete_successful_message(
     handling,
     message,
     exchange,
     city_user_id: str,
+    client: httpx.AsyncClient,
 ) -> None:
     if handling.action == "ack":
-        await dispatch_protocol_response(
-            result=handling,
-            exchange=exchange,
-            routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
-            user_id=city_user_id,
+        response = handling.response
+
+        await register_outbound_pending(
+            client,
+            response,
+            RABBITMQ_CENTRAL_ROUTING_KEY,
+        )
+
+        try:
+            await dispatch_protocol_response(
+                result=handling,
+                exchange=exchange,
+                routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                user_id=city_user_id,
+            )
+        except Exception as exc:
+            try:
+                await register_outbound_result(
+                    client,
+                    str(response["msgId"]),
+                    status="FAILED",
+                    error=str(exc),
+                )
+            finally:
+                raise
+
+        await register_outbound_result(
+            client,
+            str(response["msgId"]),
+            status="PUBLISHED",
         )
 
     await message.ack()
@@ -278,16 +376,41 @@ async def consume_forever() -> None:
                                     )
                                     continue
 
-                                await dispatch_protocol_response(
-                                    result=handling,
-                                    exchange=exchange,
-                                    routing_key=(
-                                        RABBITMQ_CENTRAL_ROUTING_KEY
-                                    ),
-                                    user_id=city_user_id,
+                                await register_outbound_pending(
+                                    client,
+                                    handling.response,
+                                    RABBITMQ_CENTRAL_ROUTING_KEY,
                                 )
 
-                                #El rechazo quedó auditado y el NACK fue publicado correctamente.
+                                try:
+                                    await dispatch_protocol_response(
+                                        result=handling,
+                                        exchange=exchange,
+                                        routing_key=(
+                                            RABBITMQ_CENTRAL_ROUTING_KEY
+                                        ),
+                                        user_id=city_user_id,
+                                    )
+
+                                except Exception as exc:
+                                    try:
+                                        await register_outbound_result(
+                                            client,
+                                            str(handling.response["msgId"]),
+                                            status="FAILED",
+                                            error=str(exc),
+                                        )
+                                    finally:
+                                        raise
+
+                                await register_outbound_result(
+                                    client,
+                                    str(handling.response["msgId"]),
+                                    status="PUBLISHED",
+                                )
+
+                                # El rechazo inbound quedó auditado,
+                                # el NACK outbound fue persistido y publicado.
                                 await message.ack()
                                 continue
 
@@ -309,6 +432,7 @@ async def consume_forever() -> None:
                                     message=message,
                                     exchange=exchange,
                                     city_user_id=city_user_id,
+                                    client=client,
                                 )
 
                             elif result == "drop":

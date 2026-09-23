@@ -113,3 +113,52 @@ def test_missing_token(monkeypatch):
     _configure(monkeypatch)
     response = TestClient(app).get("/_test/protected")
     assert response.status_code == 401
+
+def test_missing_auth_configuration_returns_503(monkeypatch):
+    monkeypatch.setattr(auth, "AUTH_JWKS_URL", None)
+    monkeypatch.setattr(auth, "AUTH_ISSUER", None)
+    monkeypatch.setattr(auth, "AUTH_AUDIENCE", None)
+
+    response = TestClient(app).get(
+        "/_test/protected",
+        headers={"Authorization": f"Bearer {_VALID_TOKEN}"},
+    )
+
+    assert response.status_code == 503
+
+def test_wrong_issuer_returns_401(monkeypatch):
+    _configure(monkeypatch)
+
+    token = _signed_token(
+        _private_pem(_SIGNING_KEY),
+        _TEST_KID,
+        "https://wrong-issuer/",
+        _TEST_AUDIENCE,
+        300,
+    )
+
+    response = TestClient(app).get(
+        "/_test/protected",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_wrong_audience_returns_401(monkeypatch):
+    _configure(monkeypatch)
+
+    token = _signed_token(
+        _private_pem(_SIGNING_KEY),
+        _TEST_KID,
+        _TEST_ISSUER,
+        "wrong-audience",
+        300,
+    )
+
+    response = TestClient(app).get(
+        "/_test/protected",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 401

@@ -28,6 +28,6 @@ CYCLE_SCHEDULER_POLL_SECONDS = float(
     )
 )
 
-AUTH_JWKS_URL = None  # Placeholder para la URL del JWKS del proveedor de identidad
-AUTH_AUDIENCE = None  # Placeholder para el audience esperado en los JWT
-AUTH_ISSUER = None  # Placeholder para el issuer esperado en los JWT
+AUTH_JWKS_URL = os.getenv("AUTH_JWKS_URL")
+AUTH_AUDIENCE = os.getenv("AUTH_AUDIENCE")
+AUTH_ISSUER = os.getenv("AUTH_ISSUER")

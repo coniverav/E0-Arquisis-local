@@ -16,7 +16,7 @@ COPY app ./app
 COPY alembic.ini ./alembic.ini
 COPY alembic ./alembic
 
-# temporal mente se copian los tests para que se puedan ejecutar en el contenedor:
+# Temporalmente se copian los tests para que se puedan ejecutar en el contenedor:
 COPY tests ./tests
 
 

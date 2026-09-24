@@ -11,6 +11,8 @@ from ..models import (
     ProcessedIdpk,
 )
 from ..schemas import (
+    AuditAnomalyListOut,
+    AuditAnomalyOut,
     InboundMessageAuditIn,
     InboundMessageAuditListOut,
     InboundMessageAuditOut,
@@ -63,11 +65,38 @@ def _inbound_message_to_out(
         rawPayload=message.raw_payload,
     )
 
+def _inbound_message_to_anomaly_out(
+    session: Session,
+    message: InboundMessage,
+) -> AuditAnomalyOut:
+    internal = _inbound_message_to_out(
+        session,
+        message,
+    )
+
+    return AuditAnomalyOut(
+        id=internal.id,
+        msgId=internal.msgId,
+        idpk=internal.idpk,
+        type=internal.type,
+        cycleId=internal.cycleId,
+        status=internal.status,
+        reasonCode=internal.reasonCode,
+        reason=internal.reason,
+        receivedAt=internal.receivedAt,
+        processedAt=internal.processedAt,
+        relatedMsgId=internal.relatedMsgId,
+    )
+
 router = APIRouter(
     prefix="/internal/audit",
     tags=["internal-audit"],
 )
 
+public_router = APIRouter(
+    prefix="/audit",
+    tags=["audit"],
+)
 
 @router.post("/outbound")
 def create_outbound_audit(
@@ -292,6 +321,114 @@ def list_inbound_audit(
         total=total,
         items=[
             _inbound_message_to_out(
+                session,
+                message,
+            )
+            for message in messages
+        ],
+    )
+
+@public_router.get(
+    "/anomalies",
+    response_model=AuditAnomalyListOut,
+)
+def list_audit_anomalies(
+    status: Literal[
+        "DUPLICATE",
+        "DISCARDED",
+        "NACKED",
+    ] | None = None,
+    message_type: str | None = Query(
+        None,
+        alias="type",
+    ),
+    reason_code: str | None = Query(
+        None,
+        alias="reasonCode",
+    ),
+    msg_id: str | None = Query(
+        None,
+        alias="msgId",
+    ),
+    idpk: str | None = None,
+    limit: int = Query(
+        100,
+        ge=1,
+        le=500,
+    ),
+    session: Session = Depends(get_session),
+):
+    target_statuses = [
+        INBOUND_DUPLICATE,
+        INBOUND_DISCARDED,
+        INBOUND_NACKED,
+    ]
+
+    conditions = [
+        InboundMessage.status.in_(
+            target_statuses
+        )
+    ]
+
+    if status is not None:
+        conditions.append(
+            InboundMessage.status == status
+        )
+
+    if message_type is not None:
+        conditions.append(
+            InboundMessage.message_type
+            == message_type
+        )
+
+    if reason_code is not None:
+        conditions.append(
+            InboundMessage.reason_code
+            == reason_code
+        )
+
+    if msg_id is not None:
+        conditions.append(
+            InboundMessage.msg_id == msg_id
+        )
+
+    if idpk is not None:
+        conditions.append(
+            InboundMessage.idpk == idpk
+        )
+
+    statement = select(InboundMessage)
+    count_statement = select(
+        func.count(InboundMessage.id)
+    )
+
+    for condition in conditions:
+        statement = statement.where(
+            condition
+        )
+        count_statement = (
+            count_statement.where(
+                condition
+            )
+        )
+
+    total = session.exec(
+        count_statement
+    ).one()
+
+    messages = session.exec(
+        statement
+        .order_by(
+            InboundMessage.received_at.desc(),
+            InboundMessage.id.desc(),
+        )
+        .limit(limit)
+    ).all()
+
+    return AuditAnomalyListOut(
+        total=total,
+        items=[
+            _inbound_message_to_anomaly_out(
                 session,
                 message,
             )

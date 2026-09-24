@@ -320,3 +320,30 @@ class InboundMessageAuditOut(BaseModel):
 class InboundMessageAuditListOut(BaseModel):
     total: int
     items: list[InboundMessageAuditOut]
+
+#Vista pública reducida de anomalías relevantes para RF05.
+class AuditAnomalyOut(BaseModel):
+    id: int
+
+    msgId: str | None
+    idpk: str | None
+    type: str | None
+    cycleId: str | None
+
+    status: Literal[
+        "DUPLICATE",
+        "DISCARDED",
+        "NACKED",
+    ]
+
+    reasonCode: str | None
+    reason: str | None
+
+    receivedAt: datetime
+    processedAt: datetime | None
+    relatedMsgId: str | None
+
+
+class AuditAnomalyListOut(BaseModel):
+    total: int
+    items: list[AuditAnomalyOut]

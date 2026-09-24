@@ -21,7 +21,10 @@ from .schemas import (
 )
 from .routers.cycles import router as cycles_router
 from .routers.internal_messages import router as internal_messages_router
-from .routers.message_audit import router as message_audit_router
+from .routers.message_audit import (
+    public_router as public_message_audit_router,
+    router as message_audit_router,
+)
 from .routers.distance_tables import router as distance_tables_router
 
 app = FastAPI(
@@ -32,6 +35,7 @@ app = FastAPI(
 app.include_router(cycles_router)
 app.include_router(internal_messages_router)
 app.include_router(message_audit_router)
+app.include_router(public_message_audit_router)
 app.include_router(distance_tables_router)
 
 def _event_to_out(session: Session, event: Event) -> EventOut:

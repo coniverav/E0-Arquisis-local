@@ -117,12 +117,41 @@ def rebuild_cycle_balances(
     return budget, energy
 
 
-# rebuilt_budget, rebuilt_energy = rebuild_cycle_balances(
-#     session,
-#     cycle_id,
-# )
+def validate_cycle_consistency(
+    session: Session,
+    cycle_id: str,
+) -> tuple[Decimal, Decimal]:
+    """
+    Reconstruye el ledger y verifica que coincida con el
+    estado materializado almacenado en Cycle.
 
-# consistent = (
-#     rebuilt_budget == cycle.budget_balance
-#     and rebuilt_energy == cycle.energy_balance
-# )
+    Retorna los balances reconstruidos si son consistentes.
+
+    Lanza ValueError si existe una inconsistencia.
+    """
+
+    cycle = session.get(Cycle, cycle_id)
+
+    if cycle is None:
+        raise ValueError(
+            f"Cycle {cycle_id} not found"
+        )
+
+    rebuilt_budget, rebuilt_energy = rebuild_cycle_balances(
+        session,
+        cycle_id,
+    )
+
+    if (
+        rebuilt_budget != cycle.budget_balance
+        or rebuilt_energy != cycle.energy_balance
+    ):
+        raise ValueError(
+            f"Inconsistent ledger for {cycle_id}: "
+            f"snapshot=({cycle.budget_balance}, "
+            f"{cycle.energy_balance}), "
+            f"rebuilt=({rebuilt_budget}, "
+            f"{rebuilt_energy})"
+        )
+
+    return rebuilt_budget, rebuilt_energy

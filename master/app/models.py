@@ -83,6 +83,37 @@ class Cycle(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
 
+    scheduler_state: str = Field(
+        default="PENDING",
+        index=True,
+        nullable=False,
+    )
+
+    report_window_opens_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=True,
+            index=True,
+        ),
+    )
+
+    report_window_opened_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=True,
+        ),
+    )
+
+    closed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=True,
+        ),
+    )
+
     status_payload: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False),

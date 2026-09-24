@@ -22,6 +22,9 @@ from ..services.message_audit import (
     record_inbound_message,
 )
 from ..services.idempotency import claim_idpk
+from ..services.cycle_scheduler import (
+    configure_cycle_schedule,
+)
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -206,11 +209,16 @@ def ingest_protocol_message(
 
             cycle.status_payload = payload.data
 
-            cycle.valid_until = datetime.fromisoformat(
+            valid_until = datetime.fromisoformat(
                 payload.data["validUntil"].replace(
                     "Z",
                     "+00:00",
                 )
+            )
+
+            configure_cycle_schedule(
+                cycle,
+                valid_until=valid_until,
             )
 
             session.add(cycle)

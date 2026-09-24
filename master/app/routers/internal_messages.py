@@ -5,6 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from ..database import get_session
+from ..config import (
+    CITY_ID,
+    RABBITMQ_CENTRAL_ROUTING_KEY,
+)
 from ..models import (
     Cycle,
     DistanceTable,
@@ -24,6 +28,10 @@ from ..services.message_audit import (
 from ..services.idempotency import claim_idpk
 from ..services.cycle_scheduler import (
     configure_cycle_schedule,
+)
+from ..services.information_requests import (
+    enqueue_information_request,
+    resolve_information_request,
 )
 
 IDEMPOTENT_MESSAGE_TYPES = {
@@ -150,6 +158,26 @@ def ingest_protocol_message(
                     "cycleId": payload.cycleId,
                 }
 
+        # Si llega un mensaje asociado a un ciclo antes de recibir
+        # su status-statement, se solicita el estado faltante.
+        if (
+            payload.cycleId is not None
+            and payload.type != "status-statement"
+        ):
+            cycle = _get_or_create_cycle(
+                session,
+                payload.cycleId,
+            )
+
+            if cycle.status_idpk is None:
+                enqueue_information_request(
+                    session,
+                    ask="status-statement",
+                    city_id=CITY_ID,
+                    routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                    commit=False,
+                )
+
         if payload.type == "status-statement":
 
             cycle_id = _require_cycle_id(payload)
@@ -222,6 +250,13 @@ def ingest_protocol_message(
             )
 
             session.add(cycle)
+
+            resolve_information_request(
+                session,
+                response_type="status-statement",
+                response_msg_id=str(payload.msgId),
+                response_idpk=str(payload.idpk),
+            )
 
         elif payload.type == "transfer":
 
@@ -352,6 +387,13 @@ def ingest_protocol_message(
 
             else:
                 audit_status = INBOUND_DUPLICATE
+
+            resolve_information_request(
+                session,
+                response_type="distance-table",
+                response_msg_id=str(payload.msgId),
+                response_idpk=str(payload.idpk),
+                )
 
         elif payload.type == "negotiation-proposal":
 

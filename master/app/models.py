@@ -546,3 +546,36 @@ class OutboundMessage(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
+    # Indica que el mensaje fue creado por el backend y debe ser
+    # publicado por el connector.
+    dispatch_required: bool = Field(
+        default=False,
+        index=True,
+        nullable=False,
+    )
+
+    # Para mensajes type=request identifica qué información se solicitó.
+    request_ask: Optional[str] = Field(
+        default=None,
+        index=True,
+    )
+
+    # Correlación con la respuesta que resolvió el request.
+    response_msg_id: Optional[str] = Field(
+        default=None,
+        index=True,
+    )
+
+    response_idpk: Optional[str] = Field(
+        default=None,
+        index=True,
+    )
+
+    resolved_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(
+            DateTime(timezone=True),
+            nullable=True,
+        ),
+    )

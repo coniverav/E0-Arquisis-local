@@ -39,6 +39,8 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -58,6 +60,8 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master2
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -117,6 +121,8 @@ services:
       CONNECTOR_RETRY_SECONDS: ${CONNECTOR_RETRY_SECONDS}
       HTTP_RETRY_SECONDS: ${HTTP_RETRY_SECONDS}
       HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS}
+      MASTER_OUTBOUND_DISPATCH_URL: ${MASTER_OUTBOUND_DISPATCH_URL}
+      OUTBOUND_POLL_SECONDS: ${OUTBOUND_POLL_SECONDS}
     depends_on:
       master:
         condition: service_healthy

@@ -23,6 +23,8 @@ from ..services.message_audit import (
     INBOUND_DISCARDED,
     INBOUND_DUPLICATE,
     INBOUND_NACKED,
+    OUTBOUND_FAILED,
+    OUTBOUND_PENDING,
     mark_inbound_result,
     mark_outbound_failed,
     mark_outbound_published,
@@ -137,6 +139,51 @@ def create_outbound_audit(
         "duplicate": False,
     }
 
+@router.get("/outbound/dispatch")
+def list_outbound_dispatch(
+    limit: int = Query(
+        20,
+        ge=1,
+        le=100,
+    ),
+    session: Session = Depends(get_session),
+):
+    """
+    Entrega al connector mensajes creados por el backend
+    que todavía requieren publicación en RabbitMQ.
+    """
+
+    messages = session.exec(
+        select(OutboundMessage)
+        .where(
+            OutboundMessage.dispatch_required.is_(True)
+        )
+        .where(
+            OutboundMessage.status.in_(
+                [
+                    OUTBOUND_PENDING,
+                    OUTBOUND_FAILED,
+                ]
+            )
+        )
+        .order_by(
+            OutboundMessage.created_at.asc()
+        )
+        .limit(limit)
+    ).all()
+
+    return {
+        "items": [
+            {
+                "msgId": message.msg_id,
+                "idpk": message.idpk,
+                "type": message.message_type,
+                "routingKey": message.routing_key,
+                "payload": message.payload,
+            }
+            for message in messages
+        ]
+    }
 
 @router.post("/outbound/{msg_id}/result")
 def update_outbound_audit(
@@ -161,6 +208,8 @@ def update_outbound_audit(
         )
 
     if payload.status == "PUBLISHED":
+        message.dispatch_required = False
+
         message = mark_outbound_published(
             session,
             message,

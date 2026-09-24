@@ -6,7 +6,10 @@ import ssl
 
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
-from protocol.publisher import build_city_user_id
+from protocol.publisher import (
+    build_city_user_id,
+    publish_protocol_message,
+)
 from protocol.intake import DiscardMessage, decode_incoming_payload
 from protocol.routing import select_master_url
 
@@ -24,7 +27,23 @@ RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
 MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/messages",)
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
-MASTER_OUTBOUND_AUDIT_URL = os.getenv("MASTER_OUTBOUND_AUDIT_URL", "http://master:8000/internal/audit/outbound",)
+MASTER_OUTBOUND_AUDIT_URL = os.getenv(
+    "MASTER_OUTBOUND_AUDIT_URL",
+    "http://master:8000/internal/audit/outbound",
+)
+
+MASTER_OUTBOUND_DISPATCH_URL = os.getenv(
+    "MASTER_OUTBOUND_DISPATCH_URL",
+    f"{MASTER_OUTBOUND_AUDIT_URL}/dispatch",
+)
+
+OUTBOUND_POLL_SECONDS = float(
+    os.getenv(
+        "OUTBOUND_POLL_SECONDS",
+        "2",
+    )
+)
+
 CONNECTOR_RETRY_SECONDS = float(os.getenv("CONNECTOR_RETRY_SECONDS", "5"))
 HTTP_RETRY_SECONDS = float(os.getenv("HTTP_RETRY_SECONDS", "2"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
@@ -258,6 +277,132 @@ async def complete_successful_message(
 
     await message.ack()
 
+async def publish_backend_outbox() -> None:
+    """
+    Consulta periódicamente mensajes salientes generados por
+    el backend y los publica mediante el connector.
+    """
+
+    tls_context = ssl.create_default_context()
+    city_user_id = build_city_user_id(CITY_ID)
+
+    while True:
+        try:
+            connection = await aio_pika.connect(
+                RABBITMQ_URL,
+                ssl_context=tls_context,
+                timeout=10,
+                client_properties={
+                    "connection_name": "energyshark-outbox-connector"
+                },
+            )
+
+            async with connection:
+                channel = await connection.channel()
+
+                exchange = await channel.get_exchange(
+                    RABBITMQ_OUTBOUND_EXCHANGE,
+                    ensure=False,
+                )
+
+                async with httpx.AsyncClient(
+                    timeout=HTTP_TIMEOUT_SECONDS
+                ) as client:
+
+                    while True:
+                        try:
+                            response = await client.get(
+                                MASTER_OUTBOUND_DISPATCH_URL
+                            )
+                            response.raise_for_status()
+
+                            items = response.json().get(
+                                "items",
+                                [],
+                            )
+
+                        except httpx.HTTPError as exc:
+                            logger.warning(
+                                "No fue posible consultar outbox: %s",
+                                exc,
+                            )
+                            await asyncio.sleep(
+                                OUTBOUND_POLL_SECONDS
+                            )
+                            continue
+
+                        for item in items:
+                            payload = item["payload"]
+                            msg_id = str(item["msgId"])
+                            routing_key = (
+                                item.get("routingKey")
+                                or RABBITMQ_CENTRAL_ROUTING_KEY
+                            )
+
+                            try:
+                                await publish_protocol_message(
+                                    exchange=exchange,
+                                    routing_key=routing_key,
+                                    payload=payload,
+                                    user_id=city_user_id,
+                                )
+
+                            except Exception as exc:
+                                logger.warning(
+                                    "Falló publicación outbound %s: %s",
+                                    msg_id,
+                                    exc,
+                                )
+
+                                try:
+                                    await register_outbound_result(
+                                        client,
+                                        msg_id,
+                                        status="FAILED",
+                                        error=str(exc),
+                                    )
+                                except Exception:
+                                    logger.exception(
+                                        "No fue posible registrar FAILED "
+                                        "para outbound %s",
+                                        msg_id,
+                                    )
+
+                                continue
+
+                            try:
+                                await register_outbound_result(
+                                    client,
+                                    msg_id,
+                                    status="PUBLISHED",
+                                )
+
+                            except Exception:
+                                logger.exception(
+                                    "Mensaje %s publicado pero no fue "
+                                    "posible registrar PUBLISHED",
+                                    msg_id,
+                                )
+
+                        await asyncio.sleep(
+                            OUTBOUND_POLL_SECONDS
+                        )
+
+        except asyncio.CancelledError:
+            raise
+
+        except Exception as exc:
+            logger.warning(
+                "Publisher de outbox interrumpido (%s). "
+                "Reintentando en %.1fs...",
+                exc,
+                CONNECTOR_RETRY_SECONDS,
+            )
+
+            await asyncio.sleep(
+                CONNECTOR_RETRY_SECONDS
+            )
+
 async def consume_forever() -> None:
     # create_default_context() usa las CA públicas del sistema y MANTIENE la verificación TLS.
     tls_context = ssl.create_default_context()
@@ -456,11 +601,32 @@ async def consume_forever() -> None:
 
 
 async def main() -> None:
-    heartbeat_task = asyncio.create_task(heartbeat())
+    heartbeat_task = asyncio.create_task(
+        heartbeat()
+    )
+    consumer_task = asyncio.create_task(
+        consume_forever()
+    )
+    outbox_task = asyncio.create_task(
+        publish_backend_outbox()
+    )
+
     try:
-        await consume_forever()
+        await asyncio.gather(
+            consumer_task,
+            outbox_task,
+        )
     finally:
         heartbeat_task.cancel()
+        consumer_task.cancel()
+        outbox_task.cancel()
+
+        await asyncio.gather(
+            heartbeat_task,
+            consumer_task,
+            outbox_task,
+            return_exceptions=True,
+        )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,16 @@ import os
 DATABASE_URL = os.environ["DATABASE_URL"]
 INSTANCE_NAME = os.getenv("INSTANCE_NAME", "master")
 
+CITY_ID = os.getenv(
+    "CITY_ID",
+    "KLD",
+)
+
+RABBITMQ_CENTRAL_ROUTING_KEY = os.getenv(
+    "RABBITMQ_CENTRAL_ROUTING_KEY",
+    "central",
+)
+
 CYCLE_REPORT_WINDOW_SECONDS = int(
     os.getenv(
         "CYCLE_REPORT_WINDOW_SECONDS",

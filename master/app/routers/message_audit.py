@@ -19,6 +19,9 @@ from ..schemas import (
     OutboundMessageAuditIn,
     OutboundMessageResultIn,
 )
+from ..services.negotiation_report_dispatch import (
+    mark_negotiation_report_sent,
+)
 from ..services.message_audit import (
     INBOUND_DISCARDED,
     INBOUND_DUPLICATE,
@@ -214,6 +217,17 @@ def update_outbound_audit(
             session,
             message,
         )
+
+        if (
+            message.message_type
+            == "negotiation-report"
+            and message.published_at is not None
+        ):
+            mark_negotiation_report_sent(
+                session,
+                msg_id=message.msg_id,
+                sent_at=message.published_at,
+            )
 
     else:
         if payload.error is None:

@@ -3,10 +3,17 @@ import time
 
 from sqlmodel import Session
 
-from ..config import CYCLE_SCHEDULER_POLL_SECONDS
+from ..config import (
+    CITY_ID,
+    CYCLE_SCHEDULER_POLL_SECONDS,
+    RABBITMQ_CENTRAL_ROUTING_KEY,
+)
 from ..database import engine
 from ..services.cycle_scheduler import (
     process_cycle_windows,
+)
+from ..services.negotiation_report_dispatch import (
+    enqueue_due_negotiation_reports,
 )
 
 
@@ -30,23 +37,40 @@ def run() -> None:
                     session
                 )
 
+                reports_enqueued = (
+                    enqueue_due_negotiation_reports(
+                        session,
+                        city_id=CITY_ID,
+                        routing_key=(
+                            RABBITMQ_CENTRAL_ROUTING_KEY
+                        ),
+                    )
+                )
+
                 session.commit()
 
                 if (
                     result["cycles_prepared"]
-                    or result["report_windows_opened"]
+                    or result[
+                        "report_windows_opened"
+                    ]
                     or result["cycles_closed"]
+                    or reports_enqueued
                 ):
                     logger.info(
                         (
                             "Scheduler procesó ventanas: "
                             "cycles_prepared=%s "
                             "report_windows_opened=%s "
-                            "cycles_closed=%s"
+                            "cycles_closed=%s "
+                            "reports_enqueued=%s"
                         ),
                         result["cycles_prepared"],
-                        result["report_windows_opened"],
+                        result[
+                            "report_windows_opened"
+                        ],
                         result["cycles_closed"],
+                        reports_enqueued,
                     )
 
         except Exception:

@@ -7,9 +7,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 from sqlmodel import Session
 
+from app.config import CYCLE_REPORT_WINDOW_SECONDS
 from app.database import engine, run_migrations
 from app.main import app
 from app.models import Cycle, InboundMessage, ProcessedIdpk
+from app.services.cycle_scheduler import CYCLE_PENDING
 
 
 class StatusStatementTests(unittest.TestCase):
@@ -85,15 +87,36 @@ class StatusStatementTests(unittest.TestCase):
             json=first_payload,
         )
 
-        self.assertEqual(first_response.status_code, 200)
+        self.assertEqual(
+            first_response.status_code,
+            200,
+        )
+
         self.assertEqual(
             first_response.json()["status"],
             "ok",
         )
 
+        expected_valid_until = datetime.fromisoformat(
+            first_payload["data"]["validUntil"].replace(
+                "Z",
+                "+00:00",
+            )
+        )
+
+        expected_report_window_opens_at = (
+            expected_valid_until
+            - timedelta(
+                seconds=CYCLE_REPORT_WINDOW_SECONDS
+            )
+        )
+
         # Verifica el estado persistido después de la primera aplicación.
         with Session(engine) as session:
-            cycle = session.get(Cycle, self.cycle_id)
+            cycle = session.get(
+                Cycle,
+                self.cycle_id,
+            )
 
             self.assertIsNotNone(cycle)
 
@@ -101,6 +124,7 @@ class StatusStatementTests(unittest.TestCase):
                 cycle.status_idpk,
                 self.idpk,
             )
+
             self.assertEqual(
                 cycle.status_msg_id,
                 self.first_msg_id,
@@ -110,10 +134,12 @@ class StatusStatementTests(unittest.TestCase):
                 cycle.generation_capacity,
                 Decimal("150.00"),
             )
+
             self.assertEqual(
                 cycle.consumption,
                 Decimal("100.00"),
             )
+
             self.assertEqual(
                 cycle.generation_cost,
                 Decimal("20.00"),
@@ -123,9 +149,34 @@ class StatusStatementTests(unittest.TestCase):
                 cycle.opening_energy_balance,
                 Decimal("50.00"),
             )
+
             self.assertEqual(
                 cycle.energy_balance,
                 Decimal("50.00"),
+            )
+
+            # Validaciones de integración con E1-38.
+            self.assertEqual(
+                cycle.valid_until,
+                expected_valid_until,
+            )
+
+            self.assertEqual(
+                cycle.scheduler_state,
+                CYCLE_PENDING,
+            )
+
+            self.assertEqual(
+                cycle.report_window_opens_at,
+                expected_report_window_opens_at,
+            )
+
+            self.assertIsNone(
+                cycle.report_window_opened_at
+            )
+
+            self.assertIsNone(
+                cycle.closed_at
             )
 
         # Debe quedar disponible en el historial del ciclo.
@@ -183,7 +234,12 @@ class StatusStatementTests(unittest.TestCase):
 
         # La segunda recepción no puede modificar el ciclo.
         with Session(engine) as session:
-            cycle = session.get(Cycle, self.cycle_id)
+            cycle = session.get(
+                Cycle,
+                self.cycle_id,
+            )
+
+            self.assertIsNotNone(cycle)
 
             self.assertEqual(
                 cycle.status_idpk,
@@ -200,23 +256,59 @@ class StatusStatementTests(unittest.TestCase):
                 cycle.generation_capacity,
                 Decimal("150.00"),
             )
+
             self.assertEqual(
                 cycle.consumption,
                 Decimal("100.00"),
             )
 
             self.assertEqual(
+                cycle.generation_cost,
+                Decimal("20.00"),
+            )
+
+            self.assertEqual(
                 cycle.opening_energy_balance,
                 Decimal("50.00"),
             )
+
             self.assertEqual(
                 cycle.energy_balance,
                 Decimal("50.00"),
             )
 
+            # El retry tampoco puede alterar la programación del ciclo.
+            self.assertEqual(
+                cycle.valid_until,
+                expected_valid_until,
+            )
+
+            self.assertEqual(
+                cycle.scheduler_state,
+                CYCLE_PENDING,
+            )
+
+            self.assertEqual(
+                cycle.report_window_opens_at,
+                expected_report_window_opens_at,
+            )
+
+            self.assertIsNone(
+                cycle.report_window_opened_at
+            )
+
+            self.assertIsNone(
+                cycle.closed_at
+            )
+
         # El historial también debe permanecer sin modificaciones.
         final_history_response = self.client.get(
             f"/cycles/{self.cycle_id}"
+        )
+
+        self.assertEqual(
+            final_history_response.status_code,
+            200,
         )
 
         final_history = final_history_response.json()

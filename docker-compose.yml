@@ -15,7 +15,7 @@ services:
       - "127.0.0.1:5432:5432"
     networks:
       - energyshark_net
-  
+
   # Aplica las migraciones versionadas antes de iniciar las réplicas del backend.
   migrate:
     build: ./master
@@ -38,6 +38,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +57,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master2
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
     depends_on:
       db:
         condition: service_healthy
@@ -63,6 +65,37 @@ services:
         condition: service_completed_successfully
     ports:
       - "127.0.0.1:8002:8000"
+    networks:
+      - energyshark_net
+
+  # Worker independiente encargado de procesar las ventanas temporales de los ciclos.
+  cycle-scheduler:
+    build: ./master
+    container_name: cycle-scheduler
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - app.workers.cycle_scheduler
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CYCLE_SCHEDULER_POLL_SECONDS: ${CYCLE_SCHEDULER_POLL_SECONDS}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from app.database import engine; from sqlalchemy import text; conn = engine.connect(); conn.execute(text('SELECT 1')); conn.close()"
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
     networks:
       - energyshark_net
 

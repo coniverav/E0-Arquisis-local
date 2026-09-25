@@ -27,6 +27,8 @@ from .routers.message_audit import (
 )
 from .routers.distance_tables import router as distance_tables_router
 from .routers.connectivity import router as connectivity_router
+from .routers.negotiations import router as negotiations_router
+
 
 app = FastAPI(
     title="EnergyShark E1",
@@ -37,6 +39,7 @@ app.include_router(cycles_router)
 app.include_router(internal_messages_router)
 app.include_router(message_audit_router)
 app.include_router(public_message_audit_router)
+app.include_router(negotiations_router)
 app.include_router(distance_tables_router)
 app.include_router(connectivity_router)
 

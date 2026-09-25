@@ -76,6 +76,14 @@ class NegotiationOut(BaseModel):
 
     deadlineAt: datetime | None = None
 
+class NegotiationCreate(BaseModel):
+    cycleId: str
+    idpk: UUID
+
+    direction: Literal["give", "take"]
+    requestedQuantity: Decimal = Field(gt=0)
+    offeredPrice: Decimal = Field(ge=0)
+
 class NegotiationReportOut(BaseModel):
     msgId: str
     idpk: str

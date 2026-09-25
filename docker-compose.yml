@@ -41,6 +41,7 @@ services:
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     depends_on:
       db:
         condition: service_healthy
@@ -62,6 +63,7 @@ services:
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
     depends_on:
       db:
         condition: service_healthy

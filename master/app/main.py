@@ -3,11 +3,12 @@ import json
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, exists, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from .config import INSTANCE_NAME
+from .config import CORS_ALLOWED_ORIGINS, INSTANCE_NAME
 from .database import engine, get_session
 from .models import Demand, Event, ProtocolError
 from .schemas import (
@@ -31,6 +32,14 @@ from .routers.connectivity import router as connectivity_router
 app = FastAPI(
     title="EnergyShark E1",
     version="2.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(cycles_router)

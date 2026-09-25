@@ -131,6 +131,19 @@ class DistanceTableOut(BaseModel):
     receivedAt: datetime
     distances: dict[str, Any]
 
+class ConnectivityItemOut(BaseModel):
+    destination: str
+    distance: float
+    transportCost: float
+    enabled: bool
+
+
+class ConnectivityOut(BaseModel):
+    timestamp: datetime
+    total: int
+    items: list[ConnectivityItemOut]
+
+
 class ProtocolMessageIn(BaseModel):
     """
     Envelope base de los mensajes del protocolo E1.

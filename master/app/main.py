@@ -26,6 +26,7 @@ from .routers.message_audit import (
     router as message_audit_router,
 )
 from .routers.distance_tables import router as distance_tables_router
+from .routers.connectivity import router as connectivity_router
 
 app = FastAPI(
     title="EnergyShark E1",
@@ -37,6 +38,7 @@ app.include_router(internal_messages_router)
 app.include_router(message_audit_router)
 app.include_router(public_message_audit_router)
 app.include_router(distance_tables_router)
+app.include_router(connectivity_router)
 
 def _event_to_out(session: Session, event: Event) -> EventOut:
     demands = session.exec(

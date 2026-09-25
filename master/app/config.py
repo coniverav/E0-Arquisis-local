@@ -31,3 +31,12 @@ CYCLE_SCHEDULER_POLL_SECONDS = float(
 AUTH_JWKS_URL = os.getenv("AUTH_JWKS_URL")
 AUTH_AUDIENCE = os.getenv("AUTH_AUDIENCE")
 AUTH_ISSUER = os.getenv("AUTH_ISSUER")
+
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173",
+    ).split(",")
+    if origin.strip()
+]

@@ -9,6 +9,7 @@ from ..models import (
     InboundMessage,
     OutboundMessage,
     ProcessedIdpk,
+    Negotiation,
 )
 from ..schemas import (
     AuditAnomalyListOut,
@@ -21,6 +22,10 @@ from ..schemas import (
 )
 from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent,
+)
+from ..services.negotiation_state import (
+    NEGOTIATION_PROPOSED,
+    transition_negotiation,
 )
 from ..services.message_audit import (
     INBOUND_DISCARDED,
@@ -217,6 +222,28 @@ def update_outbound_audit(
             session,
             message,
         )
+
+        if (
+            message.message_type
+            == "negotiation-proposal"
+        ):
+            negotiation = session.exec(
+                select(Negotiation).where(
+                    Negotiation.latest_msg_id
+                    == message.msg_id
+                )
+            ).first()
+
+            if negotiation is not None:
+
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_PROPOSED,
+                    now=message.published_at,
+                )
+
+                session.commit()
 
         if (
             message.message_type

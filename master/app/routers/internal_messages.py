@@ -33,6 +33,12 @@ from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
 )
+from ..services.negotiation_state import (
+    NEGOTIATION_ACKNOWLEDGED,
+    NEGOTIATION_CONFIRMED,
+    NEGOTIATION_PAID,
+    transition_negotiation,
+)
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -317,8 +323,13 @@ def ingest_protocol_message(
 
                 if negotiation is not None:
                     negotiation.payment_quantity = quantity
-                    negotiation.status = "PAID"
-                    negotiation.updated_at = now
+
+                    transition_negotiation(
+                        session,
+                        negotiation,
+                        NEGOTIATION_PAID,
+                        now=now,
+                    )
 
                     session.add(negotiation)
 
@@ -449,10 +460,12 @@ def ingest_protocol_message(
             ).first()
 
             if negotiation is not None:
-                negotiation.status = "ACKNOWLEDGED"
-                negotiation.updated_at = now
-
-                session.add(negotiation)
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_ACKNOWLEDGED,
+                    now=now,
+                )
 
         elif payload.type in {"give", "take"}:
 
@@ -504,17 +517,21 @@ def ingest_protocol_message(
 
             if negotiation is not None:
 
-                negotiation.status = "CONFIRMED"
                 negotiation.confirmed_energy = quantity
                 negotiation.confirmed_price = price
+
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_CONFIRMED,
+                    now=now,
+                )
 
                 # El transfer posterior utiliza becauseOf apuntando
                 # al msgId de esta confirmación.
                 negotiation.latest_msg_id = str(
                     payload.msgId
                 )
-
-                negotiation.updated_at = now
 
                 session.add(negotiation)
 

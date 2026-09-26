@@ -39,6 +39,9 @@ from ..services.negotiation_state import (
     NEGOTIATION_PAID,
     transition_negotiation,
 )
+from ..services.negotiation_confirmations import (
+    process_negotiation_confirmation,
+)
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -471,69 +474,33 @@ def ingest_protocol_message(
 
             cycle_id = _require_cycle_id(payload)
 
-            _get_or_create_cycle(
-                session,
-                cycle_id,
-            )
+            quantity = _decimal(payload.data["energy"])
 
-            quantity = _decimal(
-                payload.data["energy"]
-            )
+            price = _decimal(payload.data["pricePerEnergy"])
 
-            price = _decimal(
-                payload.data["pricePerEnergy"]
-            )
+            target = str(payload.data["target"])
 
-            if payload.type == "give":
-                energy_delta = -quantity
-                operation_type = "GIVE_CONFIRMED"
-            else:
-                energy_delta = quantity
-                operation_type = "TAKE_CONFIRMED"
 
-            _, applied = apply_ledger_effect(
-                session,
-                cycle_id=cycle_id,
-                idpk=str(payload.idpk),
-                source_msg_id=str(payload.msgId),
-                operation_type=operation_type,
-                budget_delta=Decimal("0"),
-                energy_delta=energy_delta,
-                details=payload.model_dump(mode="json"),
-            )
-
-            if not applied:
-                audit_status = INBOUND_DUPLICATE
-
-            target = str(
-                payload.data["target"]
-            )
-
-            negotiation = session.exec(
-                select(Negotiation).where(
-                    Negotiation.latest_msg_id == target
-                )
-            ).first()
-
-            if negotiation is not None:
-
-                negotiation.confirmed_energy = quantity
-                negotiation.confirmed_price = price
-
-                transition_negotiation(
+            _, _, applied = (
+                process_negotiation_confirmation(
                     session,
-                    negotiation,
-                    NEGOTIATION_CONFIRMED,
+                    confirmation_type=payload.type,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    msg_id=str(payload.msgId),
+                    target_msg_id=target,
+                    energy=quantity,
+                    price_per_energy=price,
+                    details=payload.model_dump(mode="json"),
                     now=now,
                 )
+            )
+            # -> (negotiation, ledger_entry, True/False)
 
-                # El transfer posterior utiliza becauseOf apuntando
-                # al msgId de esta confirmación.
-                negotiation.latest_msg_id = str(
-                    payload.msgId
+            if not applied:
+                audit_status = (
+                    INBOUND_DUPLICATE
                 )
-
-                session.add(negotiation)
 
         elif payload.type == "negotiation-report":
 

@@ -52,7 +52,9 @@ ALLOWED_TRANSITIONS = {
 
     # E1-50 podrá extender esta transición
     # para realizar el retry con el mismo idpk.
-    NEGOTIATION_TIMEOUT: set(),
+    NEGOTIATION_TIMEOUT: {
+        NEGOTIATION_PENDING_PUBLICATION,
+    },
 }
 
 
@@ -138,14 +140,16 @@ def transition_negotiation(
 
     # La central tiene 30 segundos desde la publicación
     # real de la propuesta para responder con give/take.
-    if new_status == NEGOTIATION_PROPOSED:
+    if new_status == NEGOTIATION_PENDING_PUBLICATION:
+        negotiation.deadline_at = None
+
+    elif new_status == NEGOTIATION_PROPOSED:
         negotiation.deadline_at = (
             now
             + timedelta(
                 seconds=NEGOTIATION_TIMEOUT_SECONDS
             )
         )
-
     # Un ACK solo confirma recepción.
     # NO reinicia el plazo de 30 segundos.
     elif new_status == NEGOTIATION_ACKNOWLEDGED:

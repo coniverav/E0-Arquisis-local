@@ -1165,6 +1165,157 @@ class NegotiationConfirmationTests(unittest.TestCase):
                 NEGOTIATION_CONFIRMED,
             )
 
+    def test_give_retry_after_payment_timeout_does_not_apply_energy_twice(
+        self,
+    ):
+        # --------------------------------------------------------
+        # 1. Negociación GIVE inicial
+        # --------------------------------------------------------
+
+        self._create_cycle_and_negotiation(
+            direction="give",
+            status=NEGOTIATION_ACKNOWLEDGED,
+            energy_balance=Decimal("80.00"),
+        )
+
+        first_payload = self._confirmation_payload(
+            message_type="give",
+            idpk=self.confirmation_idpk,
+            msg_id=self.confirmation_msg_id,
+            energy=40,
+            price=220.5,
+        )
+
+        first_response = self.client.post(
+            "/internal/messages",
+            json=first_payload,
+        )
+
+        self.assertEqual(
+            first_response.status_code,
+            200,
+        )
+
+        # --------------------------------------------------------
+        # 2. Simular timeout esperando el pago
+        # --------------------------------------------------------
+
+        with Session(engine) as session:
+            negotiation = session.exec(
+                select(Negotiation).where(
+                    Negotiation.cycle_id
+                    == self.cycle_id
+                )
+            ).one()
+
+            negotiation.status = "TIMEOUT"
+            negotiation.deadline_at = (
+                datetime.now(timezone.utc)
+                - timedelta(seconds=1)
+            )
+
+            # Simulamos que E1-50 creó y publicó
+            # una nueva negotiation-proposal.
+            retry_proposal_msg_id = str(uuid4())
+
+            negotiation.status = NEGOTIATION_PROPOSED
+            negotiation.latest_msg_id = (
+                retry_proposal_msg_id
+            )
+
+            session.add(negotiation)
+            session.commit()
+
+        # --------------------------------------------------------
+        # 3. Nueva confirmación del retry
+        # --------------------------------------------------------
+
+        retry_confirmation_idpk = str(uuid4())
+        retry_confirmation_msg_id = str(uuid4())
+
+        retry_payload = self._confirmation_payload(
+            message_type="give",
+            idpk=retry_confirmation_idpk,
+            msg_id=retry_confirmation_msg_id,
+            target=retry_proposal_msg_id,
+            energy=40,
+            price=220.5,
+        )
+
+        retry_response = self.client.post(
+            "/internal/messages",
+            json=retry_payload,
+        )
+
+        self.assertEqual(
+            retry_response.status_code,
+            200,
+        )
+
+        #El ledger ya estaba aplicado, por lo que esta confirmación lógica queda registrada como duplicada.
+        self.assertEqual(
+            retry_response.json()["status"],
+            "ok",
+        )
+
+        # --------------------------------------------------------
+        # 4. Verificar que la energía se aplicó UNA sola vez
+        # --------------------------------------------------------
+
+        with Session(engine) as session:
+            cycle = session.get(
+                Cycle,
+                self.cycle_id,
+            )
+
+            negotiation = session.exec(
+                select(Negotiation).where(
+                    Negotiation.cycle_id
+                    == self.cycle_id
+                )
+            ).one()
+
+            entries = session.exec(
+                select(LedgerEntry).where(
+                    LedgerEntry.cycle_id
+                    == self.cycle_id,
+                    LedgerEntry.operation_type
+                    == "GIVE_CONFIRMED",
+                )
+            ).all()
+
+            self.assertEqual(
+                len(entries),
+                1,
+            )
+
+            #80 inicial - 40 GIVE = 40. El retry NO debe dejarlo en 0.
+            self.assertEqual(
+                cycle.energy_balance,
+                Decimal("40.00"),
+            )
+
+            self.assertEqual(
+                cycle.last_sequence,
+                1,
+            )
+
+            #La correlación sí debe avanzar a la NUEVA confirmación.
+            self.assertEqual(
+                negotiation.latest_msg_id,
+                retry_confirmation_msg_id,
+            )
+
+            self.assertEqual(
+                negotiation.confirmed_energy,
+                Decimal("40.00"),
+            )
+
+            self.assertEqual(
+                negotiation.confirmed_price,
+                Decimal("220.50"),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

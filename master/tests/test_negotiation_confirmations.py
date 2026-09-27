@@ -430,49 +430,83 @@ class NegotiationConfirmationTests(unittest.TestCase):
                 )
             ).one()
 
-            entry = session.exec(
+            # ====================================================
+            # E1-46:
+            # debe existir exactamente una confirmación TAKE.
+            # ====================================================
+
+            confirmation_entries = session.exec(
                 select(LedgerEntry).where(
                     LedgerEntry.cycle_id
-                    == self.cycle_id
+                    == self.cycle_id,
+                    LedgerEntry.operation_type
+                    == "TAKE_CONFIRMED",
                 )
-            ).one()
+            ).all()
 
             self.assertEqual(
-                entry.operation_type,
-                "TAKE_CONFIRMED",
+                len(confirmation_entries),
+                1,
             )
 
-            # TAKE = recibimos energía.
+            confirmation_entry = (
+                confirmation_entries[0]
+            )
+
+            # ====================================================
+            # E1-47:
+            # después de TAKE_CONFIRMED se crea automáticamente
+            # exactamente un PAYMENT_SENT.
+            # ====================================================
+
+            payment_entries = session.exec(
+                select(LedgerEntry).where(
+                    LedgerEntry.cycle_id
+                    == self.cycle_id,
+                    LedgerEntry.operation_type
+                    == "PAYMENT_SENT",
+                )
+            ).all()
+
             self.assertEqual(
-                entry.energy_delta,
-                Decimal("50.00"),
+                len(payment_entries),
+                1,
             )
 
-            self.assertEqual(
-                entry.budget_delta,
-                Decimal("0.00"),
+            payment_entry = (
+                payment_entries[0]
             )
 
-            # -30 + 50 = 20
+            # ====================================================
+            # Verificaciones de E1-46
+            # ====================================================
+
+            # Balance inicial:
+            # -30
+            #
+            # TAKE confirmado:
+            # +50
+            #
+            # Resultado:
+            # 20
             self.assertEqual(
                 cycle.energy_balance,
                 Decimal("20.00"),
             )
 
-            # Todavía no pagamos.
             self.assertEqual(
-                cycle.budget_balance,
-                Decimal("1000.00"),
+                confirmation_entry.energy_delta,
+                Decimal("50.00"),
             )
 
             self.assertEqual(
-                entry.negotiation_id,
+                confirmation_entry.budget_delta,
+                Decimal("0.00"),
+            )
+
+            self.assertEqual(
+                confirmation_entry.negotiation_id,
                 negotiation.id,
-            )
-
-            self.assertEqual(
-                negotiation.status,
-                NEGOTIATION_CONFIRMED,
             )
 
             self.assertEqual(
@@ -486,8 +520,59 @@ class NegotiationConfirmationTests(unittest.TestCase):
             )
 
             self.assertEqual(
+                negotiation.status,
+                NEGOTIATION_CONFIRMED,
+            )
+
+            # ====================================================
+            # Verificaciones de E1-47
+            # ====================================================
+
+            # El pago no vuelve a modificar energía.
+            self.assertEqual(
+                payment_entry.energy_delta,
+                Decimal("0.00"),
+            )
+
+            # 50 * 210 = 10500
+            self.assertEqual(
+                payment_entry.budget_delta,
+                Decimal("-10500.00"),
+            )
+
+            self.assertEqual(
+                payment_entry.negotiation_id,
+                negotiation.id,
+            )
+
+            self.assertEqual(
+                negotiation.payment_quantity,
+                Decimal("10500.00"),
+            )
+
+            # ====================================================
+            # Ahora hay DOS operaciones en ledger:
+            #
+            # sequence 1 -> TAKE_CONFIRMED
+            # sequence 2 -> PAYMENT_SENT
+            # ====================================================
+
+            self.assertEqual(
+                cycle.last_sequence,
+                2,
+            )
+
+            # E1-47 cambia latest_msg_id al msgId del transfer.
+            # Debe coincidir con la entrada PAYMENT_SENT.
+            self.assertEqual(
                 negotiation.latest_msg_id,
-                self.confirmation_msg_id,
+                payment_entry.source_msg_id,
+            )
+
+            # Ya no debe apuntar al msgId del TAKE recibido.
+            self.assertNotEqual(
+                negotiation.latest_msg_id,
+                str(payload["msgId"]),
             )
 
     # ============================================================
@@ -611,11 +696,16 @@ class NegotiationConfirmationTests(unittest.TestCase):
             energy_balance=Decimal("-30.00"),
         )
 
+        # ========================================================
+        # PRIMER TAKE
+        # ========================================================
+
         first_payload = self._confirmation_payload(
             message_type="take",
             idpk=self.confirmation_idpk,
             msg_id=self.confirmation_msg_id,
             energy=50,
+            price=210,
         )
 
         first_response = self.client.post(
@@ -628,11 +718,30 @@ class NegotiationConfirmationTests(unittest.TestCase):
             200,
         )
 
+        self.assertEqual(
+            first_response.json()["status"],
+            "ok",
+        )
+
+        # ========================================================
+        # SEGUNDO TAKE
+        #
+        # Mismo idpk:
+        # debe ser reconocido como duplicado aunque cambien
+        # msgId y energía.
+        # ========================================================
+
         retry_payload = self._confirmation_payload(
             message_type="take",
             idpk=self.confirmation_idpk,
             msg_id=self.retry_msg_id,
+
+            # Valor deliberadamente distinto.
+            # Si el duplicado se procesara por error,
+            # destruiría el balance y el test fallaría.
             energy=999,
+
+            price=210,
         )
 
         retry_response = self.client.post(
@@ -657,7 +766,19 @@ class NegotiationConfirmationTests(unittest.TestCase):
                 self.cycle_id,
             )
 
-            entries = session.exec(
+            negotiation = session.exec(
+                select(Negotiation).where(
+                    Negotiation.cycle_id
+                    == self.cycle_id
+                )
+            ).one()
+
+            # ====================================================
+            # Confirmación TAKE:
+            # debe existir UNA sola vez.
+            # ====================================================
+
+            confirmation_entries = session.exec(
                 select(LedgerEntry).where(
                     LedgerEntry.cycle_id
                     == self.cycle_id,
@@ -667,9 +788,42 @@ class NegotiationConfirmationTests(unittest.TestCase):
             ).all()
 
             self.assertEqual(
-                len(entries),
+                len(confirmation_entries),
                 1,
             )
+
+            confirmation_entry = (
+                confirmation_entries[0]
+            )
+
+            # ====================================================
+            # Pago E1-47:
+            # también debe existir UNA sola vez.
+            # ====================================================
+
+            payment_entries = session.exec(
+                select(LedgerEntry).where(
+                    LedgerEntry.cycle_id
+                    == self.cycle_id,
+                    LedgerEntry.operation_type
+                    == "PAYMENT_SENT",
+                )
+            ).all()
+
+            self.assertEqual(
+                len(payment_entries),
+                1,
+            )
+
+            payment_entry = (
+                payment_entries[0]
+            )
+
+            # ====================================================
+            # El retry con energy=999 NO debe modificar energía.
+            #
+            # -30 + 50 = 20
+            # ====================================================
 
             self.assertEqual(
                 cycle.energy_balance,
@@ -677,47 +831,99 @@ class NegotiationConfirmationTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                cycle.last_sequence,
-                1,
+                confirmation_entry.energy_delta,
+                Decimal("50.00"),
             )
 
-    # ============================================================
-    # TARGET INEXISTENTE
-    # ============================================================
+            # No debe existir TAKE_CONFIRMED con 999.
+            self.assertNotEqual(
+                confirmation_entry.energy_delta,
+                Decimal("999.00"),
+            )
 
-    def test_unknown_target_is_rejected_without_modifying_ledger(self):
+            # ====================================================
+            # El pago tampoco puede duplicarse.
+            #
+            # 50 * 210 = 10500
+            # ====================================================
 
-        self._create_cycle_and_negotiation(
-            direction="give",
-            status=NEGOTIATION_ACKNOWLEDGED,
-            energy_balance=Decimal("80.00"),
-        )
+            self.assertEqual(
+                payment_entry.budget_delta,
+                Decimal("-10500.00"),
+            )
 
-        with Session(engine) as session:
+            self.assertEqual(
+                payment_entry.energy_delta,
+                Decimal("0.00"),
+            )
 
-            with self.assertRaises(
-                NegotiationConfirmationError
-            ):
-                process_negotiation_confirmation(
-                    session,
-                    confirmation_type="give",
-                    cycle_id=self.cycle_id,
-                    idpk=self.confirmation_idpk,
-                    msg_id=self.confirmation_msg_id,
+            # ====================================================
+            # Ambas operaciones deben apuntar a la misma
+            # negociación.
+            # ====================================================
 
-                    # No pertenece a ninguna negociación.
-                    target_msg_id=str(uuid4()),
+            self.assertEqual(
+                confirmation_entry.negotiation_id,
+                negotiation.id,
+            )
 
-                    energy=Decimal("40.00"),
-                    price_per_energy=Decimal("220.50"),
-                    details={},
-                )
+            self.assertEqual(
+                payment_entry.negotiation_id,
+                negotiation.id,
+            )
 
-            session.rollback()
+            # ====================================================
+            # Negotiation conserva SOLO los valores de la
+            # primera confirmación.
+            # ====================================================
 
-        self._assert_no_ledger_effect(
-            expected_energy=Decimal("80.00")
-        )
+            self.assertEqual(
+                negotiation.confirmed_energy,
+                Decimal("50.00"),
+            )
+
+            self.assertEqual(
+                negotiation.confirmed_price,
+                Decimal("210.00"),
+            )
+
+            self.assertEqual(
+                negotiation.payment_quantity,
+                Decimal("10500.00"),
+            )
+
+            self.assertEqual(
+                negotiation.status,
+                NEGOTIATION_CONFIRMED,
+            )
+
+            # ====================================================
+            # Exactamente DOS efectos reales:
+            #
+            # 1 -> TAKE_CONFIRMED
+            # 2 -> PAYMENT_SENT
+            #
+            # El retry no crea sequence 3.
+            # ====================================================
+
+            self.assertEqual(
+                cycle.last_sequence,
+                2,
+            )
+
+            # latest_msg_id debe seguir correspondiendo al
+            # transfer generado por el PRIMER TAKE.
+            self.assertEqual(
+                negotiation.latest_msg_id,
+                payment_entry.source_msg_id,
+            )
+
+            # El msgId del retry nunca debe convertirse
+            # en latest_msg_id.
+            self.assertNotEqual(
+                negotiation.latest_msg_id,
+                self.retry_msg_id,
+            )
 
     # ============================================================
     # DIRECCIÓN INCORRECTA

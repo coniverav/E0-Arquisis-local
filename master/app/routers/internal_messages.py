@@ -42,6 +42,10 @@ from ..services.negotiation_state import (
 from ..services.negotiation_confirmations import (
     process_negotiation_confirmation,
 )
+from ..services.negotiation_payments import (
+    enqueue_take_payment,
+    process_give_payment,
+)
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -270,71 +274,57 @@ def ingest_protocol_message(
         elif payload.type == "transfer":
 
             cycle_id = _require_cycle_id(payload)
-
-            _get_or_create_cycle(
-                session,
-                cycle_id,
-            )
-
-            quantity = _decimal(
-                payload.data["quantity"]
-            )
-
+            quantity = _decimal(payload.data["quantity"])
             because_of = payload.data.get("becauseOf")
 
-            # Si trae cityId, corresponde a una transferencia
-            # emitida por nuestra ciudad.
-            if payload.cityId is not None:
+            # ======================================================
+            # transfer asociado a una negociación GIVE
+            # ======================================================
 
-                operation_type = "PAYMENT_SENT"
-                budget_delta = -quantity
+            if because_of is not None:
+
+                _, _, applied = process_give_payment(
+                    session,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    msg_id=str(payload.msgId),
+                    because_of=str(because_of),
+                    quantity=quantity,
+                    details=payload.model_dump(mode="json"),
+                    now=now,
+                )
+
+                if not applied:
+                    audit_status = (
+                        INBOUND_DUPLICATE
+                    )
+
+            # ======================================================
+            # transfer normal recibido de la central
+            # ======================================================
 
             else:
 
-                # Transferencia recibida desde la central.
-                operation_type = (
-                    "PAYMENT_RECEIVED"
-                    if because_of is not None
-                    else "TRANSFER_IN"
+                _get_or_create_cycle(
+                    session,
+                    cycle_id,
                 )
 
-                budget_delta = quantity
+                _, applied = apply_ledger_effect(
+                    session,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    source_msg_id=str(payload.msgId),
+                    operation_type="TRANSFER_IN",
+                    budget_delta=quantity,
+                    energy_delta=Decimal("0"),
+                    details=payload.model_dump(mode="json"),
+                )
 
-            _, applied = apply_ledger_effect(
-                session,
-                cycle_id=cycle_id,
-                idpk=str(payload.idpk),
-                source_msg_id=str(payload.msgId),
-                operation_type=operation_type,
-                budget_delta=budget_delta,
-                energy_delta=Decimal("0"),
-                details=payload.model_dump(mode="json"),
-            )
-
-            if not applied:
-                audit_status = INBOUND_DUPLICATE
-
-            # Si corresponde a una negociación, se actualiza su estado.
-            if because_of is not None:
-
-                negotiation = session.exec(
-                    select(Negotiation).where(
-                        Negotiation.latest_msg_id
-                        == str(because_of)
+                if not applied:
+                    audit_status = (
+                        INBOUND_DUPLICATE
                     )
-                ).first()
-
-                if negotiation is not None:
-                    negotiation.payment_quantity = quantity
-
-                    transition_negotiation(
-                        session,
-                        negotiation,
-                        NEGOTIATION_PAID,
-                        now=now,
-                    )
-
-                    session.add(negotiation)
 
         # Convención:
         # energy_delta = quantity
@@ -473,15 +463,12 @@ def ingest_protocol_message(
         elif payload.type in {"give", "take"}:
 
             cycle_id = _require_cycle_id(payload)
-
             quantity = _decimal(payload.data["energy"])
-
             price = _decimal(payload.data["pricePerEnergy"])
-
             target = str(payload.data["target"])
 
-
-            _, _, applied = (
+            # Retorna: (negotiation, ledger_entry, True/False)
+            negotiation, _, applied = ( 
                 process_negotiation_confirmation(
                     session,
                     confirmation_type=payload.type,
@@ -495,11 +482,19 @@ def ingest_protocol_message(
                     now=now,
                 )
             )
-            # -> (negotiation, ledger_entry, True/False)
-
+            
             if not applied:
                 audit_status = (
                     INBOUND_DUPLICATE
+                )
+
+            elif payload.type == "take":
+                enqueue_take_payment(
+                    session,
+                    negotiation_id=negotiation.id,
+                    city_id=CITY_ID,
+                    routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                    now=now,
                 )
 
         elif payload.type == "negotiation-report":

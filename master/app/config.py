@@ -36,3 +36,7 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+AUTH_JWKS_URL = os.getenv("AUTH_JWKS_URL")
+AUTH_AUDIENCE = os.getenv("AUTH_AUDIENCE")
+AUTH_ISSUER = os.getenv("AUTH_ISSUER")

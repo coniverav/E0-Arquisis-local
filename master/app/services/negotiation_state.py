@@ -8,32 +8,17 @@ from sqlmodel import Session
 
 from ..models import Negotiation
 
-
-NEGOTIATION_PENDING_PUBLICATION = (
-    "PENDING_PUBLICATION"
-)
-
+NEGOTIATION_PENDING_PUBLICATION = "PENDING_PUBLICATION"
 NEGOTIATION_PROPOSED = "PROPOSED"
-
-NEGOTIATION_ACKNOWLEDGED = (
-    "ACKNOWLEDGED"
-)
-
+NEGOTIATION_ACKNOWLEDGED = "ACKNOWLEDGED"
 NEGOTIATION_CONFIRMED = "CONFIRMED"
-
 NEGOTIATION_PAID = "PAID"
-
 NEGOTIATION_REJECTED = "REJECTED"
-
 NEGOTIATION_TIMEOUT = "TIMEOUT"
 
+NEGOTIATION_TIMEOUT_SECONDS = 30
 
-CONFIRMATION_TIMEOUT_SECONDS = 30
-
-
-class InvalidNegotiationTransition(
-    ValueError
-):
+class InvalidNegotiationTransition(ValueError):
     pass
 
 
@@ -105,9 +90,7 @@ def transition_negotiation(
             timezone.utc
         )
 
-    current_status = (
-        negotiation.status
-    )
+    current_status = negotiation.status
 
     # Idempotencia.
     if current_status == new_status:
@@ -149,17 +132,53 @@ def transition_negotiation(
     negotiation.status = new_status
     negotiation.updated_at = now
 
-    # Los 30 segundos comienzan después
-    # de publicar realmente la propuesta.
+    # --------------------------------------------------
+    # E1-49: manejo persistente de deadlines
+    # --------------------------------------------------
+
+    # La central tiene 30 segundos desde la publicación
+    # real de la propuesta para responder con give/take.
     if new_status == NEGOTIATION_PROPOSED:
         negotiation.deadline_at = (
             now
             + timedelta(
-                seconds=(
-                    CONFIRMATION_TIMEOUT_SECONDS
-                )
+                seconds=NEGOTIATION_TIMEOUT_SECONDS
             )
         )
+
+    # Un ACK solo confirma recepción.
+    # NO reinicia el plazo de 30 segundos.
+    elif new_status == NEGOTIATION_ACKNOWLEDGED:
+        pass
+
+    # Después de una confirmación GIVE debemos esperar
+    # hasta 30 segundos por el transfer de la central.
+    # Para TAKE nosotros pagamos inmediatamente,
+    # por lo que no queda una espera externa.
+    elif new_status == NEGOTIATION_CONFIRMED:
+
+        if negotiation.direction == "give":
+            negotiation.deadline_at = (
+                now
+                + timedelta(
+                    seconds=NEGOTIATION_TIMEOUT_SECONDS
+                )
+            )
+
+        else:
+            negotiation.deadline_at = None
+
+    # Si la negociación terminó correctamente o fue
+    # rechazada, ya no debe existir un timeout pendiente.
+    elif new_status in {NEGOTIATION_PAID, NEGOTIATION_REJECTED}:
+        negotiation.deadline_at = None
+
+    # En TIMEOUT conservamos deadline_at.
+    # Esto permite explicar:
+    #   deadline_at = cuándo debía llegar la respuesta
+    #   updated_at  = cuándo el worker detectó el timeout
+    elif new_status == NEGOTIATION_TIMEOUT:
+        pass
 
     session.add(negotiation)
     session.flush()

@@ -1,4 +1,37 @@
-# EnergyShark - Entrega 0 ⚡
+# EnergyShark - Entrega 1 ⚡🦈
+
+Para ejecutar los sets de pruebas:
+
+```
+cd ~/E0-Arquisis-local
+
+docker compose down --remove-orphans
+docker compose up -d --build
+
+docker compose ps -a
+
+docker compose exec master python -m pytest -v
+```
+
+Para ejecutar pruebas en específico:
+
+```
+cd ~/E0-Arquisis-local
+
+docker compose down --remove-orphans
+docker compose up -d --build
+
+docker compose ps -a
+
+docker compose exec master \
+python -m pytest tests/test_xxxxxxxxxxxxxxx.py -v
+```
+
+
+---
+
+
+# EnergyShark - Entrega 0 ⚡🦈
 
 Es importante mencionar que el archivo `.env` real se encuentra configurado directamente en la instancia EC2
 y no se versiona en GitHub por contener credenciales privadas. En este repositorio se incluye `.env.example` como referencia.

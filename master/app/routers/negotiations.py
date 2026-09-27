@@ -1,9 +1,9 @@
-from datetime import datetime, timedelta, timezone
-
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from ..config import CITY_ID, RABBITMQ_CENTRAL_ROUTING_KEY
+from ..services.negotiation_proposals import enqueue_negotiation_proposal
 from ..auth import verify_jwt
 from ..database import get_session
 from ..models import Cycle, Negotiation
@@ -41,52 +41,68 @@ def create_negotiation(
     session: Session = Depends(get_session),
 ) -> NegotiationOut:
     """
-    Crear una negociación manual en estado PROPOSED.
+    Crea una negociación voluntaria y deja su
+    negotiation-proposal pendiente de publicación.
 
-    Requiere JWT válido. La idempotencia es por idpk: un reintento
-    con el mismo idpk devuelve la negociación existente con 200.
+    Requiere JWT válido. La idempotencia es por idpk:
+    un reintento con el mismo idpk devuelve la
+    negociación existente con 200.
     """
-    now = datetime.now(timezone.utc)
 
+    #Mantener el 404 explícito de la API.
     cycle = session.get(Cycle, payload.cycleId)
-    if cycle is None:
-        raise HTTPException(status_code=404, detail="Cycle not found")
 
+    if cycle is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Cycle not found",
+        )
+
+    #Retry HTTP con el mismo idpk, no crear una segunda propuesta.
     existing = session.exec(
-        select(Negotiation).where(Negotiation.idpk == str(payload.idpk))
+        select(Negotiation).where(
+            Negotiation.idpk == str(payload.idpk)
+        )
     ).first()
+
     if existing is not None:
         response.status_code = 200
         return _negotiation_to_out(existing)
 
-    negotiation = Negotiation(
-        cycle_id=payload.cycleId,
-        idpk=str(payload.idpk),
-        latest_msg_id=None,
-        direction=payload.direction,
-        requested_quantity=payload.requestedQuantity,
-        offered_price=payload.offeredPrice,
-        status="PROPOSED",
-        deadline_at=now + timedelta(seconds=30),
-        created_at=now,
-        updated_at=now,
-    )
-
     try:
-        session.add(negotiation)
-        session.commit()
-        session.refresh(negotiation)
+        negotiation = enqueue_negotiation_proposal(
+            session,
+            cycle_id=payload.cycleId,
+            direction=payload.direction,
+            quantity=payload.requestedQuantity,
+            price_per_energy=payload.offeredPrice,
+            city_id=CITY_ID,
+            routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+            idpk=str(payload.idpk),
+        )
+
     except IntegrityError:
-        # Dos réplicas podrían crear el mismo idpk casi al mismo tiempo
+        #Dos réplicas podrían intentar crear el mismo idpk al mismo tiempo.
         session.rollback()
+
         existing = session.exec(
-            select(Negotiation).where(Negotiation.idpk == str(payload.idpk))
+            select(Negotiation).where(
+                Negotiation.idpk == str(payload.idpk)
+            )
         ).first()
+
         if existing is None:
             raise
+
         response.status_code = 200
         return _negotiation_to_out(existing)
 
-    # E1-43 conectar el publish. latest_msg_id se setea ahí.
+    except ValueError as exc:
+        session.rollback()
+
+        raise HTTPException(
+            status_code=422,
+            detail=str(exc),
+        ) from exc
 
     return _negotiation_to_out(negotiation)

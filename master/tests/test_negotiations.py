@@ -1,6 +1,6 @@
 import time
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest import mock
 from uuid import uuid4
@@ -15,7 +15,8 @@ from sqlmodel import Session, select
 from app import auth
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import Cycle, Negotiation
+from app.models import Cycle, Negotiation, OutboundMessage
+from app.config import CITY_ID, RABBITMQ_CENTRAL_ROUTING_KEY
 
 
 class NegotiationCreateTests(unittest.TestCase):
@@ -71,12 +72,19 @@ class NegotiationCreateTests(unittest.TestCase):
 
         with Session(engine) as session:
             session.exec(
+                delete(OutboundMessage).where(
+                    OutboundMessage.cycle_id.in_(self.created_cycle_ids)
+                )
+            )
+            session.exec(
                 delete(Negotiation).where(
                     Negotiation.cycle_id.in_(self.created_cycle_ids)
                 )
             )
             session.exec(
-                delete(Cycle).where(Cycle.cycle_id.in_(self.created_cycle_ids))
+                delete(Cycle).where(
+                    Cycle.cycle_id.in_(self.created_cycle_ids)
+                )
             )
             session.commit()
 
@@ -84,15 +92,23 @@ class NegotiationCreateTests(unittest.TestCase):
         cycle_id = f"cycle-neg-test-{uuid4()}"
         self.created_cycle_ids.append(cycle_id)
 
+        now = datetime.now(timezone.utc)
+
         with Session(engine) as session:
             session.add(
                 Cycle(
                     cycle_id=cycle_id,
+                    scheduler_state="NEGOTIATING",
+                    generation_capacity=Decimal("150.00"),
+                    consumption=Decimal("100.00"),
+                    generation_cost=Decimal("4.00"),
+                    valid_until=now + timedelta(minutes=10),
                     opening_budget_balance=Decimal("1000.00"),
                     opening_energy_balance=Decimal("-30.00"),
                     budget_balance=Decimal("1000.00"),
                     energy_balance=Decimal("-30.00"),
-                    created_at=datetime.now(timezone.utc),
+                    status_payload={},
+                    created_at=now,
                 )
             )
             session.commit()
@@ -128,43 +144,175 @@ class NegotiationCreateTests(unittest.TestCase):
         body.update(overrides)
         return body
 
-    def test_create_negotiation_returns_201_and_persists_proposed(self):
+    def test_create_negotiation_returns_201_and_enqueues_proposal(self):
         cycle_id = self._create_cycle()
         body = self._body(cycle_id)
 
         response = self.client.post(
-            "/negotiations", json=body, headers=self._headers()
+            "/negotiations",
+            json=body,
+            headers=self._headers(),
         )
 
         self.assertEqual(response.status_code, 201)
+
         data = response.json()
+
         self.assertEqual(data["idpk"], body["idpk"])
-        self.assertEqual(data["status"], "PROPOSED")
+        self.assertEqual(
+            data["status"],
+            "PENDING_PUBLICATION",
+        )
         self.assertEqual(data["direction"], "give")
-        self.assertEqual(Decimal(str(data["requestedQuantity"])), Decimal("10.50"))
-        self.assertIsNotNone(data["deadlineAt"])
+        self.assertEqual(
+            Decimal(str(data["requestedQuantity"])),
+            Decimal("10.50"),
+        )
+
+        #Los 30 segundos empiezan cuando RabbitMQ confirma la publicación, no al crearla.
+        self.assertIsNone(data["deadlineAt"])
 
         with Session(engine) as session:
             stored = session.exec(
-                select(Negotiation).where(Negotiation.idpk == body["idpk"])
+                select(Negotiation).where(
+                    Negotiation.idpk == body["idpk"]
+                )
             ).one()
-            self.assertEqual(stored.cycle_id, cycle_id)
-            self.assertEqual(stored.status, "PROPOSED")
 
-    def test_duplicate_idpk_returns_200_with_same_negotiation(self):
+            self.assertEqual(
+                stored.cycle_id,
+                cycle_id,
+            )
+            self.assertEqual(
+                stored.status,
+                "PENDING_PUBLICATION",
+            )
+            self.assertIsNone(stored.deadline_at)
+            self.assertIsNotNone(stored.latest_msg_id)
+
+            outbound = session.exec(
+                select(OutboundMessage).where(
+                    OutboundMessage.msg_id
+                    == stored.latest_msg_id
+                )
+            ).one()
+
+            self.assertEqual(
+                outbound.idpk,
+                body["idpk"],
+            )
+            self.assertEqual(
+                outbound.message_type,
+                "negotiation-proposal",
+            )
+            self.assertEqual(
+                outbound.status,
+                "PENDING",
+            )
+            self.assertTrue(
+                outbound.dispatch_required
+            )
+            self.assertEqual(
+                outbound.routing_key,
+                RABBITMQ_CENTRAL_ROUTING_KEY,
+            )
+
+            self.assertNotEqual(
+                outbound.msg_id,
+                outbound.idpk,
+            )
+
+            self.assertEqual(
+                outbound.payload["idpk"],
+                body["idpk"],
+            )
+
+            self.assertEqual(
+                outbound.payload["msgId"],
+                outbound.msg_id,
+            )
+
+            self.assertEqual(
+                outbound.payload["cityId"],
+                CITY_ID,
+            )
+
+            self.assertEqual(
+                outbound.payload["cycleId"],
+                cycle_id,
+            )
+            self.assertEqual(
+                outbound.payload["type"],
+                "negotiation-proposal",
+            )
+            self.assertEqual(
+                outbound.payload["data"]["direction"],
+                "give",
+            )
+            self.assertEqual(
+                Decimal(
+                    str(
+                        outbound.payload["data"]["quantity"]
+                    )
+                ),
+                Decimal("10.50"),
+            )
+            self.assertEqual(
+                Decimal(
+                    str(
+                        outbound.payload["data"][
+                            "pricePerEnergy"
+                        ]
+                    )
+                ),
+                Decimal("3.25"),
+            )
+
+    def test_duplicate_idpk_returns_200_without_duplicate_outbound(self):
         cycle_id = self._create_cycle()
         body = self._body(cycle_id)
 
         first = self.client.post(
-            "/negotiations", json=body, headers=self._headers()
+            "/negotiations",
+            json=body,
+            headers=self._headers(),
         )
+
         second = self.client.post(
-            "/negotiations", json=body, headers=self._headers()
+            "/negotiations",
+            json=body,
+            headers=self._headers(),
         )
 
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 200)
-        self.assertEqual(second.json()["id"], first.json()["id"])
+
+        self.assertEqual(
+            second.json()["id"],
+            first.json()["id"],
+        )
+        self.assertEqual(
+            second.json()["idpk"],
+            body["idpk"],
+        )
+
+        with Session(engine) as session:
+            negotiations = session.exec(
+                select(Negotiation).where(
+                    Negotiation.idpk == body["idpk"]
+                )
+            ).all()
+
+            outbounds = session.exec(
+                select(OutboundMessage).where(
+                    OutboundMessage.idpk == body["idpk"],
+                    OutboundMessage.message_type
+                    == "negotiation-proposal",
+                )
+            ).all()
+
+            self.assertEqual(len(negotiations), 1)
+            self.assertEqual(len(outbounds), 1)
 
     def test_unknown_cycle_returns_404(self):
         response = self.client.post(

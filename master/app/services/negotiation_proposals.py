@@ -44,6 +44,7 @@ def enqueue_negotiation_proposal(
     price_per_energy: Decimal,
     city_id: str,
     routing_key: str,
+    idpk: str | None = None,
     commit: bool = True,
 ) -> Negotiation:
     """
@@ -127,8 +128,13 @@ def enqueue_negotiation_proposal(
     # 4. IDs del protocolo
     # --------------------------------------------------
 
-    idpk = str(uuid4())
+    if idpk is None:
+        idpk = str(uuid4())
+
     msg_id = str(uuid4())
+
+    while msg_id == idpk:
+        msg_id = str(uuid4())
 
     # --------------------------------------------------
     # 5. Construir negotiation-proposal

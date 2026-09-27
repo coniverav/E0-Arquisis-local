@@ -15,6 +15,9 @@ from ..services.cycle_scheduler import (
 from ..services.negotiation_report_dispatch import (
     enqueue_due_negotiation_reports,
 )
+from ..services.negotiation_timeouts import (
+    process_expired_negotiations,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +50,13 @@ def run() -> None:
                     )
                 )
 
+                # Procesar negociaciones cuyo deadline venció.
+                negotiations_timed_out = (
+                    process_expired_negotiations(
+                        session
+                    )
+                )
+
                 session.commit()
 
                 if (
@@ -56,6 +66,7 @@ def run() -> None:
                     ]
                     or result["cycles_closed"]
                     or reports_enqueued
+                    or negotiations_timed_out
                 ):
                     logger.info(
                         (
@@ -64,13 +75,13 @@ def run() -> None:
                             "report_windows_opened=%s "
                             "cycles_closed=%s "
                             "reports_enqueued=%s"
+                            "negotiations_timed_out=%s"
                         ),
                         result["cycles_prepared"],
-                        result[
-                            "report_windows_opened"
-                        ],
+                        result["report_windows_opened"],
                         result["cycles_closed"],
                         reports_enqueued,
+                        negotiations_timed_out,
                     )
 
         except Exception:

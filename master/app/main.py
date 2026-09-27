@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from .config import CORS_ALLOWED_ORIGINS, INSTANCE_NAME
 from .database import engine, get_session
-from .models import Demand, Event, ProtocolError
+from .models import Demand, Event, ProtocolError, Negotiation
 from .schemas import (
     DemandPayload,
     EventOut,
@@ -28,6 +28,11 @@ from .routers.message_audit import (
 )
 from .routers.distance_tables import router as distance_tables_router
 from .routers.connectivity import router as connectivity_router
+
+from .services.negotiation_state import (
+    NEGOTIATION_REJECTED,
+    transition_negotiation,
+)
 
 app = FastAPI(
     title="EnergyShark E1",
@@ -198,6 +203,24 @@ def ingest_protocol_error(
 
     try:
         session.add(error)
+
+        # Si el error responde a una negotiation-proposal,
+        # cerramos esa negociación como REJECTED.
+        negotiation = session.exec(
+            select(Negotiation).where(
+                Negotiation.latest_msg_id
+                == str(payload.data.target)
+            )
+        ).first()
+
+        if negotiation is not None:
+            transition_negotiation(
+                session,
+                negotiation,
+                NEGOTIATION_REJECTED,
+                now=datetime.now(timezone.utc),
+            )
+
         session.commit()
         session.refresh(error)
 

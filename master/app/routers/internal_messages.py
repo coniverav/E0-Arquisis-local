@@ -33,6 +33,19 @@ from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
 )
+from ..services.negotiation_state import (
+    NEGOTIATION_ACKNOWLEDGED,
+    NEGOTIATION_CONFIRMED,
+    NEGOTIATION_PAID,
+    transition_negotiation,
+)
+from ..services.negotiation_confirmations import (
+    process_negotiation_confirmation,
+)
+from ..services.negotiation_payments import (
+    enqueue_take_payment,
+    process_give_payment,
+)
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -261,66 +274,57 @@ def ingest_protocol_message(
         elif payload.type == "transfer":
 
             cycle_id = _require_cycle_id(payload)
-
-            _get_or_create_cycle(
-                session,
-                cycle_id,
-            )
-
-            quantity = _decimal(
-                payload.data["quantity"]
-            )
-
+            quantity = _decimal(payload.data["quantity"])
             because_of = payload.data.get("becauseOf")
 
-            # Si trae cityId, corresponde a una transferencia
-            # emitida por nuestra ciudad.
-            if payload.cityId is not None:
+            # ======================================================
+            # transfer asociado a una negociación GIVE
+            # ======================================================
 
-                operation_type = "PAYMENT_SENT"
-                budget_delta = -quantity
+            if because_of is not None:
+
+                _, _, applied = process_give_payment(
+                    session,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    msg_id=str(payload.msgId),
+                    because_of=str(because_of),
+                    quantity=quantity,
+                    details=payload.model_dump(mode="json"),
+                    now=now,
+                )
+
+                if not applied:
+                    audit_status = (
+                        INBOUND_DUPLICATE
+                    )
+
+            # ======================================================
+            # transfer normal recibido de la central
+            # ======================================================
 
             else:
 
-                # Transferencia recibida desde la central.
-                operation_type = (
-                    "PAYMENT_RECEIVED"
-                    if because_of is not None
-                    else "TRANSFER_IN"
+                _get_or_create_cycle(
+                    session,
+                    cycle_id,
                 )
 
-                budget_delta = quantity
+                _, applied = apply_ledger_effect(
+                    session,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    source_msg_id=str(payload.msgId),
+                    operation_type="TRANSFER_IN",
+                    budget_delta=quantity,
+                    energy_delta=Decimal("0"),
+                    details=payload.model_dump(mode="json"),
+                )
 
-            _, applied = apply_ledger_effect(
-                session,
-                cycle_id=cycle_id,
-                idpk=str(payload.idpk),
-                source_msg_id=str(payload.msgId),
-                operation_type=operation_type,
-                budget_delta=budget_delta,
-                energy_delta=Decimal("0"),
-                details=payload.model_dump(mode="json"),
-            )
-
-            if not applied:
-                audit_status = INBOUND_DUPLICATE
-
-            # Si corresponde a una negociación, se actualiza su estado.
-            if because_of is not None:
-
-                negotiation = session.exec(
-                    select(Negotiation).where(
-                        Negotiation.latest_msg_id
-                        == str(because_of)
+                if not applied:
+                    audit_status = (
+                        INBOUND_DUPLICATE
                     )
-                ).first()
-
-                if negotiation is not None:
-                    negotiation.payment_quantity = quantity
-                    negotiation.status = "PAID"
-                    negotiation.updated_at = now
-
-                    session.add(negotiation)
 
         # Convención:
         # energy_delta = quantity
@@ -449,74 +453,49 @@ def ingest_protocol_message(
             ).first()
 
             if negotiation is not None:
-                negotiation.status = "ACKNOWLEDGED"
-                negotiation.updated_at = now
-
-                session.add(negotiation)
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_ACKNOWLEDGED,
+                    now=now,
+                )
 
         elif payload.type in {"give", "take"}:
 
             cycle_id = _require_cycle_id(payload)
+            quantity = _decimal(payload.data["energy"])
+            price = _decimal(payload.data["pricePerEnergy"])
+            target = str(payload.data["target"])
 
-            _get_or_create_cycle(
-                session,
-                cycle_id,
+            # Retorna: (negotiation, ledger_entry, True/False)
+            negotiation, _, applied = ( 
+                process_negotiation_confirmation(
+                    session,
+                    confirmation_type=payload.type,
+                    cycle_id=cycle_id,
+                    idpk=str(payload.idpk),
+                    msg_id=str(payload.msgId),
+                    target_msg_id=target,
+                    energy=quantity,
+                    price_per_energy=price,
+                    details=payload.model_dump(mode="json"),
+                    now=now,
+                )
             )
-
-            quantity = _decimal(
-                payload.data["energy"]
-            )
-
-            price = _decimal(
-                payload.data["pricePerEnergy"]
-            )
-
-            if payload.type == "give":
-                energy_delta = -quantity
-                operation_type = "GIVE_CONFIRMED"
-            else:
-                energy_delta = quantity
-                operation_type = "TAKE_CONFIRMED"
-
-            _, applied = apply_ledger_effect(
-                session,
-                cycle_id=cycle_id,
-                idpk=str(payload.idpk),
-                source_msg_id=str(payload.msgId),
-                operation_type=operation_type,
-                budget_delta=Decimal("0"),
-                energy_delta=energy_delta,
-                details=payload.model_dump(mode="json"),
-            )
-
+            
             if not applied:
-                audit_status = INBOUND_DUPLICATE
-
-            target = str(
-                payload.data["target"]
-            )
-
-            negotiation = session.exec(
-                select(Negotiation).where(
-                    Negotiation.latest_msg_id == target
-                )
-            ).first()
-
-            if negotiation is not None:
-
-                negotiation.status = "CONFIRMED"
-                negotiation.confirmed_energy = quantity
-                negotiation.confirmed_price = price
-
-                # El transfer posterior utiliza becauseOf apuntando
-                # al msgId de esta confirmación.
-                negotiation.latest_msg_id = str(
-                    payload.msgId
+                audit_status = (
+                    INBOUND_DUPLICATE
                 )
 
-                negotiation.updated_at = now
-
-                session.add(negotiation)
+            elif payload.type == "take":
+                enqueue_take_payment(
+                    session,
+                    negotiation_id=negotiation.id,
+                    city_id=CITY_ID,
+                    routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                    now=now,
+                )
 
         elif payload.type == "negotiation-report":
 

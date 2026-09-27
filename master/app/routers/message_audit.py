@@ -9,6 +9,7 @@ from ..models import (
     InboundMessage,
     OutboundMessage,
     ProcessedIdpk,
+    Negotiation,
 )
 from ..schemas import (
     AuditAnomalyListOut,
@@ -21,6 +22,11 @@ from ..schemas import (
 )
 from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent,
+)
+from ..services.negotiation_state import (
+    NEGOTIATION_PROPOSED,
+    NEGOTIATION_PAID,
+    transition_negotiation,
 )
 from ..services.message_audit import (
     INBOUND_DISCARDED,
@@ -218,16 +224,56 @@ def update_outbound_audit(
             message,
         )
 
-        if (
-            message.message_type
-            == "negotiation-report"
-            and message.published_at is not None
-        ):
+        if (message.message_type == "negotiation-proposal"):
+            negotiation = session.exec(
+                select(Negotiation).where(
+                    Negotiation.latest_msg_id
+                    == message.msg_id
+                )
+            ).first()
+
+            if negotiation is not None:
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_PROPOSED,
+                    now=message.published_at,
+                )
+                session.commit()
+
+        if (message.message_type == "negotiation-report"
+            and message.published_at is not None):
+
             mark_negotiation_report_sent(
                 session,
                 msg_id=message.msg_id,
                 sent_at=message.published_at,
             )
+
+        if (message.message_type == "transfer"
+            and message.published_at is not None):
+
+            negotiation = session.exec(
+                select(Negotiation)
+                .where(
+                    Negotiation.latest_msg_id
+                    == message.msg_id,
+                    Negotiation.direction
+                    == "take",
+                )
+                .with_for_update()
+            ).first()
+
+            if negotiation is not None:
+
+                transition_negotiation(
+                    session,
+                    negotiation,
+                    NEGOTIATION_PAID,
+                    now=message.published_at,
+                )
+
+                session.commit()
 
     else:
         if payload.error is None:

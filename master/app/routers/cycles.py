@@ -44,6 +44,7 @@ def _negotiation_to_out(
     return NegotiationOut(
         id=negotiation.id,
         idpk=negotiation.idpk,
+        cycleId=negotiation.cycle_id,
         direction=negotiation.direction,
         requestedQuantity=negotiation.requested_quantity,
         offeredPrice=negotiation.offered_price,
@@ -52,6 +53,8 @@ def _negotiation_to_out(
         confirmedPrice=negotiation.confirmed_price,
         paymentQuantity=negotiation.payment_quantity,
         deadlineAt=negotiation.deadline_at,
+        createdAt=negotiation.created_at,
+        updatedAt=negotiation.updated_at,
     )
 
 

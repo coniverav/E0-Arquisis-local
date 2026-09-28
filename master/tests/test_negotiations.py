@@ -144,6 +144,44 @@ class NegotiationCreateTests(unittest.TestCase):
         body.update(overrides)
         return body
 
+    def _create_negotiation(
+        self,
+        cycle_id: str,
+        *,
+        status: str = "PENDING_PUBLICATION",
+        direction: str = "give",
+        created_at: datetime | None = None,
+        confirmed_energy: Decimal | None = None,
+        confirmed_price: Decimal | None = None,
+        payment_quantity: Decimal | None = None,
+    ) -> Negotiation:
+
+        now = created_at or datetime.now(timezone.utc)
+
+        with Session(engine) as session:
+            negotiation = Negotiation(
+                cycle_id=cycle_id,
+                idpk=str(uuid4()),
+                latest_msg_id=str(uuid4()),
+                direction=direction,
+                requested_quantity=Decimal("10.50"),
+                offered_price=Decimal("3.25"),
+                status=status,
+                confirmed_energy=confirmed_energy,
+                confirmed_price=confirmed_price,
+                payment_quantity=payment_quantity,
+                deadline_at=None,
+                created_at=now,
+                updated_at=now,
+            )
+
+            session.add(negotiation)
+            session.commit()
+            session.refresh(negotiation)
+            session.expunge(negotiation)
+
+            return negotiation
+
     def test_create_negotiation_returns_201_and_enqueues_proposal(self):
         cycle_id = self._create_cycle()
         body = self._body(cycle_id)
@@ -374,6 +412,192 @@ class NegotiationCreateTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
+    def test_list_negotiations_returns_negotiations(self):
+        cycle_id = self._create_cycle()
+
+        negotiation = self._create_negotiation(
+            cycle_id,
+            status="CONFIRMED",
+            confirmed_energy=Decimal("10.50"),
+            confirmed_price=Decimal("3.25"),
+        )
+
+        response = self.client.get(
+            "/negotiations",
+            headers=self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        self.assertIn("total", data)
+        self.assertIn("items", data)
+
+        item = next(
+            item
+            for item in data["items"]
+            if item["id"] == negotiation.id
+        )
+
+        self.assertEqual(
+            item["cycleId"],
+            cycle_id,
+        )
+        self.assertEqual(
+            item["idpk"],
+            negotiation.idpk,
+        )
+        self.assertEqual(
+            item["status"],
+            "CONFIRMED",
+        )
+        self.assertEqual(
+            Decimal(str(item["confirmedEnergy"])),
+            Decimal("10.50"),
+        )
+        self.assertEqual(
+            Decimal(str(item["confirmedPrice"])),
+            Decimal("3.25"),
+        )
+
+        self.assertIsNotNone(
+            item["createdAt"],
+        )
+        self.assertIsNotNone(
+            item["updatedAt"],
+        )
+
+    def test_get_unknown_negotiation_returns_404(self):
+        response = self.client.get(
+            "/negotiations/999999999",
+            headers=self._headers(),
+        )
+
+        self.assertEqual(
+            response.status_code,
+            404,
+        )
+
+    def test_list_negotiations_requires_authentication(self):
+        response = self.client.get(
+            "/negotiations",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            401,
+        )
+
+
+    def test_get_negotiation_requires_authentication(self):
+        cycle_id = self._create_cycle()
+
+        negotiation = self._create_negotiation(
+            cycle_id,
+        )
+
+        response = self.client.get(
+            f"/negotiations/{negotiation.id}",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            401,
+        )
+
+    def test_list_negotiations_orders_newest_first(self):
+        cycle_id = self._create_cycle()
+
+        older = self._create_negotiation(
+            cycle_id,
+            created_at=(
+                datetime.now(timezone.utc)
+                - timedelta(minutes=5)
+            ),
+        )
+
+        newer = self._create_negotiation(
+            cycle_id,
+            created_at=datetime.now(timezone.utc),
+        )
+
+        response = self.client.get(
+            "/negotiations",
+            headers=self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        ids = [
+            item["id"]
+            for item in response.json()["items"]
+            if item["id"] in {
+                older.id,
+                newer.id,
+            }
+        ]
+
+        self.assertEqual(
+            ids,
+            [
+                newer.id,
+                older.id,
+            ],
+        )
+
+    def test_get_negotiation_returns_full_detail(self):
+        cycle_id = self._create_cycle()
+
+        negotiation = self._create_negotiation(
+            cycle_id,
+            status="PAID",
+            confirmed_energy=Decimal("10.50"),
+            confirmed_price=Decimal("3.25"),
+            payment_quantity=Decimal("34.13"),
+        )
+
+        response = self.client.get(
+            f"/negotiations/{negotiation.id}",
+            headers=self._headers(),
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        self.assertEqual(
+            data["id"],
+            negotiation.id,
+        )
+        self.assertEqual(
+            data["idpk"],
+            negotiation.idpk,
+        )
+        self.assertEqual(
+            data["cycleId"],
+            cycle_id,
+        )
+        self.assertEqual(
+            data["status"],
+            "PAID",
+        )
+
+        self.assertEqual(
+            Decimal(str(data["confirmedEnergy"])),
+            Decimal("10.50"),
+        )
+        self.assertEqual(
+            Decimal(str(data["confirmedPrice"])),
+            Decimal("3.25"),
+        )
+        self.assertEqual(
+            Decimal(str(data["paymentQuantity"])),
+            Decimal("34.13"),
+        )
+
+        self.assertIsNotNone(data["createdAt"])
+        self.assertIsNotNone(data["updatedAt"])
 
 if __name__ == "__main__":
     unittest.main()

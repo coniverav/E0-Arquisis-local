@@ -65,6 +65,8 @@ class LedgerEntryOut(BaseModel):
 class NegotiationOut(BaseModel):
     id: int
     idpk: str
+    cycleId: str
+
     direction: str
     requestedQuantity: Decimal
     offeredPrice: Decimal
@@ -75,6 +77,13 @@ class NegotiationOut(BaseModel):
     paymentQuantity: Decimal | None = None
 
     deadlineAt: datetime | None = None
+
+    createdAt: datetime
+    updatedAt: datetime
+
+class NegotiationsOut(BaseModel):
+    total: int
+    items: list[NegotiationOut]
 
 class NegotiationCreate(BaseModel):
     cycleId: str

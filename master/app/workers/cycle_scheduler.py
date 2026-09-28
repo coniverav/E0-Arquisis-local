@@ -18,6 +18,9 @@ from ..services.negotiation_report_dispatch import (
 from ..services.negotiation_timeouts import (
     process_expired_negotiations,
 )
+from ..services.negotiation_proposals import (
+    enqueue_timed_out_negotiation_retries,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -57,16 +60,25 @@ def run() -> None:
                     )
                 )
 
+                negotiation_retries = (
+                    enqueue_timed_out_negotiation_retries(
+                        session,
+                        city_id=CITY_ID,
+                        routing_key=(
+                            RABBITMQ_CENTRAL_ROUTING_KEY
+                        ),
+                    )
+                )
+
                 session.commit()
 
                 if (
                     result["cycles_prepared"]
-                    or result[
-                        "report_windows_opened"
-                    ]
+                    or result["report_windows_opened"]
                     or result["cycles_closed"]
                     or reports_enqueued
                     or negotiations_timed_out
+                    or negotiation_retries
                 ):
                     logger.info(
                         (
@@ -74,14 +86,16 @@ def run() -> None:
                             "cycles_prepared=%s "
                             "report_windows_opened=%s "
                             "cycles_closed=%s "
-                            "reports_enqueued=%s"
-                            "negotiations_timed_out=%s"
+                            "reports_enqueued=%s "
+                            "negotiations_timed_out=%s "
+                            "negotiation_retries=%s"
                         ),
                         result["cycles_prepared"],
                         result["report_windows_opened"],
                         result["cycles_closed"],
                         reports_enqueued,
                         negotiations_timed_out,
+                        negotiation_retries,
                     )
 
         except Exception:

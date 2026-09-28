@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from ..models import (
     Cycle,
@@ -14,12 +14,11 @@ from .message_audit import OUTBOUND_PENDING
 from .negotiation_rules import (
     evaluate_negotiation_offer,
 )
-
-
-NEGOTIATION_PENDING_PUBLICATION = (
-    "PENDING_PUBLICATION"
+from .negotiation_state import (
+    NEGOTIATION_PENDING_PUBLICATION,
+    NEGOTIATION_TIMEOUT,
+    transition_negotiation,
 )
-
 
 def _json_number(
     value: Decimal,
@@ -221,3 +220,100 @@ def enqueue_negotiation_proposal(
         session.flush()
 
     return negotiation
+
+def enqueue_timed_out_negotiation_retries(
+    session: Session,
+    *,
+    city_id: str,
+    routing_key: str,
+    now: datetime | None = None,
+) -> int:
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    negotiations = session.exec(
+        select(Negotiation)
+        .where(
+            Negotiation.status
+            == NEGOTIATION_TIMEOUT
+        )
+        .with_for_update(skip_locked=True)
+    ).all()
+
+    retries = 0
+
+    for negotiation in negotiations:
+        cycle = session.get(
+            Cycle,
+            negotiation.cycle_id,
+        )
+
+        if cycle is None:
+            continue
+
+        if cycle.scheduler_state != CYCLE_NEGOTIATING:
+            continue
+
+        if (
+            cycle.valid_until is not None
+            and now >= cycle.valid_until
+        ):
+            continue
+
+        msg_id = str(uuid4())
+
+        while msg_id == negotiation.idpk:
+            msg_id = str(uuid4())
+
+        payload = {
+            "idpk": negotiation.idpk,
+            "msgId": msg_id,
+            "type": "negotiation-proposal",
+            "timestamp": (
+                now.isoformat()
+                .replace("+00:00", "Z")
+            ),
+            "cityId": city_id,
+            "cycleId": negotiation.cycle_id,
+            "data": {
+                "direction": negotiation.direction,
+                "quantity": _json_number(
+                    negotiation.requested_quantity
+                ),
+                "pricePerEnergy": _json_number(
+                    negotiation.offered_price
+                ),
+            },
+        }
+
+        outbound = OutboundMessage(
+            msg_id=msg_id,
+            idpk=negotiation.idpk,
+            message_type="negotiation-proposal",
+            cycle_id=negotiation.cycle_id,
+            payload=payload,
+            target_msg_id=None,
+            routing_key=routing_key,
+            status=OUTBOUND_PENDING,
+            attempt_count=0,
+            created_at=now,
+            dispatch_required=True,
+        )
+
+        session.add(outbound)
+
+        negotiation.latest_msg_id = msg_id
+
+        transition_negotiation(
+            session,
+            negotiation,
+            NEGOTIATION_PENDING_PUBLICATION,
+            now=now,
+        )
+
+        retries += 1
+
+    session.flush()
+
+    return retries

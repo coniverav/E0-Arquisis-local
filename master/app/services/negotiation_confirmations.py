@@ -138,35 +138,64 @@ def process_negotiation_confirmation(
         )
 
     # -------------------------------------------------
-    # 6. Aplicar al ledger
+    # 6. Aplicar efecto al ledger de forma idempotente
+    #    por negociación lógica.
     # -------------------------------------------------
 
-    ledger_entry, applied = (
-        apply_ledger_effect(
-            session,
-            cycle_id=cycle_id,
-            idpk=idpk,
-            source_msg_id=msg_id,
-            operation_type=operation_type,
-
-            # El pago se procesa después.
-            budget_delta=Decimal("0"),
-
-            energy_delta=energy_delta,
-            details=details,
-
-            # MUY IMPORTANTE:
-            # deja la entrada del ledger asociada
-            # explícitamente a la negociación.
-            negotiation_id=negotiation.id,
+    existing_effect = session.exec(
+        select(LedgerEntry).where(
+            LedgerEntry.negotiation_id
+            == negotiation.id,
+            LedgerEntry.operation_type
+            == operation_type,
         )
-    )
+    ).first()
 
-    if not applied:
-        return (
-            negotiation,
-            ledger_entry,
-            False,
+    if existing_effect is not None:
+
+        #Esta negociación ya produjo su efecto energético. Un retry no puede volver a modificar el balance.
+        if (
+            existing_effect.energy_delta
+            != energy_delta
+        ):
+            raise NegotiationConfirmationError(
+                "retry confirmation energy does not "
+                "match original confirmation"
+            )
+
+        if (
+            negotiation.confirmed_price is not None
+            and negotiation.confirmed_price
+            != price_per_energy
+        ):
+            raise NegotiationConfirmationError(
+                "retry confirmation price does not "
+                "match original confirmation"
+            )
+
+        ledger_entry = existing_effect
+        applied = False
+
+    else:
+
+        ledger_entry, applied = (
+            apply_ledger_effect(
+                session,
+                cycle_id=cycle_id,
+                idpk=idpk,
+                source_msg_id=msg_id,
+                operation_type=operation_type,
+
+                # El pago se procesa después.
+                budget_delta=Decimal("0"),
+
+                energy_delta=energy_delta,
+                details=details,
+
+                # Asociar explícitamente el efecto
+                # con esta negociación.
+                negotiation_id=negotiation.id,
+            )
         )
 
     # -------------------------------------------------
@@ -177,7 +206,7 @@ def process_negotiation_confirmation(
     negotiation.confirmed_price = price_per_energy
 
     # -------------------------------------------------
-    # 8. Máquina de estados E1-44
+    # 8. Máquina de estados
     # -------------------------------------------------
 
     transition_negotiation(
@@ -189,7 +218,7 @@ def process_negotiation_confirmation(
 
     # -------------------------------------------------
     # 9. La próxima correlación será con el msgId
-    #    de la confirmación.
+    #    de ESTA confirmación.
     #
     # transfer.data.becauseOf → este msgId
     # -------------------------------------------------
@@ -202,5 +231,5 @@ def process_negotiation_confirmation(
     return (
         negotiation,
         ledger_entry,
-        True,
+        applied,
     )

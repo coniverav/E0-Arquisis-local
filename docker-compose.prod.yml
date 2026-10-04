@@ -37,6 +37,15 @@ services:
     image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
     container_name: master
     restart: unless-stopped
+    command:
+      - newrelic-admin
+      - run-program
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master
@@ -47,6 +56,10 @@ services:
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}
+      NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY is required}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_APP_NAME:-EnergyShark Backend}
+      NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
+      NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +74,15 @@ services:
     image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
     container_name: master2
     restart: unless-stopped
+    command:
+      - newrelic-admin
+      - run-program
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master2
@@ -71,6 +93,10 @@ services:
       AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}
+      NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY is required}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_APP_NAME:-EnergyShark Backend}
+      NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
+      NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
     depends_on:
       db:
         condition: service_healthy

@@ -246,6 +246,123 @@ La definición OpenAPI versionada en Contracts es la referencia para los endpoin
 
 ---
 
+## 7.1 Infraestructura y observabilidad de E1
+
+El despliegue productivo de EnergyShark utiliza:
+
+```text
+Frontend
+  ↓
+Amazon S3
+  ↓
+CloudFront
+  ↓
+API Gateway
+  ↓
+https://api.energyshark-g10.tech
+  ↓
+EC2
+  ↓
+Docker Compose
+  ↓
+Backend / PostgreSQL / RabbitMQ connector
+```
+
+### Backend
+
+El backend productivo se despliega en EC2 utilizando imágenes versionadas almacenadas en Amazon ECR.
+
+Se mantiene separación entre:
+
+```text
+docker-compose.yml
+→ desarrollo/local
+
+docker-compose.prod.yml
+→ producción
+→ utiliza imágenes desde ECR
+```
+
+Las imágenes propias se versionan utilizando el SHA del commit desplegado:
+
+```text
+api-<sha>
+connector-<sha>
+```
+
+Los servicios principales de producción son:
+
+```text
+db
+migrate
+master
+master2
+connector
+cycle-scheduler
+newrelic-infra
+```
+
+### Frontend
+
+El frontend es una SPA estática desplegada mediante:
+
+```text
+Amazon S3
+  ↓
+CloudFront
+  ↓
+HTTPS
+```
+
+El frontend productivo consume la API pública:
+
+```text
+https://api.energyshark-g10.tech
+```
+
+El frontend no debe consumir directamente endpoints internos ni depender de la IP de EC2.
+
+### Autenticación
+
+Auth0 entrega JWT al frontend.
+
+Las operaciones protegidas pasan por el JWT Authorizer de API Gateway antes de llegar al backend.
+
+El audience compartido es:
+
+```text
+https://arquisis-e1-api/
+```
+
+### Observabilidad
+
+La aplicación utiliza New Relic para APM y monitoreo de infraestructura.
+
+```text
+master / master2
+    ↓
+New Relic APM
+
+EC2 / Docker
+    ↓
+New Relic Infrastructure
+```
+
+El servicio APM se identifica como:
+
+```text
+EnergyShark Backend
+```
+
+El host de infraestructura se identifica como:
+
+```text
+EnergyShark EC2
+```
+
+Las credenciales de New Relic se entregan mediante variables de entorno y nunca deben versionarse.
+
+
 ## 8. Responsabilidades por repositorio
 
 ### Backend

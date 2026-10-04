@@ -1,0 +1,146 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+    networks:
+      - energyshark_net
+
+  migrate:
+    image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
+    container_name: migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - energyshark_net
+
+  master:
+    image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
+    container_name: master
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      INSTANCE_NAME: master
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_ISSUER: ${AUTH_ISSUER:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8001:8000"
+    networks:
+      - energyshark_net
+
+  master2:
+    image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
+    container_name: master2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      INSTANCE_NAME: master2
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      AUTH_JWKS_URL: ${AUTH_JWKS_URL:-}
+      AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
+      AUTH_ISSUER: ${AUTH_ISSUER:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8002:8000"
+    networks:
+      - energyshark_net
+
+  cycle-scheduler:
+    image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
+    container_name: cycle-scheduler
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - app.workers.cycle_scheduler
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
+      CYCLE_SCHEDULER_POLL_SECONDS: ${CYCLE_SCHEDULER_POLL_SECONDS}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from app.database import engine; from sqlalchemy import text; conn = engine.connect(); conn.execute(text('SELECT 1')); conn.close()"
+      interval: 20s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      - energyshark_net
+
+  connector:
+    image: ${ECR_REPOSITORY}:connector-${IMAGE_TAG}
+    container_name: connector
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+      CITY_ID: ${CITY_ID}
+      RABBITMQ_OUTBOUND_EXCHANGE: ${RABBITMQ_OUTBOUND_EXCHANGE}
+      RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      MASTER_URL: ${MASTER_URL}
+      MASTER_ERROR_URL: ${MASTER_ERROR_URL}
+      MASTER_AUDIT_URL: ${MASTER_AUDIT_URL}
+      MASTER_OUTBOUND_AUDIT_URL: ${MASTER_OUTBOUND_AUDIT_URL}
+      CONNECTOR_RETRY_SECONDS: ${CONNECTOR_RETRY_SECONDS}
+      HTTP_RETRY_SECONDS: ${HTTP_RETRY_SECONDS}
+      HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS}
+      MASTER_OUTBOUND_DISPATCH_URL: ${MASTER_OUTBOUND_DISPATCH_URL}
+      OUTBOUND_POLL_SECONDS: ${OUTBOUND_POLL_SECONDS}
+    depends_on:
+      master:
+        condition: service_healthy
+    networks:
+      - energyshark_net
+
+networks:
+  energyshark_net:
+    name: energyshark_net
+
+volumes:
+  postgres_data:

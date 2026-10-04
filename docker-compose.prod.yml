@@ -164,6 +164,23 @@ services:
     networks:
       - energyshark_net
 
+  newrelic-infra:
+    image: newrelic/infrastructure:latest
+    container_name: newrelic-infra
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    pid: host
+    cgroup: host
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - "/:/host:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      NRIA_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY is required}
+      NRIA_DISPLAY_NAME: ${NEW_RELIC_INFRA_DISPLAY_NAME:-EnergyShark EC2}
+
 networks:
   energyshark_net:
     name: energyshark_net

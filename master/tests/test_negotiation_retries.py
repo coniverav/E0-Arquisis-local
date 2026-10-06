@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from app.database import engine, run_migrations
 from app.models import Cycle, Negotiation, OutboundMessage
 
-from app.services.cycle_scheduler import CYCLE_NEGOTIATING
+from app.services.cycle_scheduler import CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW
 from app.services.negotiation_proposals import (
     enqueue_timed_out_negotiation_retries,
 )
@@ -246,6 +246,58 @@ class NegotiationRetryTests(unittest.TestCase):
             0,
         )
 
+    def test_timeout_retries_during_report_window(
+        self,
+    ):
+        negotiation, original_idpk, old_msg_id = (
+            self._create_timed_out_negotiation()
+        )
+
+        cycle = self.session.get(
+            Cycle,
+            self.cycle_id,
+        )
+
+        cycle.scheduler_state = (
+            CYCLE_REPORT_WINDOW
+        )
+
+        cycle.valid_until = (
+            self.now
+            + timedelta(minutes=3)
+        )
+
+        self.session.add(cycle)
+        self.session.flush()
+
+        retries = (
+            enqueue_timed_out_negotiation_retries(
+                self.session,
+                city_id="test-city",
+                routing_key="central.test",
+                now=self.now,
+            )
+        )
+
+        self.assertEqual(
+            retries,
+            1,
+        )
+
+        self.assertEqual(
+            negotiation.idpk,
+            original_idpk,
+        )
+
+        self.assertNotEqual(
+            negotiation.latest_msg_id,
+            old_msg_id,
+        )
+
+        self.assertEqual(
+            negotiation.status,
+            NEGOTIATION_PENDING_PUBLICATION,
+        )
 
 if __name__ == "__main__":
     unittest.main()

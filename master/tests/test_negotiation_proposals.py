@@ -172,6 +172,99 @@ class NegotiationProposalTests(
             40,
         )
 
+    def test_valid_proposal_is_allowed_during_report_window(
+        self,
+    ):
+        cycle = self.session.get(
+            Cycle,
+            self.cycle_id,
+        )
+
+        cycle.scheduler_state = "REPORT_WINDOW"
+
+        cycle.valid_until = (
+            datetime.now(timezone.utc)
+            + timedelta(minutes=3)
+        )
+
+        self.session.add(cycle)
+        self.session.flush()
+
+        negotiation = (
+            enqueue_negotiation_proposal(
+                self.session,
+                cycle_id=self.cycle_id,
+                direction="give",
+                quantity=Decimal("40.00"),
+                price_per_energy=(
+                    Decimal("220.50")
+                ),
+                city_id="KLD",
+                routing_key="central",
+                commit=False,
+            )
+        )
+
+        self.assertIsNotNone(
+            negotiation.id
+        )
+
+        self.assertEqual(
+            negotiation.status,
+            "PENDING_PUBLICATION",
+        )
+
+        outbound = self.session.exec(
+            select(OutboundMessage).where(
+                OutboundMessage.msg_id
+                == negotiation.latest_msg_id
+            )
+        ).one()
+
+        self.assertEqual(
+            outbound.message_type,
+            "negotiation-proposal",
+        )
+
+        self.assertTrue(
+            outbound.dispatch_required
+        )
+
+    def test_expired_cycle_rejects_proposal_during_report_window(
+        self,
+    ):
+        cycle = self.session.get(
+            Cycle,
+            self.cycle_id,
+        )
+
+        cycle.scheduler_state = "REPORT_WINDOW"
+
+        cycle.valid_until = (
+            datetime.now(timezone.utc)
+            - timedelta(seconds=1)
+        )
+
+        self.session.add(cycle)
+        self.session.flush()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "is expired",
+        ):
+            enqueue_negotiation_proposal(
+                self.session,
+                cycle_id=self.cycle_id,
+                direction="take",
+                quantity=Decimal("10.00"),
+                price_per_energy=(
+                    Decimal("210.00")
+                ),
+                city_id="KLD",
+                routing_key="central",
+                commit=False,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

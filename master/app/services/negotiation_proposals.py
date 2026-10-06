@@ -9,7 +9,7 @@ from ..models import (
     Negotiation,
     OutboundMessage,
 )
-from .cycle_scheduler import CYCLE_NEGOTIATING
+from .cycle_scheduler import CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW
 from .message_audit import OUTBOUND_PENDING
 from .negotiation_rules import (
     evaluate_negotiation_offer,
@@ -19,6 +19,8 @@ from .negotiation_state import (
     NEGOTIATION_TIMEOUT,
     transition_negotiation,
 )
+
+NEGOTIATION_OPEN_STATES = {CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW}
 
 def _json_number(
     value: Decimal,
@@ -102,10 +104,7 @@ def enqueue_negotiation_proposal(
             f"Cycle {cycle_id} is expired"
         )
 
-    if (
-        cycle.scheduler_state
-        != CYCLE_NEGOTIATING
-    ):
+    if cycle.scheduler_state not in NEGOTIATION_OPEN_STATES:
         raise ValueError(
             f"Cycle {cycle_id} is not "
             "in negotiation window"
@@ -252,7 +251,7 @@ def enqueue_timed_out_negotiation_retries(
         if cycle is None:
             continue
 
-        if cycle.scheduler_state != CYCLE_NEGOTIATING:
+        if cycle.scheduler_state not in NEGOTIATION_OPEN_STATES:
             continue
 
         if (

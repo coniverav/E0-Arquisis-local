@@ -74,6 +74,18 @@ New Relic Infrastructure
 
 ## Variables de entorno
 
+El repositorio incluye un archivo `.env.example` que documenta las variables necesarias para ejecutar la aplicación.
+
+Para crear la configuración local:
+
+```bash
+cp .env.example .env
+```
+
+Luego se deben completar en `.env` los valores correspondientes al ambiente local.
+
+El archivo `.env` puede contener credenciales y configuración privada, por lo que no debe versionarse. El archivo `.env.example` sí se mantiene en el repositorio y debe contener únicamente nombres de variables, valores públicos de referencia o placeholders.
+
 Entre las variables productivas se encuentran:
 
 ```text
@@ -98,21 +110,77 @@ NEW_RELIC_MONITOR_MODE
 NEW_RELIC_LOG
 NEW_RELIC_INFRA_DISPLAY_NAME
 ```
-
 ## Ejecución local
 
-Desde la raíz del repositorio:
+EnergyShark se encuentra dividido en dos repositorios independientes:
+
+- Backend: `E0-Arquisis-local`
+- Frontend: `Arquisis-G10-Frontend`
+
+Para ejecutar la aplicación completa en ambiente local se deben levantar ambos repositorios.
+
+### Requisitos previos
+
+Se requiere contar con:
+
+- Git
+- Docker
+- Docker Compose
+- Node.js
+- npm
+- Configuración y credenciales requeridas para RabbitMQ
+- Configuración de Auth0 utilizada por el proyecto
+
+La instalación de las herramientas principales puede comprobarse mediante:
+
+```bash
+git --version
+docker --version
+docker compose version
+node --version
+npm --version
+```
+
+### Backend
+
+Desde la raíz del repositorio backend:
 
 ```bash
 cd ~/E0-Arquisis-local
+```
+
+Crear el archivo de configuración local a partir del ejemplo versionado:
+
+```bash
+cp .env.example .env
+```
+
+Luego se deben completar en `.env` los valores requeridos para el ambiente local.
+
+El archivo `.env` no debe agregarse al repositorio.
+
+Para levantar los servicios:
+
+```bash
 docker compose down --remove-orphans
 docker compose up -d --build
 docker compose ps -a
 ```
 
-El stack local utiliza `docker-compose.yml`, el cual construye las imágenes directamente desde el código fuente.
+El ambiente local utiliza `docker-compose.yml`, que construye las imágenes directamente desde el código fuente.
 
-Para comprobar el backend:
+Los principales servicios son:
+
+```text
+db
+migrate
+master
+master2
+cycle-scheduler
+connector
+```
+
+Para comprobar que el backend esté disponible:
 
 ```bash
 curl http://localhost:8001/health
@@ -127,7 +195,107 @@ La respuesta esperada es similar a:
 }
 ```
 
+También se puede comprobar la API consultando los ciclos:
+
+```bash
+curl http://localhost:8001/cycles
+```
+
+Para revisar los logs de los principales servicios:
+
+```bash
+docker compose logs -f master
+```
+
+```bash
+docker compose logs -f connector
+```
+
+```bash
+docker compose logs -f cycle-scheduler
+```
+
+### Frontend
+
+En una segunda terminal, ingresar al repositorio frontend:
+
+```bash
+cd ~/Arquisis-G10-Frontend
+```
+
+Crear la configuración local a partir del archivo de ejemplo:
+
+```bash
+cp .env.example .env
+```
+
+Para desarrollo local, la URL de la API debe apuntar al backend local:
+
+```env
+VITE_API_URL=http://localhost:8001
+```
+
+Las demás variables requeridas por el frontend deben completarse siguiendo `.env.example`.
+
+Las variables `VITE_*` quedan incorporadas al bundle generado por Vite, por lo que no deben utilizarse para almacenar secretos.
+
+Instalar las dependencias:
+
+```bash
+npm ci
+```
+
+Levantar el frontend:
+
+```bash
+npm run dev -- --port 5173 --strictPort
+```
+
+La SPA queda disponible en:
+
+```text
+http://localhost:5173
+```
+
+El origen `http://localhost:5173` debe encontrarse permitido por la configuración CORS del backend y por la configuración de Auth0 utilizada para desarrollo local.
+
+### Verificación de la aplicación completa
+
+Con backend y frontend ejecutándose:
+
+1. Abrir `http://localhost:5173`.
+2. Iniciar sesión mediante Auth0 cuando corresponda.
+3. Verificar que el historial de ciclos cargue información desde la API.
+4. Abrir el detalle de un ciclo y revisar su ledger.
+5. Acceder a la vista de conectividad.
+6. Revisar las negociaciones voluntarias.
+7. Revisar la vista de anomalías.
+
+El frontend local consume la API disponible en:
+
+```text
+http://localhost:8001
+```
+
+Las herramientas de desarrollo del navegador, especialmente la pestaña `Network`, pueden utilizarse para comprobar las solicitudes realizadas a la API.
+
+### Detener el ambiente local
+
+Para detener el frontend:
+
+```text
+Ctrl+C
+```
+
+Para detener los servicios del backend:
+
+```bash
+cd ~/E0-Arquisis-local
+docker compose down
+```
+
 ---
+
 
 ## Pruebas
 

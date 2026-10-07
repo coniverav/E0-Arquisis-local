@@ -3,12 +3,16 @@ from decimal import Decimal
 
 from sqlmodel import Session, select
 
+from .budget_carryover import lock_city_ledger
 from ..models import (
+    Cycle,
     LedgerEntry,
     Negotiation,
 )
 
 from .ledger import apply_ledger_effect
+from .negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
+from .negotiation_rules import settlement_price, remaining_sellable_energy
 from .negotiation_state import (
     NEGOTIATION_CONFIRMED,
     transition_negotiation,
@@ -79,14 +83,9 @@ def process_negotiation_confirmation(
     # 2. Asociar con la propuesta original
     # -------------------------------------------------
 
-    negotiation = session.exec(
-        select(Negotiation)
-        .where(
-            Negotiation.latest_msg_id
-            == target_msg_id
-        )
-        .with_for_update()
-    ).first()
+    lock_city_ledger(session)
+
+    negotiation = proposal_negotiation(session, target_msg_id)
 
     if negotiation is None:
         raise NegotiationConfirmationError(
@@ -114,6 +113,13 @@ def process_negotiation_confirmation(
             f"cannot confirm a "
             f"{negotiation.direction} negotiation"
         )
+
+    cycle = session.get(Cycle, cycle_id)
+    if cycle is not None and cycle.generation_cost is not None:
+        if price_per_energy != settlement_price(cycle, confirmation_type):
+            raise NegotiationConfirmationError("confirmation price differs from cycle settlement price")
+    if energy > negotiation.requested_quantity:
+        raise NegotiationConfirmationError("confirmed energy exceeds requested quantity")
 
     # -------------------------------------------------
     # 5. Determinar efecto energético
@@ -178,6 +184,10 @@ def process_negotiation_confirmation(
 
     else:
 
+        if confirmation_type == "give" and cycle is not None and cycle.generation_capacity is not None:
+            if energy > remaining_sellable_energy(session, cycle):
+                raise NegotiationConfirmationError("OVER_CAPACITY")
+
         ledger_entry, applied = (
             apply_ledger_effect(
                 session,
@@ -223,7 +233,9 @@ def process_negotiation_confirmation(
     # transfer.data.becauseOf → este msgId
     # -------------------------------------------------
 
-    negotiation.latest_msg_id = msg_id
+    if negotiation.payment_quantity is None:
+        negotiation.latest_msg_id = msg_id
+    stop_proposal_dispatches(session, negotiation)
 
     session.add(negotiation)
     session.flush()

@@ -65,3 +65,11 @@ Las negociaciones voluntarias deberán permitir operaciones give y take. Las con
 * Backend desplegado mediante ECR sobre EC2.  
 * Monitoreo de aplicación e infraestructura.  
 * AWS Budget Alerts configuradas.
+
+## Aclaraciones implementadas de E1 v2 — 2026-10-07
+
+El presupuesto, incluida deuda, se arrastra sin energía mediante asientos ordenados por validUntil; cycleId permanece opaco. Demand aplica energía=quantity y presupuesto=−quantity×valuePerKwh. Take liquida a generationCost; give a round2(1.05×generationCost), redondeando el unitario antes del total. No se agrega una estrategia automática de compra/venta.
+
+Los reportes solo corresponden a ciclos abiertos por central y se envían en cierre (300 segundos configurables). Correcciones usan ids nuevos; retries conservan idpk. REPORT_TOO_EARLY espera hasta opensAt y acepta 422/425; CYCLE_EXPIRED es terminal. La multa llega neta en el transfer siguiente y penalty se conserva opaco, sin otro descuento.
+
+Request no incluye ciclo. Distance-table admite sender central, cityId ausente/null y cycleId opcional conforme al tráfico informado. La UI distingue recepción ACK, confirmación, pago y publicación de reporte.

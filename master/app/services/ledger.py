@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from sqlmodel import Session, select
 from ..models import Cycle, LedgerEntry
+from .budget_carryover import lock_city_ledger, synchronize_budget_carryover
 
 
 def apply_ledger_effect(
@@ -16,6 +17,7 @@ def apply_ledger_effect(
     energy_delta: Decimal,
     details: dict,
     negotiation_id: int | None = None,
+    propagate_budget: bool = True,
 ) -> tuple[LedgerEntry, bool]:
     """
     Aplica exactamente un efecto sobre el ledger.
@@ -29,6 +31,8 @@ def apply_ledger_effect(
     El caller decide cuándo confirmar toda la transacción.
     """
 
+
+    lock_city_ledger(session)
 
     # Bloquea el snapshot del ciclo mientras se modifica.
     # (para que 2 réplicas de master no actualicen simultáneamente el mismo ciclo y generen inconsistencias)
@@ -84,6 +88,9 @@ def apply_ledger_effect(
     # Guardamos los cambios en la base de datos, pero no hacemos commit.
     # (Envía los cambios a PostegreSQL, pero no los confirma. El caller decide cuándo confirmar toda la transacción.)
     session.flush()
+
+    if propagate_budget and budget_delta:
+        synchronize_budget_carryover(session)
 
     return entry, True
 

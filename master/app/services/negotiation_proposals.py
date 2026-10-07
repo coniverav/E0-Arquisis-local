@@ -4,12 +4,13 @@ from uuid import uuid4
 
 from sqlmodel import Session, select
 
+from .budget_carryover import lock_city_ledger
 from ..models import (
     Cycle,
     Negotiation,
     OutboundMessage,
 )
-from .cycle_scheduler import CYCLE_NEGOTIATING
+from .cycle_scheduler import CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW
 from .message_audit import OUTBOUND_PENDING
 from .negotiation_rules import (
     evaluate_negotiation_offer,
@@ -58,6 +59,8 @@ def enqueue_negotiation_proposal(
     # 1. Validaciones básicas
     # --------------------------------------------------
 
+    lock_city_ledger(session)
+
     cycle = session.get(
         Cycle,
         cycle_id,
@@ -104,7 +107,8 @@ def enqueue_negotiation_proposal(
 
     if (
         cycle.scheduler_state
-        != CYCLE_NEGOTIATING
+        not in {CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW}
+        and not (cycle.scheduler_state == "PENDING" and cycle.status_idpk is not None)
     ):
         raise ValueError(
             f"Cycle {cycle_id} is not "
@@ -209,6 +213,7 @@ def enqueue_negotiation_proposal(
         # E1-41 hará que el connector
         # recoja y publique este mensaje.
         dispatch_required=True,
+        expires_at=cycle.valid_until,
     )
 
     session.add(outbound)
@@ -232,6 +237,8 @@ def enqueue_timed_out_negotiation_retries(
     if now is None:
         now = datetime.now(timezone.utc)
 
+    lock_city_ledger(session)
+
     negotiations = session.exec(
         select(Negotiation)
         .where(
@@ -252,7 +259,7 @@ def enqueue_timed_out_negotiation_retries(
         if cycle is None:
             continue
 
-        if cycle.scheduler_state != CYCLE_NEGOTIATING:
+        if cycle.scheduler_state not in {CYCLE_NEGOTIATING, CYCLE_REPORT_WINDOW}:
             continue
 
         if (
@@ -299,6 +306,7 @@ def enqueue_timed_out_negotiation_retries(
             attempt_count=0,
             created_at=now,
             dispatch_required=True,
+            expires_at=cycle.valid_until,
         )
 
         session.add(outbound)

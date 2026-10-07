@@ -47,6 +47,7 @@ class NegotiationReportDispatchTests(
 
         cycle = Cycle(
             cycle_id=self.cycle_id,
+            status_idpk=str(uuid4()),
             scheduler_state="REPORT_WINDOW",
             valid_until=(
                 self.now

@@ -10,12 +10,6 @@ from .message_audit import (
 )
 
 
-SUPPORTED_REQUESTS = {
-    "status-statement",
-    "distance-table",
-}
-
-
 def enqueue_information_request(
     session: Session,
     *,
@@ -32,10 +26,8 @@ def enqueue_information_request(
     mismo tipo de información, se reutiliza y no se crea otra.
     """
 
-    if ask not in SUPPORTED_REQUESTS:
-        raise ValueError(
-            f"unsupported information request: {ask}"
-        )
+    if not isinstance(ask, str) or not ask.strip():
+        raise ValueError("ask must be a non-empty string")
 
     if not city_id:
         raise ValueError("city_id is required")

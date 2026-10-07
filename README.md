@@ -574,3 +574,11 @@ almacenamiento
 utilización de disco
 contenedores Docker
 ```
+
+## Cambios E1 v2 — 2026-10-07
+
+El presupuesto se arrastra entre ciclos mediante asientos trazables, sin trasladar energía. Negociaciones y pagos conservan la correlación entre reintentos. Los reportes requieren apertura central y periodo de cierre; admiten correcciones, esperan hasta opensAt y no se reenvían después de vencer. Publicación y ACK no acreditan aceptación central.
+
+Aplicar `alembic upgrade head` antes del código nuevo (`f210v2reports`). El downgrade se bloquea si perdería correcciones. Probar el arrastre sobre una copia histórica: usa validUntil, conserva asientos y rechaza fechas ambiguas. No modifica reportes históricos ni descuenta penalty nuevamente.
+
+`.env.example` usa la cola observada `city.KLD.q`. El usuario AMQP sigue siendo `city.KLD`; cola e identidad son propiedades distintas. `distance-table` admite sender central, cityId ausente/null y cycleId opcional, conforme a la evidencia productiva informada.

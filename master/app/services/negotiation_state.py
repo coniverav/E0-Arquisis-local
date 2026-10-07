@@ -25,6 +25,10 @@ class InvalidNegotiationTransition(ValueError):
 ALLOWED_TRANSITIONS = {
 
     NEGOTIATION_PENDING_PUBLICATION: {
+        NEGOTIATION_TIMEOUT,
+        NEGOTIATION_ACKNOWLEDGED,
+        NEGOTIATION_CONFIRMED,
+        NEGOTIATION_REJECTED,
         NEGOTIATION_PROPOSED,
     },
 
@@ -53,6 +57,8 @@ ALLOWED_TRANSITIONS = {
     # E1-50 podrá extender esta transición
     # para realizar el retry con el mismo idpk.
     NEGOTIATION_TIMEOUT: {
+        NEGOTIATION_CONFIRMED,
+        NEGOTIATION_REJECTED,
         NEGOTIATION_PENDING_PUBLICATION,
     },
 }
@@ -93,6 +99,9 @@ def transition_negotiation(
         )
 
     current_status = negotiation.status
+
+    if current_status in {NEGOTIATION_TIMEOUT, NEGOTIATION_REJECTED, NEGOTIATION_PAID} and new_status in {NEGOTIATION_ACKNOWLEDGED, NEGOTIATION_PROPOSED}:
+        return False
 
     # Idempotencia.
     if current_status == new_status:
@@ -153,7 +162,8 @@ def transition_negotiation(
     # Un ACK solo confirma recepción.
     # NO reinicia el plazo de 30 segundos.
     elif new_status == NEGOTIATION_ACKNOWLEDGED:
-        pass
+        if negotiation.deadline_at is None:
+            negotiation.deadline_at = now + timedelta(seconds=NEGOTIATION_TIMEOUT_SECONDS)
 
     # Después de una confirmación GIVE debemos esperar
     # hasta 30 segundos por el transfer de la central.

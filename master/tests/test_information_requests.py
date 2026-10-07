@@ -129,12 +129,12 @@ class InformationRequestTests(unittest.TestCase):
                 "status-statement",
             )
 
-    def test_unsupported_request_is_rejected(self):
+    def test_empty_request_is_rejected(self):
         with Session(engine) as session:
             with self.assertRaises(ValueError):
                 enqueue_information_request(
                     session,
-                    ask="unknown-message",
+                    ask="",
                     city_id="KLD",
                     routing_key="central",
                 )

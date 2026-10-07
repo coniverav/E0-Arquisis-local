@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, select
 
 from ..config import CYCLE_REPORT_WINDOW_SECONDS
+from .budget_carryover import lock_city_ledger
 from ..models import Cycle
 
 
@@ -26,7 +27,8 @@ def configure_cycle_schedule(
 
     cycle.valid_until = valid_until
 
-    cycle.report_window_opens_at = (
+    cycle.report_window_opens_at = max(
+        cycle.report_window_opens_at or (valid_until - timedelta(seconds=CYCLE_REPORT_WINDOW_SECONDS)),
         valid_until
         - timedelta(
             seconds=CYCLE_REPORT_WINDOW_SECONDS
@@ -48,6 +50,8 @@ def process_cycle_windows(
 
     if now is None:
         now = datetime.now(timezone.utc)
+
+    lock_city_ledger(session)
 
     cycles = session.exec(
         select(Cycle)

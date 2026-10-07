@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from sqlmodel import Session, select
 
+from .budget_carryover import lock_city_ledger
 from ..models import (
     LedgerEntry,
     Negotiation,
@@ -11,6 +12,7 @@ from ..models import (
 )
 
 from .ledger import apply_ledger_effect
+from .negotiation_correlation import confirmation_negotiation, stop_proposal_dispatches
 
 from .message_audit import (
     OUTBOUND_PENDING,
@@ -108,6 +110,8 @@ def enqueue_take_payment(
     # --------------------------------------------------------
     # 1. Obtener y bloquear negociación
     # --------------------------------------------------------
+
+    lock_city_ledger(session)
 
     negotiation = session.exec(
         select(Negotiation)
@@ -350,23 +354,18 @@ def process_give_payment(
     if now is None:
         now = datetime.now(timezone.utc)
 
-    if quantity <= Decimal("0"):
+    if quantity < Decimal("0"):
         raise NegotiationPaymentError(
-            "payment quantity must be positive"
+            "payment quantity cannot be negative"
         )
 
     # --------------------------------------------------------
     # 1. Encontrar la negociación mediante becauseOf
     # --------------------------------------------------------
 
-    negotiation = session.exec(
-        select(Negotiation)
-        .where(
-            Negotiation.latest_msg_id
-            == because_of
-        )
-        .with_for_update()
-    ).first()
+    lock_city_ledger(session)
+
+    negotiation = confirmation_negotiation(session, str(because_of))
 
     if negotiation is None:
         raise NegotiationPaymentError(
@@ -397,10 +396,15 @@ def process_give_payment(
     # 4. Debe estar CONFIRMED o ya PAID
     # --------------------------------------------------------
 
-    if negotiation.status not in {
-        NEGOTIATION_CONFIRMED,
-        NEGOTIATION_PAID,
-    }:
+    prior_confirmation = session.exec(select(LedgerEntry).where(
+        LedgerEntry.negotiation_id == negotiation.id,
+        LedgerEntry.operation_type == "GIVE_CONFIRMED",
+    )).first()
+    if (negotiation.status not in {NEGOTIATION_CONFIRMED, NEGOTIATION_PAID}
+            and prior_confirmation is None):
+        raise NegotiationPaymentError("give negotiation is not confirmed")
+
+    if negotiation.confirmed_energy is None or negotiation.status == "REJECTED":
         raise NegotiationPaymentError(
             "give negotiation is not confirmed"
         )
@@ -482,6 +486,10 @@ def process_give_payment(
             ledger_entry,
             False,
         )
+
+    if negotiation.status not in {NEGOTIATION_CONFIRMED, NEGOTIATION_PAID}:
+        transition_negotiation(session, negotiation, NEGOTIATION_CONFIRMED, now=now)
+    stop_proposal_dispatches(session, negotiation)
 
     # --------------------------------------------------------
     # 8. Guardar pago

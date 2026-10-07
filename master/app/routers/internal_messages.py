@@ -16,7 +16,10 @@ from ..models import (
     NegotiationReport,
 )
 from ..schemas import ProtocolMessageIn
+from ..services.negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
+from ..services.budget_carryover import lock_city_ledger, synchronize_budget_carryover
 from ..services.ledger import apply_ledger_effect
+from ..services.negotiation_report import require_report_window
 from ..services.message_audit import (
     INBOUND_DUPLICATE,
     INBOUND_FAILED,
@@ -54,6 +57,7 @@ IDEMPOTENT_MESSAGE_TYPES = {
     "distance-table",
     "negotiation-proposal",
     "ack",
+    "nack",
     "give",
     "take",
     "negotiation-report",
@@ -145,6 +149,7 @@ def ingest_protocol_message(
     audit_status = INBOUND_PROCESSED
 
     try:
+        lock_city_ledger(session)
         if payload.type in IDEMPOTENT_MESSAGE_TYPES:
             claimed = claim_idpk(
                 session,
@@ -263,6 +268,8 @@ def ingest_protocol_message(
             )
 
             session.add(cycle)
+            session.flush()
+            synchronize_budget_carryover(session)
 
             resolve_information_request(
                 session,
@@ -446,11 +453,7 @@ def ingest_protocol_message(
                 payload.data["target"]
             )
 
-            negotiation = session.exec(
-                select(Negotiation).where(
-                    Negotiation.latest_msg_id == target
-                )
-            ).first()
+            negotiation = proposal_negotiation(session, target)
 
             if negotiation is not None:
                 transition_negotiation(
@@ -459,6 +462,12 @@ def ingest_protocol_message(
                     NEGOTIATION_ACKNOWLEDGED,
                     now=now,
                 )
+
+        elif payload.type == "nack":
+            negotiation = proposal_negotiation(session, str(payload.data["target"]))
+            if negotiation is not None and negotiation.status in {"PENDING_PUBLICATION", "PROPOSED", "ACKNOWLEDGED", "TIMEOUT"}:
+                transition_negotiation(session, negotiation, "REJECTED", now=now)
+                stop_proposal_dispatches(session, negotiation)
 
         elif payload.type in {"give", "take"}:
 
@@ -501,38 +510,25 @@ def ingest_protocol_message(
 
             cycle_id = _require_cycle_id(payload)
 
-            _get_or_create_cycle(
-                session,
-                cycle_id,
-            )
-
-            existing = session.exec(
-                select(NegotiationReport).where(
-                    NegotiationReport.cycle_id == cycle_id
-                )
-            ).first()
-
+            cycle = session.exec(select(Cycle).where(Cycle.cycle_id == cycle_id).with_for_update()).first()
+            try:
+                require_report_window(cycle, now)
+            except ValueError as exc:
+                reason = str(exc).split(":")[0]
+                # Validación HTTP interna; no representa un error AMQP emitido por la central.
+                raise HTTPException(status_code=410 if reason == "CYCLE_EXPIRED" else 422,
+                                    detail={"reason": reason, "opensAt": cycle.report_window_opens_at.isoformat() if cycle is not None and cycle.report_window_opens_at else None}) from exc
+            existing = session.exec(select(NegotiationReport).where(
+                NegotiationReport.idpk == str(payload.idpk)
+            )).first()
             if existing is None:
-
-                report = NegotiationReport(
-                    cycle_id=cycle_id,
-                    msg_id=str(payload.msgId),
-                    idpk=str(payload.idpk),
-                    budget_balance=_decimal(
-                        payload.data["budgetBalance"]
-                    ),
-                    energy_balance=_decimal(
-                        payload.data["energyBalance"]
-                    ),
-                    payload=payload.model_dump(
-                        mode="json"
-                    ),
-                    created_at=now,
-                    sent_at=now,
-                )
-
-                session.add(report)
-
+                session.add(NegotiationReport(
+                    cycle_id=cycle_id, msg_id=str(payload.msgId), idpk=str(payload.idpk),
+                    budget_balance=_decimal(payload.data["budgetBalance"]),
+                    energy_balance=_decimal(payload.data["energyBalance"]),
+                    payload=payload.model_dump(mode="json"), created_at=now,
+                    sent_at=now, status="PUBLISHED",
+                ))
             else:
                 audit_status = INBOUND_DUPLICATE
 
@@ -582,4 +578,6 @@ def ingest_protocol_message(
         except Exception:
             session.rollback()
 
+        if isinstance(exc, ValueError):
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         raise

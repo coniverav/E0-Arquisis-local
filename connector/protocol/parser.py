@@ -19,6 +19,11 @@ def parse_envelope(payload: dict) -> ProtocolEnvelope:
     if "msgId" not in payload:
         raise MissingMsgIdError("El mensaje no contiene msgId")
 
+    try:
+        UUID(str(payload["msgId"]))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise MissingMsgIdError("msgId no es un UUID válido para correlación") from exc
+
     #Campos mínimos exigidos por todo el mensaje del protocolo v2
     required_fields = ("idpk", "msgId", "type", "timestamp")
 

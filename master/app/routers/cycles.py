@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
@@ -23,6 +24,11 @@ router = APIRouter(
     prefix="/cycles",
     tags=["cycles"],
 )
+
+
+def negotiation_is_open(cycle: Cycle) -> bool:
+    return (cycle.status_idpk is not None and cycle.valid_until is not None
+            and cycle.closed_at is None and datetime.now(timezone.utc) < cycle.valid_until)
 
 
 def _entry_to_out(entry: LedgerEntry) -> LedgerEntryOut:
@@ -62,6 +68,8 @@ def _report_to_out(
     report: NegotiationReport,
 ) -> NegotiationReportOut:
     return NegotiationReportOut(
+        status=report.status,
+        reason=report.reason,
         msgId=report.msg_id,
         idpk=report.idpk,
         budgetBalance=report.budget_balance,
@@ -92,6 +100,8 @@ def list_cycles(
 
         items.append(
             CycleSummaryOut(
+                negotiationOpen=negotiation_is_open(cycle),
+                validUntil=cycle.valid_until,
                 cycleId=cycle.cycle_id,
                 budgetBalance=cycle.budget_balance,
                 energyBalance=cycle.energy_balance,
@@ -134,11 +144,10 @@ def cycle_detail(
         .order_by(Negotiation.created_at)
     ).all()
 
-    report = session.exec(
-        select(NegotiationReport).where(
-            NegotiationReport.cycle_id == cycle_id
-        )
-    ).first()
+    reports = session.exec(select(NegotiationReport).where(
+        NegotiationReport.cycle_id == cycle_id
+    ).order_by(NegotiationReport.id)).all()
+    report = reports[-1] if reports else None
 
     # Reconstrucción independiente del snapshot.
     rebuilt_budget, rebuilt_energy = rebuild_cycle_balances(
@@ -171,9 +180,8 @@ def cycle_detail(
         else None
     )
 
-    # Si ya se reportó el ciclo, esos son los balances finales
-    # efectivamente informados a la central.
-    if report is not None:
+    # Última publicación conocida; no prueba aceptación por la central.
+    if report is not None and report.status == "PUBLISHED":
         final_budget = report.budget_balance
         final_energy = report.energy_balance
     else:
@@ -182,6 +190,8 @@ def cycle_detail(
         final_energy = cycle.energy_balance
 
     return CycleDetailOut(
+        negotiationOpen=negotiation_is_open(cycle),
+        validUntil=cycle.valid_until,
         cycleId=cycle.cycle_id,
 
         statusStatement=cycle.status_payload,
@@ -194,6 +204,7 @@ def cycle_detail(
             for n in negotiations
         ],
 
+        negotiationReports=[_report_to_out(item) for item in reports],
         negotiationReport=(
             _report_to_out(report)
             if report is not None

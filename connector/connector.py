@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import asyncio
 import logging
 import os
@@ -90,6 +91,12 @@ async def forward_to_master(
     logger.warning("master respondió %s; se reintentará", response.status_code)
     return "retry"
 
+def audit_text(payload: dict | None, key: str) -> str | None:
+    #La metadata inválida no debe impedir conservar el mensaje original.
+    value = (payload or {}).get(key)
+    return value if isinstance(value, str) else None
+
+
 #Construye la evidencia que se enviará al master para un mensaje descartado antes de entrar al procesamiento normal del protocolo.
 def build_discard_audit_payload(
     body: bytes,
@@ -111,21 +118,9 @@ def build_discard_audit_payload(
             and parsed_payload.get("idpk") is not None
             else None
         ),
-        "type": (
-            parsed_payload.get("type")
-            if parsed_payload is not None
-            else None
-        ),
-        "cycleId": (
-            parsed_payload.get("cycleId")
-            if parsed_payload is not None
-            else None
-        ),
-        "sender": (
-            parsed_payload.get("sender")
-            if parsed_payload is not None
-            else None
-        ),
+        "type": audit_text(parsed_payload, "type"),
+        "cycleId": audit_text(parsed_payload, "cycleId"),
+        "sender": audit_text(parsed_payload, "sender"),
         "payload": parsed_payload,
         "rawPayload": body.decode(
             "utf-8",
@@ -153,9 +148,9 @@ def build_nack_audit_payload(
             if payload.get("idpk") is not None
             else None
         ),
-        "type": payload.get("type"),
-        "cycleId": payload.get("cycleId"),
-        "sender": payload.get("sender"),
+        "type": audit_text(payload, "type"),
+        "cycleId": audit_text(payload, "cycleId"),
+        "sender": audit_text(payload, "sender"),
         "payload": payload,
         "reasonCode": response.get("reason"),
         "reason": data.get(
@@ -339,6 +334,10 @@ async def publish_backend_outbox() -> None:
                                 or RABBITMQ_CENTRAL_ROUTING_KEY
                             )
 
+                            expires_at = item.get("expiresAt")
+                            if expires_at and datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at.replace("Z", "+00:00")):
+                                continue
+
                             try:
                                 await publish_protocol_message(
                                     exchange=exchange,
@@ -487,7 +486,17 @@ async def consume_forever() -> None:
                             handling = plan_protocol_response(
                                 payload,
                                 city_id=CITY_ID,
+                                amqp_user_id=message.user_id,
                             )
+
+                            if handling.action == "discard":
+                                audit = build_discard_audit_payload(message.body, DiscardMessage(
+                                    "Respuesta de protocolo inválida: se descarta para evitar bucles", payload=payload))
+                                result = await forward_to_master(client, audit, url=MASTER_AUDIT_URL)
+                                await message.reject(requeue=result != "ack")
+                                if result != "ack":
+                                    await asyncio.sleep(HTTP_RETRY_SECONDS)
+                                continue
 
                             if handling.action == "nack":
                                 audit_payload = build_nack_audit_payload(

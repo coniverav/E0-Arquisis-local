@@ -1072,42 +1072,19 @@ class NegotiationConfirmationTests(unittest.TestCase):
     # ESTADO INVÁLIDO
     # ============================================================
 
-    def test_confirmation_from_pending_publication_is_rejected_and_rolled_back(
-        self,
-    ):
-
-        self._create_cycle_and_negotiation(
-            direction="give",
-            status=NEGOTIATION_PENDING_PUBLICATION,
-            energy_balance=Decimal("80.00"),
-        )
-
+    def test_confirmation_before_publication_callback_is_applied(self):
+        self._create_cycle_and_negotiation(direction="give",
+            status=NEGOTIATION_PENDING_PUBLICATION, energy_balance=Decimal("80.00"))
         with Session(engine) as session:
-
-            with self.assertRaises(
-                InvalidNegotiationTransition
-            ):
-                process_negotiation_confirmation(
-                    session,
-                    confirmation_type="give",
-                    cycle_id=self.cycle_id,
-                    idpk=self.confirmation_idpk,
-                    msg_id=self.confirmation_msg_id,
-                    target_msg_id=self.proposal_msg_id,
-                    energy=Decimal("40.00"),
-                    price_per_energy=Decimal("220.50"),
-                    details={},
-                )
-
-            # MUY IMPORTANTE:
-            # si apply_ledger_effect alcanzó a hacer flush()
-            # antes de descubrir la transición inválida,
-            # el rollback debe eliminar ese efecto.
-            session.rollback()
-
-        self._assert_no_ledger_effect(
-            expected_energy=Decimal("80.00")
-        )
+            negotiation, entry, applied = process_negotiation_confirmation(
+                session, confirmation_type="give", cycle_id=self.cycle_id,
+                idpk=self.confirmation_idpk, msg_id=self.confirmation_msg_id,
+                target_msg_id=self.proposal_msg_id, energy=Decimal("40.00"),
+                price_per_energy=Decimal("220.50"), details={})
+            self.assertTrue(applied)
+            self.assertEqual(negotiation.status, "CONFIRMED")
+            self.assertEqual(entry.energy_delta, Decimal("-40.00"))
+            session.commit()
 
     # ============================================================
     # HELPER PARA COMPROBAR QUE NO HUBO EFECTOS

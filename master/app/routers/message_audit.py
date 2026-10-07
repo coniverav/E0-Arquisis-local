@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+from sqlalchemy import or_
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -5,7 +7,9 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..database import get_session
+from ..services.budget_carryover import lock_city_ledger
 from ..models import (
+    Cycle,
     InboundMessage,
     OutboundMessage,
     ProcessedIdpk,
@@ -22,6 +26,7 @@ from ..schemas import (
 )
 from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent,
+    expire_report_dispatches,
 )
 from ..services.negotiation_state import (
     NEGOTIATION_PROPOSED,
@@ -162,6 +167,28 @@ def list_outbound_dispatch(
     que todavía requieren publicación en RabbitMQ.
     """
 
+    lock_city_ledger(session)
+    now = datetime.now(timezone.utc)
+    expire_report_dispatches(session, now)
+    for proposal in session.exec(select(OutboundMessage).where(
+        OutboundMessage.message_type == "negotiation-proposal",
+        OutboundMessage.dispatch_required.is_(True),
+    )).all():
+        cycle = session.get(Cycle, proposal.cycle_id)
+        if cycle is None or cycle.valid_until is None or cycle.closed_at is not None or now >= cycle.valid_until:
+            proposal.dispatch_required = False
+            proposal.last_error = "CYCLE_EXPIRED"
+            negotiation = session.exec(select(Negotiation).where(Negotiation.idpk == proposal.idpk)).first()
+            if negotiation is not None and negotiation.status in {"PENDING_PUBLICATION", "PROPOSED", "ACKNOWLEDGED"}:
+                negotiation.deadline_at = cycle.valid_until if cycle is not None else now
+                transition_negotiation(session, negotiation, "TIMEOUT", now=now)
+    session.commit()
+    open_report_cycles = select(Cycle.cycle_id).where(
+        Cycle.status_idpk.is_not(None),
+        Cycle.valid_until > now,
+        Cycle.report_window_opens_at <= now,
+        Cycle.scheduler_state != "CLOSED",
+    )
     messages = session.exec(
         select(OutboundMessage)
         .where(
@@ -175,6 +202,10 @@ def list_outbound_dispatch(
                 ]
             )
         )
+        .where(or_(OutboundMessage.available_at.is_(None), OutboundMessage.available_at <= now))
+        .where(or_(OutboundMessage.expires_at.is_(None), OutboundMessage.expires_at > now))
+        .where(or_(OutboundMessage.message_type != "negotiation-report",
+                   OutboundMessage.cycle_id.in_(open_report_cycles)))
         .order_by(
             OutboundMessage.created_at.asc()
         )
@@ -189,6 +220,7 @@ def list_outbound_dispatch(
                 "type": message.message_type,
                 "routingKey": message.routing_key,
                 "payload": message.payload,
+                "expiresAt": message.expires_at,
             }
             for message in messages
         ]
@@ -204,6 +236,7 @@ def update_outbound_audit(
     Registra el resultado del intento de publicación.
     """
 
+    lock_city_ledger(session)
     message = session.exec(
         select(OutboundMessage).where(
             OutboundMessage.msg_id == msg_id
@@ -216,12 +249,36 @@ def update_outbound_audit(
             detail="outbound message not found",
         )
 
+    if message.message_type == "negotiation-report":
+        # Coordinar con los errores de reporte: publicación y metadata se confirman
+        # juntas. Los resultados tardíos no borran errores de negocio.
+        session.exec(select(Cycle).where(Cycle.cycle_id == message.cycle_id).with_for_update()).first()
+        session.refresh(message)
+        if payload.status == "PUBLISHED":
+            message.dispatch_required = False
+            if message.last_error not in {"REPORT_TOO_EARLY", "CYCLE_EXPIRED", "CYCLE_UNKNOWN", "SUPERSEDED", "PRICE_ABOVE_CAP", "OVER_CAPACITY"}:
+                message.last_error = None
+            if message.status != "PUBLISHED":
+                message.status = "PUBLISHED"
+                message.attempt_count += 1
+                message.published_at = datetime.now(timezone.utc)
+            mark_negotiation_report_sent(session, msg_id=msg_id, sent_at=message.published_at)
+        elif payload.error is None:
+            raise HTTPException(status_code=422, detail="error is required for FAILED status")
+        elif message.status != "PUBLISHED" and message.dispatch_required:
+            message.status = "FAILED"
+            message.last_error = payload.error
+            message.attempt_count += 1
+        session.commit()
+        return {"id": message.id, "status": message.status, "attemptCount": message.attempt_count}
+
     if payload.status == "PUBLISHED":
         message.dispatch_required = False
 
         message = mark_outbound_published(
             session,
             message,
+            commit=False,
         )
 
         if (message.message_type == "negotiation-proposal"):
@@ -232,23 +289,14 @@ def update_outbound_audit(
                 )
             ).first()
 
-            if negotiation is not None:
+            if negotiation is not None and negotiation.status == "PENDING_PUBLICATION":
                 transition_negotiation(
                     session,
                     negotiation,
                     NEGOTIATION_PROPOSED,
                     now=message.published_at,
                 )
-                session.commit()
-
-        if (message.message_type == "negotiation-report"
-            and message.published_at is not None):
-
-            mark_negotiation_report_sent(
-                session,
-                msg_id=message.msg_id,
-                sent_at=message.published_at,
-            )
+                session.flush()
 
         if (message.message_type == "transfer"
             and message.published_at is not None):
@@ -273,7 +321,7 @@ def update_outbound_audit(
                     now=message.published_at,
                 )
 
-                session.commit()
+                session.flush()
 
     else:
         if payload.error is None:
@@ -286,8 +334,10 @@ def update_outbound_audit(
             session,
             message,
             error=payload.error,
+            commit=False,
         )
 
+    session.commit()
     return {
         "id": message.id,
         "status": message.status,

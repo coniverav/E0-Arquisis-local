@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from ..config import CITY_ID, RABBITMQ_CENTRAL_ROUTING_KEY
+from ..services.budget_carryover import lock_city_ledger
 from ..services.negotiation_proposals import enqueue_negotiation_proposal
 from ..auth import verify_jwt
 from ..database import get_session
@@ -97,6 +98,8 @@ def create_negotiation(
     un reintento con el mismo idpk devuelve la
     negociación existente con 200.
     """
+
+    lock_city_ledger(session)
 
     #Mantener el 404 explícito de la API.
     cycle = session.get(Cycle, payload.cycleId)

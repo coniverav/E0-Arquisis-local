@@ -27,6 +27,7 @@ def build_amqp_message(
     return aio_pika.Message(
         body=json.dumps(payload).encode("utf-8"),
         content_type="application/json",
+        delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         user_id=user_id,
     )
 

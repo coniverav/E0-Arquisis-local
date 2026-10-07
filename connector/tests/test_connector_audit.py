@@ -117,3 +117,12 @@ def test_build_nack_audit_payload_keeps_original_message():
     assert audit["payload"] == original
     assert audit["reasonCode"] == "MALFORMED_MESSAGE"
     assert audit["reason"] == "Falta data.energy"
+
+
+def test_invalid_metadata_keeps_raw_evidence_but_valid_audit_columns():
+    original = {"type": [], "cycleId": {}, "sender": 123}
+    discarded = build_discard_audit_payload(b'{}', DiscardMessage('invalid', payload=original))
+    nacked = build_nack_audit_payload(original, {"reason": "MALFORMED_MESSAGE", "data": {}})
+    for audit in (discarded, nacked):
+        assert audit['payload'] == original
+        assert audit['type'] is None and audit['cycleId'] is None and audit['sender'] is None

@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -40,6 +40,9 @@ class NegotiationReportTests(unittest.TestCase):
 
         cycle = Cycle(
             cycle_id=self.cycle_id,
+            status_idpk=str(uuid4()),
+            valid_until=datetime.now(timezone.utc) + timedelta(minutes=2),
+            report_window_opens_at=datetime.now(timezone.utc) - timedelta(minutes=3),
 
             opening_budget_balance=Decimal(
                 "1000.00"
@@ -137,10 +140,10 @@ class NegotiationReportTests(unittest.TestCase):
         )
 
     # -------------------------------------------------
-    # Un solo report por ciclo
+    # Mismo snapshot reutiliza la operación
     # -------------------------------------------------
 
-    def test_report_is_generated_only_once(self):
+    def test_unchanged_snapshot_reuses_operation(self):
 
         first = generate_negotiation_report(
             self.session,

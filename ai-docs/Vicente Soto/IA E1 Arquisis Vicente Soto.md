@@ -4252,3 +4252,311 @@ hacia:
 ```text
 develop
 ```
+
+---
+
+# Auditoría y ajustes de compatibilidad E1 v2 — 7 de octubre de 2026
+
+Registro de asistencia con Codex en el workspace local. Esta actividad abarcó backend, frontend y Contracts; no se le atribuye un número de tarjeta que no se haya indicado en la conversación.
+
+## 1. Solicitud y alcance de la revisión
+
+### Prompt relevante
+
+> "Quiero que hagas una auditoría profunda y luego, cuando corresponda, implementes correcciones en TODO el workspace de EnergyShark G10."
+
+La solicitud se entregó mediante un texto adjunto con la especificación estructurada de E1 v2. Se pidió usarla como fuente de verdad, entender primero el diseño existente y clasificar los hallazgos antes de modificar código.
+
+El trabajo comenzó con una revisión centrada en reportes y luego se amplió a:
+
+```text
+E0-Arquisis-local
+Arquisis-G10-Frontend
+Arquisis-G10-Contracts
+```
+
+### Respuesta de Codex
+
+Se inspeccionaron modelos, migraciones, ledger, ingesta, connector, outbox, scheduler, negociaciones, API, schemas, OpenAPI, frontend y documentación. Se identificaron componentes correctos y diferencias con v2; no se asumió que todo estuviera mal.
+
+Se conservaron la separación API/connector/worker, el ledger reconstruible, la idempotencia, la aplicación inmediata de demand-statement y los deadlines persistidos. No se agregó una estrategia automática de compra/venta ni se modificaron secretos o infraestructura cloud.
+
+---
+
+## 2. Reportes de cierre y correcciones
+
+### Respuesta de Codex
+
+La revisión inicial detectó que la unicidad del reporte por ciclo impedía representar correcciones válidas y que faltaba manejar completamente el reagendamiento y el vencimiento.
+
+Se implementaron:
+
+- generación únicamente para ciclos abiertos por la central y dentro del periodo de cierre;
+- múltiples versiones de reporte para un mismo ciclo;
+- retry con el mismo idpk y corrección con nuevos identificadores;
+- persistencia del próximo intento en data.opensAt ante REPORT_TOO_EARLY;
+- cancelación de envíos vencidos y manejo terminal de CYCLE_EXPIRED;
+- protección ante resultados de publicación tardíos;
+- última versión e historial en API y frontend.
+
+Se agregó la migración:
+
+```text
+master/alembic/versions/f210v2reports_report_revisions.py
+```
+
+La migración conserva datos existentes y bloquea un downgrade que eliminaría correcciones. Se distinguió explícitamente entre reporte persistido, publicado y aceptado: PUBLISHED o un ACK no prueban aceptación por la central.
+
+---
+
+## 3. Presupuesto, ledger y demanda
+
+### Respuesta de Codex
+
+Se detectó que los saldos monetarios permanecían aislados por ciclo, aunque v2 exige arrastrar tanto presupuesto positivo como deuda.
+
+Se agregó el servicio:
+
+```text
+master/app/services/budget_carryover.py
+```
+
+El arrastre se representa con asientos BUDGET_CARRYOVER que trasladan dinero y tienen delta energético cero. El orden utiliza validUntil de aperturas acreditadas, sin interpretar el texto de cycleId. Los ajustes tardíos agregan asientos y no reescriben el historial ni los reportes anteriores.
+
+La coordinación se realiza mediante un bloqueo transaccional en PostgreSQL compartido por las réplicas y el worker. Se documentó el costo de serializar escrituras y la necesidad de probar una copia histórica antes de desplegar, especialmente el saldo inicial y las fechas centrales.
+
+Se conservaron las reglas de demand-statement:
+
+```text
+energyDelta = quantity
+budgetDelta = -(quantity * valuePerKwh)
+```
+
+La demanda no utiliza confirmación give/take ni un pago adicional. No se arrastra energía entre ciclos ni se impide que el presupuesto quede negativo.
+
+---
+
+## 4. Negociaciones, pagos y reintentos
+
+### Respuesta de Codex
+
+La correlación basada únicamente en latest_msg_id podía perder una confirmación o pago que referenciara un intento anterior. También existían carreras cuando la central respondía antes del callback que registraba la publicación.
+
+Se incorporó:
+
+```text
+master/app/services/negotiation_correlation.py
+```
+
+Se ajustaron servicios y estados para:
+
+- resolver respuestas contra los intentos persistidos de la operación;
+- aceptar ACK, confirmación o rechazo antes del callback de publicación;
+- evitar que un resultado tardío haga retroceder el estado;
+- procesar una sola vez pagos recibidos después de un retry;
+- conservar el mismo idpk en los reintentos;
+- cancelar propuestas pendientes cuando termina la ventana;
+- comprobar precio de liquidación y capacidad antes de aplicar efectos;
+- admitir pago cero cuando coincide con el total liquidado, sin admitir montos incorrectos.
+
+Se conservaron los deadlines de 30 segundos y el redondeo Decimal existente: primero el precio unitario y después el total. Un timeout por sí solo no revierte energía ni presupuesto.
+
+---
+
+## 5. Protocolo y autenticación
+
+### Respuesta de Codex
+
+Se reforzó el descarte auditable de mensajes sin msgId utilizable y se evitó responder a ACK/NACK/error inválidos, para no crear bucles. La metadata malformada no debe impedir conservar el payload original.
+
+Se revisó la propiedad AMQP user_id y se agregó persistencia explícita de mensajes publicados. Se corrigió request para no incluir cycleId y se mantuvo ask como string abierto, conservando la reutilización de solicitudes pendientes.
+
+En autenticación, la validación JWT pasó a exigir exp, iss y aud, además de comprobar firma y claims. No se cambiaron credenciales, configuración real de Auth0 ni authorizers cloud.
+
+---
+
+## 6. Frontend y contratos compartidos
+
+### Respuesta de Codex
+
+Se corrigió la representación de ACK, que aparecía como aceptación de la negociación. Ahora se distingue recepción, confirmación, pago y timeout.
+
+El formulario selecciona ciclos abiertos declarados por la API y conserva el idpk de una operación HTTP incierta en sessionStorage para no duplicarla al reintentar. Esa clave no guarda JWT. Se agregó seguimiento de la negociación y actualización periódica de detalle y conectividad.
+
+Se actualizaron de forma coordinada los schemas, ejemplos y OpenAPI. Entre los campos públicos incorporados están:
+
+```text
+negotiationReports
+status / reason de reportes
+negotiationOpen
+validUntil
+```
+
+Se documentó BUDGET_CARRYOVER como operación contable. El frontend sigue utilizando exclusivamente la API pública.
+
+---
+
+## 7. Ambigüedades del enunciado
+
+### Respuesta de Codex
+
+Se mantuvieron explícitas tres contradicciones o vacíos:
+
+- REPORT_TOO_EARLY aparece como 425 y 422: se aceptan ambos y se decide principalmente por reason, esperando opensAt.
+- PRICE_ABOVE_CAP se describe como error de negocio, pero un ejemplo usa nack: se conserva error422 con cap.
+- penalty no tiene estructura suficientemente demostrada: se conserva opaco y no se descuenta nuevamente una multa que ya viene neta en el transfer.
+
+Estas decisiones no se presentaron como una aclaración oficial inexistente.
+
+---
+
+## 8. Revisión a partir de evidencia productiva de distance-table
+
+### Prompt relevante
+
+> "Tenemos nueva evidencia productiva real sobre `distance-table` que quiero que uses para revisar tus cambios recientes."
+
+Se aportó evidencia de un mensaje persistido que alimentó GET /connectivity y la vista del frontend, con:
+
+```text
+sender = central
+cityId = null
+cycleId = cycle-248784
+timestamp = 2026-10-05T23:40:04.832000Z
+```
+
+### Prompt relevante
+
+> "la mera presencia de la clave `cityId` con valor null NO debe invalidar el mensaje;"
+
+### Respuesta de Codex
+
+Se comprobó que connector y modelo backend ya aceptaban ese formato, pero Contracts rechazaba cityId null: el schema común exigía string y el envelope central prohibía incluso la presencia de la clave. La auditoría anterior no había cubierto esta variante.
+
+Se corrigió únicamente el schema específico de distance-table para admitir cityId ausente/null y cycleId opcional, exigiendo sender central. Se actualizó el ejemplo y se agregaron regresiones relacionadas. Los UUID y distancias de esas pruebas son ilustrativos; no se atribuyeron al mensaje productivo real.
+
+No se modificó el parser, la lógica backend ni OpenAPI de conectividad para esta compatibilidad. Tampoco se cambió un test preexistente para rechazar el formato observado. La restricción añadida anteriormente para una identidad ciudad sin sender central es un caso distinto.
+
+---
+
+## 9. Explicación y simplificación de los cambios
+
+### Prompts relevantes
+
+> "Listame muy en corto los cambios que hiciste y porque los hiciste"
+
+> "Pero explica un poco porque estaban malos"
+
+Codex explicó que varios defectos aparecían ante retries, respuestas tardías o cambios de versión del reporte, y que no implicaban que toda la arquitectura estuviera incorrecta.
+
+### Prompt relevante
+
+> "Ok, ahora, de todos los cambios que hiciste, sacaría las cosas que no son estrictamente necesarias, y los comentarios en el código en español por favor"
+
+### Respuesta de Codex
+
+Se consolidaron los informes repetidos en uno breve, se resumieron notas duplicadas de los README y se retiró una nota redundante añadida a milestones. Se reemplazó una prueba aislada del modelo HTTP por una regresión de ingesta, auditoría persistida y conectividad. También se retiró un import sin uso y se tradujeron al español los comentarios y docstrings añadidos.
+
+Se conservaron las correcciones funcionales y la compatibilidad con distance-table productiva.
+
+---
+
+## 10. Documentación y validación ejecutada por Codex
+
+### Respuesta de Codex
+
+Se actualizaron README, spec y ADRs mediante notas fechadas, conservando las decisiones históricas. El archivo compartido agents.md quedó idéntico en los tres repositorios. Se incorporaron UML de componentes, explicación, guía de verificación y registro de asistencia.
+
+Artefactos de referencia:
+
+```text
+docs/spec/E1-v2-full-audit.md
+docs/operations/E1-v2-verification.md
+docs/architecture/components.puml
+docs/architecture/README.md
+docs/adr/ADR-001-broker-topology.md
+docs/adr/ADR-002-ledger-persistence.md
+docs/adr/ADR-003-timeouts-idempotency.md
+```
+
+Después de simplificar, Codex ejecutó y obtuvo:
+
+```text
+Backend:   165 passed
+Connector:  89 passed
+Contracts:   8 pruebas OK
+Frontend:  npm test, npm run lint y npm run build OK
+```
+
+Las pruebas backend utilizaron PostgreSQL temporal, sin acceder a la base productiva. También se comprobó previamente:
+
+- consistencia entre modelos y Alembic;
+- actualización con reportes históricos y bloqueo del downgrade destructivo;
+- persistencia de opensAt tras reiniciar PostgreSQL y usar un nuevo proceso Python;
+- respuesta pública de ciclo contra OpenAPI;
+- configuración Compose local/productiva por separado con valores de ejemplo;
+- consistencia de agents.md y revisión del diff.
+
+Durante los ensayos se corrigieron problemas del entorno temporal, como codificación/zona horaria y directorio del socket PostgreSQL. No se presentaron esos intentos fallidos como resultados satisfactorios.
+
+---
+
+## 11. Pruebas locales realizadas por Vicente y revisión de sus resultados
+
+### Prompt relevante
+
+> "Ok, cuales son los pasos para probar todo esto en local? Me puedes decir?"
+
+### Respuesta de Codex
+
+Se entregaron pasos para configurar el ambiente local, levantar DB/API, ejecutar backend en una base exclusiva de pruebas, validar connector/Contracts y compilar frontend. También se explicó cómo enviar distance-table al endpoint interno y consultar conectividad.
+
+Posteriormente se compartió una salida de terminal que mostró:
+
+```text
+Migración: f210v2reports (head)
+Connector: 89 passed
+Contracts: 8 pruebas OK
+Primer POST distance-table: status ok
+Segundo POST del mismo ejemplo: status duplicate
+GET /connectivity: tabla vigente con 11 destinos
+```
+
+La tabla vigente tenía timestamp 2026-10-07T05:40:00.407000Z, posterior al ejemplo del 5 de octubre. Por eso el ejemplo se procesó sin reemplazar la tabla más reciente; el duplicado tampoco la alteró.
+
+El primer curl /health falló mientras master figuraba en health: starting. Más adelante el contenedor apareció Healthy. El proceso migrate terminó con código 0, que corresponde a una migración completada.
+
+La salida también mostró que connector, scheduler y master2 anteriores seguían corriendo: levantar db y master no los detiene ni actualiza. Se explicó cómo detenerlos para pruebas aisladas y se advirtió que no se habían mostrado aún resultados de backend/frontend ejecutados por Vicente. Esto se distingue de las suites ya ejecutadas por Codex.
+
+### Corrección de la indicación sobre la cola
+
+Los logs compartidos mostraron:
+
+```text
+Conectando a RabbitMQ; cola=city.KLD.q
+Conectado. Esperando eventos en city.KLD.q
+```
+
+Codex reconoció que su indicación anterior de cambiar la cola a city.KLD había sido demasiado categórica. El nombre de cola debe respetar la topología asignada; no debe confundirse con routing key ni usuario AMQP. No se modificó el .env real a partir de esa interpretación. Antes de preparar los commits se restauró `.env.example` a la cola observada `city.KLD.q` y se aclaró que el usuario AMQP continúa siendo `city.KLD`.
+
+Las consultas de outbox con HTTP200 prueban acceso al endpoint, pero no demuestran por sí solas publicación ni aceptación de reportes por la central.
+
+---
+
+## 12. Estado antes de commits y push
+
+### Prompt relevante
+
+> "Ok, calma, se supone que todo debería estar bien ahora no? Estamos como para hacer push a todos los repos?"
+
+### Respuesta de Codex
+
+Se indicó que los cambios estaban validados localmente para subirlos a las ramas de trabajo de los tres repositorios, revisando antes los archivos incluidos y excluyendo secretos y artefactos generados. Se aclaró que el estado de push no equivale a acreditar el despliegue completo.
+
+Al momento de registrar esta actividad:
+
+- Codex no había realizado commits, push ni despliegues;
+- no se habían modificado secretos ni infraestructura cloud;
+- quedaban pruebas manuales de broker/central, UI/Auth0 y gates AWS/monitoreo/Budget Alerts;
+- el arrastre debía verificarse sobre una copia histórica antes de desplegar;
+- la evidencia productiva de distance-table había sido aportada por el usuario, no obtenida mediante una nueva consulta productiva de Codex.

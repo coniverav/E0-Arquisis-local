@@ -162,3 +162,11 @@ def test_wrong_audience_returns_401(monkeypatch):
     )
 
     assert response.status_code == 401
+
+
+def test_token_without_expiration_is_rejected(monkeypatch):
+    _configure(monkeypatch)
+    token = jwt.encode({"sub": "test-user", "iss": _TEST_ISSUER, "aud": _TEST_AUDIENCE},
+        _private_pem(_SIGNING_KEY), algorithm="RS256", headers={"kid": _TEST_KID})
+    response = TestClient(app).get("/_test/protected", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401

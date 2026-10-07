@@ -10,7 +10,10 @@ from sqlmodel import Session, select
 
 from .config import CORS_ALLOWED_ORIGINS, INSTANCE_NAME
 from .database import engine, get_session
-from .models import Demand, Event, ProtocolError, Negotiation
+from .models import Demand, Event, ProtocolError
+from .services.budget_carryover import lock_city_ledger
+from .services.negotiation_report_dispatch import process_report_error
+from .services.negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
 from .schemas import (
     DemandPayload,
     EventOut,
@@ -179,6 +182,8 @@ def ingest_protocol_error(
     session: Session = Depends(get_session),
 ) -> ProtocolErrorOut:
 
+    lock_city_ledger(session)
+
     #msgId identifica al mensaje concreto y evita persistir una redelivery dos veces.
     existing = session.exec(
         select(ProtocolError).where(
@@ -207,22 +212,15 @@ def ingest_protocol_error(
     try:
         session.add(error)
 
-        # Si el error responde a una negotiation-proposal,
-        # cerramos esa negociación como REJECTED.
-        negotiation = session.exec(
-            select(Negotiation).where(
-                Negotiation.latest_msg_id
-                == str(payload.data.target)
-            )
-        ).first()
+        process_report_error(session, payload)
 
-        if negotiation is not None:
-            transition_negotiation(
-                session,
-                negotiation,
-                NEGOTIATION_REJECTED,
-                now=datetime.now(timezone.utc),
-            )
+        #Si el error responde a una negotiation-proposal, cerramos esa negociación como REJECTED.
+        negotiation = proposal_negotiation(session, str(payload.data.target))
+        if (negotiation is not None and negotiation.cycle_id == payload.cycleId
+                and negotiation.status in {"PENDING_PUBLICATION", "PROPOSED", "ACKNOWLEDGED", "TIMEOUT"}):
+            transition_negotiation(session, negotiation, NEGOTIATION_REJECTED,
+                                   now=datetime.now(timezone.utc))
+            stop_proposal_dispatches(session, negotiation)
 
         session.commit()
         session.refresh(error)

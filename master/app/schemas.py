@@ -5,7 +5,7 @@ from typing import Any, Literal
 from uuid import UUID
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DemandPayload(BaseModel):
@@ -94,6 +94,8 @@ class NegotiationCreate(BaseModel):
     offeredPrice: Decimal = Field(ge=0)
 
 class NegotiationReportOut(BaseModel):
+    status: Literal["PENDING", "PUBLISHED", "DEFERRED", "EXPIRED", "REJECTED", "SUPERSEDED"] = "PENDING"
+    reason: str | None = None
     msgId: str
     idpk: str
     budgetBalance: Decimal
@@ -102,6 +104,8 @@ class NegotiationReportOut(BaseModel):
     sentAt: datetime | None = None
 
 class CycleSummaryOut(BaseModel):
+    negotiationOpen: bool = False
+    validUntil: datetime | None = None
     cycleId: str
 
     budgetBalance: Decimal
@@ -117,6 +121,8 @@ class CyclesOut(BaseModel):
     items: list[CycleSummaryOut]
 
 class CycleDetailOut(BaseModel):
+    negotiationOpen: bool = False
+    validUntil: datetime | None = None
 
     cycleId: str
 
@@ -127,6 +133,7 @@ class CycleDetailOut(BaseModel):
 
     negotiations: list[NegotiationOut]
 
+    negotiationReports: list[NegotiationReportOut] = Field(default_factory=list)
     negotiationReport: NegotiationReportOut | None
 
     finalBudgetBalance: Decimal
@@ -166,6 +173,9 @@ class ProtocolMessageIn(BaseModel):
     Envelope base de los mensajes del protocolo E1.
     """
 
+    # Conservar metadata opcional del broker, incluido penalty, sin suponer su estructura.
+    model_config = ConfigDict(extra="allow")
+
     idpk: UUID
     msgId: UUID
     type: str
@@ -184,6 +194,12 @@ class ProtocolMessageIn(BaseModel):
     # reemplazando packageBody de E0.
     data: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def report_requires_cycle(self):
+        if self.type == "negotiation-report" and not self.cycleId:
+            raise ValueError("MALFORMED_MESSAGE: negotiation-report requiere cycleId")
+        return self
+
     @field_validator("timestamp")
     @classmethod
     def timestamp_must_have_timezone(
@@ -200,6 +216,7 @@ class ProtocolMessageIn(BaseModel):
 
 #Códigos de error
 ERROR_CODES = {
+    "REPORT_TOO_EARLY": (422, 425),
     "CYCLE_UNKNOWN": 404,
     "CYCLE_EXPIRED": 410,
     "PRICE_ABOVE_CAP": 422,
@@ -208,6 +225,15 @@ ERROR_CODES = {
 
 
 class ProtocolErrorDataPayload(BaseModel):
+    opensAt: datetime | None = None
+
+    @field_validator("opensAt")
+    @classmethod
+    def opens_at_has_timezone(cls, value):
+        if value is not None and value.tzinfo is None:
+            raise ValueError("opensAt debe incluir zona horaria")
+        return value
+
     target: UUID
     message: str
     cap: float | None = None
@@ -223,6 +249,7 @@ class ProtocolErrorPayload(BaseModel):
     cycleId: str
 
     reason: Literal[
+        "REPORT_TOO_EARLY",
         "CYCLE_UNKNOWN",
         "CYCLE_EXPIRED",
         "PRICE_ABOVE_CAP",
@@ -245,9 +272,12 @@ class ProtocolErrorPayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_error(self):
+        if self.reason == "REPORT_TOO_EARLY" and self.data.opensAt is None:
+            raise ValueError("REPORT_TOO_EARLY requiere data.opensAt")
         expected_code = ERROR_CODES[self.reason]
 
-        if self.code != expected_code:
+        codes = expected_code if isinstance(expected_code, tuple) else (expected_code,)
+        if self.code not in codes:
             raise ValueError(
                 f"{self.reason} requiere code {expected_code}"
             )

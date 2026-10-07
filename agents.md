@@ -151,7 +151,8 @@ Reglas importantes:
 - `idpk` y `msgId` deben ser distintos.
 - Los mensajes enviados por una ciudad incluyen `cityId`.
 - Los mensajes emitidos por la central utilizan `sender: "central"`.
-- Los mensajes ligados a un ciclo incluyen `cycleId`.
+- Los mensajes ligados a un ciclo incluyen `cycleId`, tratado como string opaco. Las requests directas no incluyen cycleId.
+- La cola observada de KLD es `city.KLD.q`; el publicador adjunta la propiedad AMQP user_id `city.KLD`. El nombre de cola y la identidad AMQP son distintos. distance-table requiere sender central.
 - El contenido específico del mensaje viaja dentro de `data`.
 - Una respuesta utiliza un `msgId` nuevo y referencia el mensaje anterior mediante campos como `data.target` o `data.becauseOf`.
 - Los schemas versionados del repositorio Contracts tienen prioridad sobre ejemplos informales.
@@ -183,6 +184,9 @@ Principios importantes:
 - Los timeouts se basan en deadlines persistidos en PostgreSQL.
 - El worker independiente procesa deadlines vencidos.
 - Los reintentos deben preservar la idempotencia.
+- E1 v2: negotiation-report requiere apertura del ciclo por la central y periodo de cierre; REPORT_TOO_EARLY se reagenda en opensAt y CYCLE_EXPIRED es terminal.
+- Un retry conserva idpk; una corrección de reporte usa nuevos msgId/idpk. No deduplicar reportes por cycleId.
+- Mantener explícitas las ambigüedades oficiales (422/425 y estructura de penalty), sin imponer supuestos.
 - No usar `sleep(30)` ni timers en memoria para controlar una negociación.
 
 ---
@@ -203,7 +207,7 @@ Principios:
 - Los duplicados no deben volver a modificar el ledger.
 - Los efectos relacionados deben ejecutarse dentro de una transacción cuando corresponda.
 - Un timeout por sí mismo no debe modificar energía ni presupuesto.
-- El presupuesto puede continuar entre ciclos.
+- El presupuesto, incluida deuda, se arrastra entre ciclos abiertos mediante asientos trazables; nunca ordenar por el texto de cycleId.
 - La energía no se arrastra al ciclo siguiente.
 
 ---

@@ -1,3 +1,4 @@
+import math
 from datetime import datetime
 from uuid import UUID
 from .models import ProtocolEnvelope, ValidationResult
@@ -24,6 +25,7 @@ KNOWN_TYPES = {
 #Algunos mensajes solo pueden venir de la central y otros de una ciudad.
 CENTRAL_TYPES = {
     "status-statement",
+    "distance-table",
     "demand-statement",
     "give",
     "take",
@@ -44,6 +46,7 @@ NACK_CODES = {
 }
 
 ERROR_CODES = {
+    "REPORT_TOO_EARLY": (422, 425),
     "CYCLE_UNKNOWN": 404,
     "CYCLE_EXPIRED": 410,
     "PRICE_ABOVE_CAP": 422,
@@ -61,7 +64,7 @@ def _malformed(message: str) -> ValidationResult:
 
 #Acepta int/float, pero no bool.
 def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and (isinstance(value, int) or math.isfinite(value))
 
 #Función para ver si es positivo.
 def _is_positive_number(value) -> bool:
@@ -111,7 +114,7 @@ def _validate_identity(message: ProtocolEnvelope) -> ValidationResult | None:
             )
 
     else:
-        #ACK, NACK, transfer y distance-table pueden usar alguna de las dos representaciones definidas en los contratos.
+        #ACK, NACK y transfer pueden usar alguna de las dos representaciones definidas en los contratos.
         if message.sender is None and message.city_id is None:
             return _malformed("El mensaje debe incluir sender o cityId")
 
@@ -122,6 +125,9 @@ def _validate_identity(message: ProtocolEnvelope) -> ValidationResult | None:
 
 #Comprueba cycleId en los mensajes donde es obligatorio.
 def _validate_cycle(message: ProtocolEnvelope) -> ValidationResult | None:
+    if message.type == "request" and "cycleId" in (message.raw or {}):
+        return _malformed("request no debe incluir cycleId")
+
     required = {
         "status-statement",
         "transfer",
@@ -208,7 +214,7 @@ def _validate_negotiation_proposal(
     if not isinstance(data, dict):
         return _malformed("negotiation-proposal debe incluir data")
 
-    if data.get("direction") not in {"take", "give"}:
+    if data.get("direction") not in ("take", "give"):
         return _malformed("data.direction debe ser take o give")
 
     if not _is_positive_number(data.get("quantity")):
@@ -291,7 +297,7 @@ def _validate_nack(message: ProtocolEnvelope) -> ValidationResult:
     reason = raw.get("reason")
     code = raw.get("code")
 
-    if reason not in NACK_CODES:
+    if not isinstance(reason, str) or reason not in NACK_CODES:
         return _malformed("reason de NACK desconocido")
 
     if code != NACK_CODES[reason]:
@@ -320,10 +326,10 @@ def _validate_error(message: ProtocolEnvelope) -> ValidationResult:
     reason = raw.get("reason")
     code = raw.get("code")
 
-    if reason not in ERROR_CODES:
+    if not isinstance(reason, str) or reason not in ERROR_CODES:
         return _malformed("reason de error desconocido")
 
-    if code != ERROR_CODES[reason]:
+    if code not in (ERROR_CODES[reason] if isinstance(ERROR_CODES[reason], tuple) else (ERROR_CODES[reason],)):
         return _malformed("reason y code del error no coinciden")
 
     if not _is_uuid(data.get("target")):
@@ -331,6 +337,9 @@ def _validate_error(message: ProtocolEnvelope) -> ValidationResult:
 
     if not isinstance(data.get("message"), str) or not data["message"]:
         return _malformed("data.message debe ser un string no vacío")
+
+    if reason == "REPORT_TOO_EARLY" and not _is_datetime(data.get("opensAt")):
+        return _malformed("REPORT_TOO_EARLY requiere data.opensAt con zona horaria")
 
     if reason == "PRICE_ABOVE_CAP":
         if not _is_number(data.get("cap")):

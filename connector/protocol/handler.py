@@ -19,6 +19,7 @@ def plan_protocol_response(
     payload: dict,
     city_id: str,
     timestamp: datetime | None = None,
+    amqp_user_id: str | None = None,
 ) -> ProtocolHandlingResult:
     try:
         message = parse_envelope(payload)
@@ -27,6 +28,8 @@ def plan_protocol_response(
         return ProtocolHandlingResult(action="discard")
 
     except EnvelopeParseError as exc:
+        if payload.get("type") in ("ack", "nack", "error"):
+            return ProtocolHandlingResult(action="discard")
         #Existe msgId, por lo que podemos responder con MALFORMED_MESSAGE.
         response = build_nack(
             target_msg_id=str(payload["msgId"]),
@@ -46,6 +49,8 @@ def plan_protocol_response(
     validation = validate_message(message)
 
     if not validation.valid:
+        if message.type in {"ack", "nack", "error"}:
+            return ProtocolHandlingResult(action="discard", message=message)
         if validation.reason is None or validation.code is None:
             raise ValueError("Una validación inválida debe incluir reason y code")
 
@@ -64,6 +69,15 @@ def plan_protocol_response(
             message=message,
             response=response,
         )
+
+    if message.city_id is not None and amqp_user_id != f"city.{message.city_id}":
+        if message.type in {"ack", "nack", "error"}:
+            return ProtocolHandlingResult(action="discard", message=message)
+        return ProtocolHandlingResult(action="nack", message=message, response=build_nack(
+            target_msg_id=str(message.msg_id), reason="IDENTITY_MISMATCH", code=403,
+            message="AMQP user_id no corresponde al cityId", city_id=city_id,
+            cycle_id=message.cycle_id, timestamp=timestamp,
+        ))
 
     if not should_send_ack(message):
         return ProtocolHandlingResult(

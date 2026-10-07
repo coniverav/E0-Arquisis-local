@@ -116,6 +116,7 @@ def record_outbound_message(
 def mark_outbound_published(
     session: Session,
     message: OutboundMessage,
+    *, commit: bool = True,
 ) -> OutboundMessage:
     """
     Marca una publicación como exitosa.
@@ -133,8 +134,11 @@ def mark_outbound_published(
     message.published_at = datetime.now(timezone.utc)
 
     session.add(message)
-    session.commit()
-    session.refresh(message)
+    if commit:
+        session.commit()
+        session.refresh(message)
+    else:
+        session.flush()
 
     return message
 
@@ -144,6 +148,7 @@ def mark_outbound_failed(
     message: OutboundMessage,
     *,
     error: str,
+    commit: bool = True,
 ) -> OutboundMessage:
     """
     Registra un intento fallido de publicación.
@@ -167,7 +172,10 @@ def mark_outbound_failed(
     message.last_error = error
 
     session.add(message)
-    session.commit()
-    session.refresh(message)
+    if commit:
+        session.commit()
+        session.refresh(message)
+    else:
+        session.flush()
 
     return message

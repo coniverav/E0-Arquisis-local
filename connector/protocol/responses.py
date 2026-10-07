@@ -48,7 +48,7 @@ def build_nack(
         "message": message,
     }
 
-    if cycle_id is not None:
+    if isinstance(cycle_id, str) and cycle_id:
         data["cycleId"] = cycle_id
 
     return {

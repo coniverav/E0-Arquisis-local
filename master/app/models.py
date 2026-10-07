@@ -293,13 +293,16 @@ class NegotiationReport(SQLModel, table=True):
 
     cycle_id: str = Field(
         foreign_key="cycles.cycle_id",
-        unique=True,
         index=True,
         nullable=False,
     )
 
     msg_id: str = Field(unique=True, nullable=False)
     idpk: str = Field(unique=True, nullable=False)
+
+    # Publicación no equivale a aceptación por la central.
+    status: str = Field(default="PENDING", nullable=False)
+    reason: Optional[str] = Field(default=None)
 
     budget_balance: Decimal = Field(
         sa_column=Column(Numeric(20, 2), nullable=False),
@@ -532,6 +535,13 @@ class OutboundMessage(SQLModel, table=True):
     status: str = Field(index=True, nullable=False)
 
     attempt_count: int = Field(default=0, nullable=False)
+
+    available_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    expires_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
     last_error: Optional[str] = Field(
         default=None,

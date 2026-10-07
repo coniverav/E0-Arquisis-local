@@ -49,25 +49,26 @@ def _public_key_for_kid(jwks, kid):
 def verify_jwt(token: str = Depends(oauth2_scheme)):
     if not AUTH_JWKS_URL or not AUTH_ISSUER or not AUTH_AUDIENCE:
         raise HTTPException(status_code=503, detail="Authentication is not configured")
-    # Fetch JWKS del identit provider (httpx + cache en memoria)
+    #Fetch JWKS del identit provider (httpx + cache en memoria)
     jwks = fetch_jwks(AUTH_JWKS_URL)
-    # Decode el JWT sin obtener el header verificado para obtener el "kid"
+    #Decode el JWT sin obtener el header verificado para obtener el "kid"
     try:
         unverified_header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
-    # Encontrar la key publica correspondiente al "kid" en el JWKS
+    #Encontrar la key publica correspondiente al "kid" en el JWKS
     public_key = _public_key_for_kid(jwks, unverified_header.get("kid"))
     if public_key is None:
         raise HTTPException(status_code=401, detail="Unknown key")
     try:
-        # Verificar la firma JWT y validar claims (audience, issuer, exp)
+        #Verificar la firma JWT y validar claims (audience, issuer, exp)
         return jwt.decode(
             token,
             public_key,
             algorithms=["RS256"],
             audience=AUTH_AUDIENCE,
             issuer=AUTH_ISSUER,
+            options={"require": ["exp", "iss", "aud"]},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")

@@ -248,25 +248,42 @@ La definición OpenAPI versionada en Contracts es la referencia para los endpoin
 
 ## 7.1 Infraestructura y observabilidad de E1
 
-El despliegue productivo de EnergyShark utiliza:
+El despliegue productivo de EnergyShark separa la distribución del frontend del acceso a la API.
+
+**Distribución del frontend:**
 
 ```text
-Frontend
+Usuario
+  ↓
+https://app.energyshark-g10.tech
+  ↓
+Amazon CloudFront
   ↓
 Amazon S3
   ↓
-CloudFront
-  ↓
-API Gateway
+SPA React
+```
+
+**Comunicación con el backend:**
+
+```text
+SPA React
   ↓
 https://api.energyshark-g10.tech
   ↓
-EC2
+AWS API Gateway
+  ↓
+Nginx / EC2
   ↓
 Docker Compose
-  ↓
-Backend / PostgreSQL / RabbitMQ connector
+  ├── master
+  ├── master2
+  ├── cycle-scheduler
+  ├── connector
+  └── PostgreSQL
 ```
+
+Auth0 proporciona los JWT que utiliza el frontend para acceder a las operaciones protegidas.
 
 ### Backend
 
@@ -304,23 +321,31 @@ newrelic-infra
 
 ### Frontend
 
-El frontend es una SPA estática desplegada mediante:
+El frontend es una SPA estática distribuida mediante Amazon S3 y CloudFront.
+
+**Dominio productivo principal:**
 
 ```text
-Amazon S3
-  ↓
-CloudFront
-  ↓
-HTTPS
+https://app.energyshark-g10.tech
 ```
 
-El frontend productivo consume la API pública:
+**Dominio proporcionado por CloudFront:**
+
+```text
+https://d9yjiq237jfab.cloudfront.net
+```
+
+El dominio personalizado utiliza un certificado HTTPS administrado mediante AWS Certificate Manager en `us-east-1`.
+
+La SPA consume la API pública:
 
 ```text
 https://api.energyshark-g10.tech
 ```
 
-El frontend no debe consumir directamente endpoints internos ni depender de la IP de EC2.
+El frontend no debe consumir endpoints internos ni depender directamente de la IP de EC2.
+
+Los detalles de DNS, certificados, CloudFront y despliegue se documentan en los README correspondientes.
 
 ### Autenticación
 
@@ -362,6 +387,32 @@ EnergyShark EC2
 
 Las credenciales de New Relic se entregan mediante variables de entorno y nunca deben versionarse.
 
+### Dominios y orígenes autorizados
+
+El frontend productivo utiliza:
+
+```text
+https://app.energyshark-g10.tech
+```
+
+Este origen debe estar autorizado en:
+
+- Auth0: Allowed Callback URLs.
+- Auth0: Allowed Logout URLs.
+- Auth0: Allowed Web Origins.
+- AWS API Gateway: configuración CORS.
+
+Durante la transición puede mantenerse autorizado el dominio original de CloudFront.
+
+El issuer, audience y JWT Authorizer no deben modificarse únicamente por cambiar el dominio del frontend.
+
+El audience de la API continúa siendo:
+
+```text
+https://arquisis-e1-api/
+```
+
+Los cambios de dominio no deben implicar modificaciones en los contratos funcionales de mensajes o endpoints.
 
 ## 8. Responsabilidades por repositorio
 

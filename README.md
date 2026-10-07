@@ -1,35 +1,38 @@
 # EnergyShark - Entrega 1 ⚡🦈
-
 ## Arquitectura y despliegue
 
-La Entrega 1 se ejecuta completamente en cloud y separa el frontend del backend.
+La Entrega 1 separa la aplicación frontend de la API backend. El frontend se distribuye mediante Amazon S3 y CloudFront, la API se publica mediante API Gateway, que se integra con el backend desplegado en EC2.
 
-El flujo principal es:
+**Distribución del frontend:**
 
 ```text
-Frontend SPA
-   ↓
-Amazon S3
-   ↓
-CloudFront
-   ↓
-Auth0
-   ↓
-AWS API Gateway
-   ↓
+Usuario
+  ↓
+https://app.energyshark-g10.tech
+  ↓
+Amazon CloudFront
+  ↓
+Amazon S3 (build de la SPA React)
+```
+
+**Consumo de la API:**
+
+```text
+SPA React
+  ├── Auth0 (login y obtención de JWT cuando corresponde)
+  ↓
 https://api.energyshark-g10.tech
-   ↓
-Nginx
-   ↓
-EC2
-   ↓
+  ↓
+AWS API Gateway (CORS y JWT Authorizer en rutas protegidas)
+  ↓
+Nginx (proxy inverso en EC2)
+  ↓
 Docker Compose
-   ├── master
-   ├── master2
-   ├── cycle-scheduler
-   ├── connector
-   ├── migrate
-   └── PostgreSQL
+  ├── master / master2 (FastAPI)
+  ├── cycle-scheduler
+  ├── connector ↔ RabbitMQ externo
+  ├── migrate
+  └── db (PostgreSQL)
 ```
 
 Las imágenes propias utilizadas en producción son construidas fuera de EC2, publicadas en Amazon ECR y posteriormente descargadas por la instancia mediante `docker-compose.prod.yml`.
@@ -40,7 +43,6 @@ La observabilidad se realiza con New Relic:
 master / master2
    ↓
 New Relic APM
-
 EC2 + Docker
    ↓
 New Relic Infrastructure
@@ -51,13 +53,21 @@ New Relic Infrastructure
 ## Servicios principales
 
 | Servicio | Responsabilidad |
+
 |---|---|
+
 | `db` | PostgreSQL compartido por las instancias del backend. |
+
 | `migrate` | Ejecuta `alembic upgrade head` antes de iniciar la API. |
+
 | `master` | Primera instancia de FastAPI. |
+
 | `master2` | Segunda instancia de FastAPI. |
+
 | `cycle-scheduler` | Worker encargado del procesamiento temporal de ciclos. |
+
 | `connector` | Consume RabbitMQ y comunica los mensajes con el backend. |
+
 | `newrelic-infra` | Monitorea la infraestructura EC2 y los contenedores Docker. |
 
 ---
@@ -71,23 +81,17 @@ POSTGRES_DB
 POSTGRES_USER
 POSTGRES_PASSWORD
 DATABASE_URL
-
 RABBITMQ_URL
 RABBITMQ_QUEUE
 RABBITMQ_OUTBOUND_EXCHANGE
 RABBITMQ_CENTRAL_ROUTING_KEY
-
 CITY_ID
-
 AUTH_JWKS_URL
 AUTH_AUDIENCE
 AUTH_ISSUER
-
 CORS_ALLOWED_ORIGINS
-
 ECR_REPOSITORY
 IMAGE_TAG
-
 NEW_RELIC_LICENSE_KEY
 NEW_RELIC_APP_NAME
 NEW_RELIC_MONITOR_MODE
@@ -101,10 +105,8 @@ Desde la raíz del repositorio:
 
 ```bash
 cd ~/E0-Arquisis-local
-
 docker compose down --remove-orphans
 docker compose up -d --build
-
 docker compose ps -a
 ```
 
@@ -133,12 +135,9 @@ Para ejecutar la suite completa:
 
 ```bash
 cd ~/E0-Arquisis-local
-
 docker compose down --remove-orphans
 docker compose up -d --build
-
 docker compose ps -a
-
 docker compose exec master python -m pytest -v
 ```
 
@@ -154,27 +153,27 @@ La suite actual contiene 128 pruebas.
 Para ejecutar un archivo de pruebas específico:
 
 ```bash
-docker compose exec master \
+docker compose exec master \\
 python -m pytest tests/test_xxxxxxxxxxxxxxx.py -v
 ```
 
 ---
 
 ## Docker Compose de producción
-
 El repositorio mantiene dos configuraciones separadas:
 
 ```text
 docker-compose.yml
 → desarrollo/local
 → utiliza build:
-
 docker-compose.prod.yml
 → producción
 → utiliza imágenes publicadas en ECR
 ```
 
 El compose productivo no construye el backend dentro de EC2.
+
+**Importante:** en la EC2 utilizar siempre `docker compose -f docker-compose.prod.yml ...`. Ejecutar `docker compose up -d` sin `-f` toma el compose local y puede recrear contenedores productivos con imágenes o comandos incorrectos. El compose productivo es autónomo; no debe combinarse con el compose local salvo que se rediseñe explícitamente como override.
 
 `master`, `master2`, `migrate` y `cycle-scheduler` utilizan:
 
@@ -237,51 +236,47 @@ connector-d903317
 ```
 
 ### Autenticación en ECR
-
 ```bash
-aws ecr get-login-password --region us-east-2 \
-  | docker login \
-    --username AWS \
-    --password-stdin \
+aws ecr get-login-password --region us-east-2 \\
+  | docker login \\
+    --username AWS \\
+    --password-stdin \\
     521294961974.dkr.ecr.us-east-2.amazonaws.com
 ```
 
 ### Build de las imágenes
-
 ```bash
 TAG=$(git rev-parse --short HEAD)
-
-docker build \
-  --platform linux/amd64 \
-  -t 521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:api-$TAG \
+docker build \\
+  --platform linux/amd64 \\
+  -t 521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:api-$TAG \\
   ./master
 ```
 
 ```bash
-docker build \
-  --platform linux/amd64 \
-  -t 521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:connector-$TAG \
+docker build \\
+  --platform linux/amd64 \\
+  -t 521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:connector-$TAG \\
   ./connector
 ```
 
 ### Push a ECR
-
 ```bash
-docker push \
+docker push \\
   521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:api-$TAG
 ```
 
 ```bash
-docker push \
+docker push \\
   521294961974.dkr.ecr.us-east-2.amazonaws.com/energyshark-backend:connector-$TAG
 ```
 
 Para comprobar las imágenes:
 
 ```bash
-aws ecr describe-images \
-  --repository-name energyshark-backend \
-  --region us-east-2 \
+aws ecr describe-images \\
+  --repository-name energyshark-backend \\
+  --region us-east-2 \\
   --output json
 ```
 
@@ -306,16 +301,13 @@ El repositorio se encuentra en:
 El `.env` productivo se encuentra únicamente en la instancia y no está versionado.
 
 ### Actualizar el código
-
 ```bash
 cd /opt/energyshark
-
 git checkout develop
 git pull --ff-only origin develop
 ```
 
 ### Seleccionar versión
-
 En `.env`:
 
 ```text
@@ -324,19 +316,16 @@ IMAGE_TAG=<sha>
 ```
 
 ### Descargar imágenes
-
 ```bash
 docker compose -f docker-compose.prod.yml pull
 ```
 
 ### Levantar el stack
-
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
 ### Revisar estado
-
 ```bash
 docker compose -f docker-compose.prod.yml ps -a
 ```
@@ -407,103 +396,91 @@ curl -i https://api.energyshark-g10.tech/cycles
 
 ## Auth0
 
-La autenticación utiliza Auth0 con JWT y JWK estándar.
-
-Configuración principal:
+La autenticación utiliza Auth0 con tokens JWT y llaves públicas JWKS. API Gateway utiliza un JWT Authorizer para proteger las operaciones de negociaciones.
 
 ```text
-Issuer:
-https://dev-rz37e3yw6i3fn2bn.us.auth0.com/
-
-Audience:
-https://arquisis-e1-api/
-
-JWKS:
-https://dev-rz37e3yw6i3fn2bn.us.auth0.com/.well-known/jwks.json
+Issuer:   https://dev-rz37e3yw6i3fn2bn.us.auth0.com/
+Audience: https://arquisis-e1-api/
+JWKS:     https://dev-rz37e3yw6i3fn2bn.us.auth0.com/.well-known/jwks.json
 ```
 
-API Gateway utiliza un JWT Authorizer para proteger las operaciones de negociaciones.
-
-El header utilizado es:
+Las solicitudes autenticadas envían:
 
 ```http
 Authorization: Bearer <access_token>
 ```
 
-Durante las pruebas end-to-end se verificó que una solicitud autenticada a:
-
-```text
-POST /negotiations
-```
-
-alcanzara correctamente el backend. Una respuesta `422` por ciclo expirado constituye una respuesta de negocio posterior a la autenticación, no un fallo del authorizer.
+**Nuevo origen del frontend:** `https://app.energyshark-g10.tech`.
 
 ---
 
 ## CORS
 
-API Gateway permite requests desde el frontend desplegado.
-
-Entre los orígenes configurados se encuentra la distribución CloudFront del frontend.
-
-Se permiten:
+API Gateway administra CORS para la API pública. Los orígenes que deben permanecer configurados son:
 
 ```text
-GET
-POST
-OPTIONS
+https://energyshark-g10.tech
+https://d9yjiq237jfab.cloudfront.net
+https://app.energyshark-g10.tech
 ```
 
-Headers utilizados:
+Configuración utilizada:
 
-```text
-Authorization
-Content-Type
+| Parámetro | Valor |
+|---|---|
+| Allowed methods | `GET`, `POST`, `OPTIONS` |
+| Allowed headers | `authorization`, `content-type` |
+| Allow credentials | `No` |
+| Max age | `300` segundos |
+
+Una forma de verificar el preflight es:
+
+```bash
+curl -i -X OPTIONS 'https://api.energyshark-g10.tech/negotiations' \
+  -H 'Origin: https://app.energyshark-g10.tech' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: authorization,content-type'
 ```
 
-El preflight de una negociación debe responder:
-
-```text
-OPTIONS /negotiations → 204
-```
+Se espera que la respuesta incluya el encabezado `access-control-allow-origin` correspondiente al nuevo dominio y los métodos/cabeceras autorizados. El preflight se había observado con código `204` desde el origen anterior.
 
 ---
 
 ## Frontend desplegado
 
-El frontend se mantiene en un repositorio separado.
+El frontend se mantiene en un repositorio independiente. El build estático se almacena en S3 y se entrega mediante CloudFront con HTTPS.
 
-El build productivo se distribuye mediante:
+**URL pública personalizada:** https://app.energyshark-g10.tech
 
-```text
-Amazon S3
-→ CloudFront
-→ HTTPS
-```
+**URL original de CloudFront (conservada):** https://d9yjiq237jfab.cloudfront.net
 
-Bucket:
+| Recurso | Configuración |
+|---|---|
+| Bucket S3 | `energyshark-g10-frontend` |
+| Distribución CloudFront | `EFUBNHG9ZB6SV` |
+| Dominio CloudFront | `d9yjiq237jfab.cloudfront.net` |
+| Alias de frontend | `app.energyshark-g10.tech` |
+| API pública consumida | `https://api.energyshark-g10.tech` |
 
-```text
-energyshark-g10-frontend
-```
+El bucket funciona como origen privado de CloudFront; no se requiere habilitar S3 Static Website Hosting público. Se mantienen el objeto raíz `index.html` y el comportamiento SPA que sirve `index.html` para rutas no encontradas.
 
-Distribución CloudFront:
+### Dominio propio y certificado HTTPS
 
-```text
-ID:
-EFUBNHG9ZB6SV
+El dominio `energyshark-g10.tech` se administra en get.tech. Para el frontend:
 
-Dominio:
-https://d9yjiq237jfab.cloudfront.net
-```
+1. Se solicitó en AWS Certificate Manager (ACM), región **`us-east-1` (Norte de Virginia)**, un certificado público para `app.energyshark-g10.tech`.
+2. Se agregó el CNAME de validación DNS generado por ACM y el certificado pasó a estado **Issued**.
+3. Se agregó `app.energyshark-g10.tech` como *Alternate domain name (CNAME)* en la distribución CloudFront existente y se seleccionó ese certificado.
+4. Se creó en el proveedor DNS el CNAME `app` → `d9yjiq237jfab.cloudfront.net`.
+5. Se comprobó la resolución DNS y la carga de la SPA mediante HTTPS desde el nuevo dominio.
 
-La SPA consume la API mediante:
+El CNAME de validación de ACM debe conservarse para las renovaciones automáticas del certificado. El dominio alternativo apunta a la **misma distribución CloudFront**, sin crear un segundo bucket ni desplegar una segunda SPA.
 
-```text
-https://api.energyshark-g10.tech
-```
+### Integración con API Gateway y Auth0
 
-El bucket S3 no requiere Static Website Hosting público; CloudFront accede al bucket mediante el origen S3 correspondiente.
+Cambiar el dominio desde el que se sirve la SPA cambia el encabezado `Origin` del navegador. Por eso se añadió `https://app.energyshark-g10.tech` a los orígenes CORS de API Gateway. También se debe autorizar el nuevo origen en los tres campos de configuración SPA de Auth0 indicados en la sección anterior.
+
+El frontend sigue llamando a `https://api.energyshark-g10.tech`. No se modifica la URL de la API, el authorizer, el backend, ECR ni EC2.
 
 ---
 
@@ -597,97 +574,3 @@ almacenamiento
 utilización de disco
 contenedores Docker
 ```
-
-# EnergyShark - Entrega 0 ⚡🦈
-
-Es importante mencionar que el archivo `.env` real se encuentra configurado directamente en la instancia EC2
-y no se versiona en GitHub por contener credenciales privadas. En este repositorio se incluye `.env.example` como referencia.
-
-## Acceso a la API
-- Dominios: coniverav.tech www.coniverav.tech
-- Historial: https://coniverav.tech/history
-- Swagger/documentación: https://coniverav.tech/docs
-- Health API/backend: https://coniverav.tech/health
-- IP elástica EC2: 18.116.213.143
-
-## Acceso al servidor
-```cmd
-ssh -i "arquisis-keys.pem" ubuntu@ec2-18-116-213-143.us-east-2.compute.amazonaws.com
-```
-
-## Puntos logrados
-
-### Requisitos funcionales (10pts):
-- [x] RF1 [esencial] - historial completo de demandas recibidas.
-- [x] RF2 - detalle por ID mediante `/history/{id}`.
-- [x] RF3 [esencial] - paginación mediante queryParams `page` y `limit`, con 25 registros por defecto.
-- [x] RF4 [esencial] - filtros por propiedad.
-
-### Requisitos no funcionales: (20pts)
-- [x] RNF1 [esencial] - connector con reconexión: connector usa `aio-pika` con reconexión automática, consume `observer.53.q` y envía cada evento con `httpx` por POST a master, que lo guarda en PostgreSQL.
-- [x] RNF2 [esencial] - despliegue containerizado: master y connector comparten la misma red Docker `energyshark_net`.
-- [x] RNF3 - proxy inverso en EC2 con Nginx, configurado en `nginx/energyshark.conf`.
-- [x] RNF4 - dominio propio: `coniverav.tech`.
-- [x] RNF5 [esencial] - aplicación ejecutándose en una instancia AWS EC2 free tier.
-- [x] RNF6 - base de datos PostgreSQL ejecutándose como servicio independiente.
-- [x] RNF7 [esencial] - todos los containers poseen HEALTHCHECK y su estado puede verificarse mediante `sudo docker compose ps`.
-
-### Docker compose (15pts):
-- [x] RNF1 - master(s) levantados desde Docker Compose.
-- [x] RNF2 - base de datos integrada desde Docker Compose.
-- [x] RNF3 - connector levantado desde Docker Compose y conectado al container de la aplicación web.
-
-### Variable (25%) [ambas realizadas]:
-
-- #### HTTPS (15pts):
-    - [x] RNF1 - SSL con Let's Encrypt.
-    - [x] RNF2 - redirección automática de HTTP a HTTPS.
-    - [x] RNF3 - chequeo automático de expiración del certificado SSL dos veces al día.
-
-- #### Balanceo de carga con Nginx (15pts):
-    - [x] RF1 - master replicado en dos instancias container ejecutándose en paralelo.
-    - [x] RF2 - ambas instancias master son alcanzables desde Nginx y participan del balanceo de carga.
-
-
-## Consideraciones generales para comprobar algunos ítems
-
-* ### HEALTHCHECKS
-
-Para comprobar el estado de los containers, ejecutar desde la carpeta del proyecto:
-
-```
-sudo docker compose ps
-```
-
-Deben aparecer `db`, `master`, `master2` y `connector` en ejecución con estado `healthy`.
-
-* ### Renovación automática SSL
-
-La expiración de los certificados Let's Encrypt se verifica automáticamente dos veces al día (a mediodía y a medianoche) mediante cron, haciendo la renovación solo si corresponde.
-
-Ver configuración:
-```
-sudo crontab -l
-```
-Probar renovación:
-```
-sudo /usr/local/bin/certbot renew --dry-run
-```
-
-* ### Instancias master paralelas y alcanzables
-
-Para comprobar el balanceo se puede ejecutar reiteradas veces:
-
-```
-curl https://coniverav.tech/health
-```
-
-La respuesta indica la instancia que atendió la solicitud:
-```
-{"status":"ok","instance":"master"}
-```
-o:
-```
-{"status":"ok","instance":"master2"}
-```
-Esto permite comprobar que Nginx distribuye solicitudes entre ambas instancias.

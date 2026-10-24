@@ -1,4 +1,4 @@
-# EnergyShark - Entrega 1 ⚡🦈
+# EnergyShark - Entrega 2 ⚡🦈
 ## Arquitectura y despliegue
 
 La Entrega 1 separa la aplicación frontend de la API backend. El frontend se distribuye mediante Amazon S3 y CloudFront, la API se publica mediante API Gateway, que se integra con el backend desplegado en EC2.
@@ -97,7 +97,11 @@ RABBITMQ_URL
 RABBITMQ_QUEUE
 RABBITMQ_OUTBOUND_EXCHANGE
 RABBITMQ_CENTRAL_ROUTING_KEY
+RABBITMQ_MARKET_QUEUE
+RABBITMQ_MARKET_EXCHANGE
 CITY_ID
+WALLET_BASE_URL
+WALLET_API_KEY
 AUTH_JWKS_URL
 AUTH_AUDIENCE
 AUTH_ISSUER
@@ -110,6 +114,20 @@ NEW_RELIC_MONITOR_MODE
 NEW_RELIC_LOG
 NEW_RELIC_INFRA_DISPLAY_NAME
 ```
+
+### Topología e identidad asignadas a KLD
+
+| Uso | Valor asignado / variable |
+| --- | --- |
+| Ciudad | `KLD` (King's Landing), `CITY_ID`. |
+| Broker | `broker.iic2173.org:5671`, AMQPS/TLS, virtual host `energy`; usuario `city.KLD`. `RABBITMQ_URL` incluye la contraseña privada como parte de la URL. |
+| Cola dirigida | `city.KLD.q`, variable heredada `RABBITMQ_QUEUE`. Recibe mensajes de central, wallet y otras ciudades. |
+| Cola de mercado | `market.KLD`, nueva `RABBITMQ_MARKET_QUEUE`. Recibe ofertas y `market-closed`; el feed no lleva ACK de **protocolo**. |
+| Mensajes dirigidos | Exchange `energy.x`, `RABBITMQ_OUTBOUND_EXCHANGE`; routing propio `city.KLD`, routing a central `central` (`RABBITMQ_CENTRAL_ROUTING_KEY`) y a otra ciudad `city.{CODE}`. |
+| Ofertas | Exchange `market`, `RABBITMQ_MARKET_EXCHANGE`; única routing key de publicación permitida `market.offer.KLD`. La implementación futura deberá derivarla de `CITY_ID`; no hay variable adicional en el ejemplo. |
+| Identidad de publicación | La propiedad **AMQP** `user_id` debe ser `city.KLD`, igual al usuario autenticado y coherente con `cityId: "KLD"` del cuerpo. No es nombre de cola ni campo JSON. |
+| Wallet REST | `WALLET_BASE_URL` y `WALLET_API_KEY` son nuevas referencias para URL/API key privadas; la futura integración backend enviará la key como `X-Api-Key`. No deben pasar al frontend ni a variables `VITE_*`. |
+
 ## Ejecución local
 
 EnergyShark se encuentra dividido en dos repositorios independientes:

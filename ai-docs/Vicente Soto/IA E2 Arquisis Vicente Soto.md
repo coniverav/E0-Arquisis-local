@@ -74,3 +74,64 @@ Si el backend no confirma la persistencia, la entrega se reencola. Un mensaje de
 ## 4. Configuración de Compose
 
 Se agregó `RABBITMQ_MARKET_QUEUE` al servicio `connector` en `docker-compose.yml` y `docker-compose.prod.yml`.
+
+---
+
+# E2-014 - Separar publicación del feed de mercado y mensajes dirigidos
+
+## 1. Comprensión de la tarjeta
+
+### Prompt relevante
+
+> "Quiero implementar exclusivamente la tarjeta **E2-014: Separar publicación del feed de mercado y mensajes dirigidos**, correspondiente a G02 de EnergyShark E2."
+
+El pedido precisó los destinos de `offer`, `offer-updated`, `offer-withdrawn`, `bid`, `bid-accepted`, `bid-rejected` y mensajes vigentes hacia la central. También pidió reutilizar el outbox, conservar E2-013 y E1 vigente, y no publicar pruebas en el broker del curso.
+
+### Resumen de la respuesta y utilidad
+
+La revisión mostró que el outbox E1 conservaba la `routingKey`, pero el connector publicaba sus mensajes únicamente en `energy.x`. Se consultaron la referencia E2-009 y los schemas oficiales del curso en el commit `6cae6dcf1be954eb80c28fa34af52b1fcadf91de` para identificar el exchange y la routing key de cada tipo.
+
+---
+
+## 2. Enrutamiento y persistencia del destino
+
+### Prompt relevante
+
+> "Comprueba que el destino de cada mensaje —exchange y routing key— quede correctamente asociado a la operación y se conserve durante sus reintentos."
+
+### Resumen de la respuesta y utilidad
+
+Se agregó `connector/protocol/outbound.py` para seleccionar y comprobar el destino antes de publicar:
+
+```text
+offer, offer-updated, offer-withdrawn → market / market.offer.KLD
+bid, bid-accepted, bid-rejected → energy.x / city.{DESTINATARIO}
+request, negotiation-report → energy.x / central
+ACK/NACK dirigidos → energy.x / central o city.{EMISOR}
+```
+
+`connector/connector.py` obtiene ambos exchanges sin declarar topología y mantiene `user_id=city.KLD`. Los ACK/NACK de mensajes dirigidos a otra ciudad se encaminan a la identidad AMQP de esa ciudad. La recepción independiente de `city.KLD.q` y `market.KLD` de E2-013 se conservó.
+
+El modelo `OutboundMessage`, su servicio de auditoría y los endpoints internos guardan y devuelven `exchange_name` junto con `routing_key`. La migración `master/alembic/versions/e214_outbound_exchange.py` asigna `energy.x` a las filas E1 existentes. Así, un reintento utiliza el destino persistido. También se pasó `RABBITMQ_MARKET_EXCHANGE` al connector en ambos archivos Compose.
+
+---
+
+## 3. Pruebas y límites de la verificación
+
+### Prompt relevante
+
+> "Agrega pruebas locales utilizando mocks o fixtures para comprobar:"
+
+### Resumen de la respuesta y utilidad
+
+Se agregaron `connector/tests/test_outbound_routing.py` y `master/tests/test_outbound_exchange.py`. Las pruebas cubren destinos de ofertas, bids y mensajes a la central; identidad AMQP; rutas no autorizadas; persistencia del exchange; reintentos sobre el mismo destino; y ausencia de declaraciones de topología. También se ejecutaron las pruebas existentes de E1 y E2-013.
+
+```text
+Connector: 110 passed
+Backend sin base de datos real: 5 passed
+Backend con PostgreSQL temporal: 10 passed
+```
+
+La migración llegó a `e214outbound` en el PostgreSQL temporal, que se detuvo después de las pruebas. La configuración Compose validó con `.env.example`. No se leyó `.env`, no se publicó en el broker del curso y no se desplegó en AWS.
+
+La publicación automática de ofertas, la lógica comercial de bids, la wallet y la validación JSON Schema completa desde Contracts permanecen fuera de esta implementación.

@@ -1,5 +1,7 @@
 # Secretos / credenciales
 .env
+.env.*
+!.env.example
 *.pem
 *.key
 
@@ -8,6 +10,7 @@ __pycache__/
 *.py[cod]
 .venv/
 .pytest_cache/
+.venv.bak/
 
 # IDE / SO
 .vscode/

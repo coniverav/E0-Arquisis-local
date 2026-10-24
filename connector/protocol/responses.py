@@ -48,7 +48,7 @@ def build_nack(
         "message": message,
     }
 
-    if isinstance(cycle_id, str) and cycle_id:
+    if isinstance(cycle_id, str) and len(cycle_id) <= 64:
         data["cycleId"] = cycle_id
 
     return {

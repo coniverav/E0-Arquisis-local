@@ -89,6 +89,8 @@ def record_outbound_message(
     cycle_id: str | None = None,
     target_msg_id: str | None = None,
     routing_key: str | None = None,
+    exchange_name: str = "energy.x",
+    dispatch_required: bool = False,
 ) -> OutboundMessage:
     """
     Persiste la intención de publicación antes de intentar enviarla al broker.
@@ -101,6 +103,8 @@ def record_outbound_message(
         payload=payload,
         target_msg_id=target_msg_id,
         routing_key=routing_key,
+        exchange_name=exchange_name,
+        dispatch_required=dispatch_required,
         status=OUTBOUND_PENDING,
         attempt_count=0,
         created_at=datetime.now(timezone.utc),

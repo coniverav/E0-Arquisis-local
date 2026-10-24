@@ -69,6 +69,10 @@ RABBITMQ_QUEUE
 CITY_ID
 RABBITMQ_OUTBOUND_EXCHANGE
 RABBITMQ_CENTRAL_ROUTING_KEY
+RABBITMQ_MARKET_QUEUE
+RABBITMQ_MARKET_EXCHANGE
+WALLET_BASE_URL
+WALLET_API_KEY
 
 MASTER_URL
 MASTER_ERROR_URL
@@ -109,6 +113,8 @@ OUTBOUND_POLL_SECONDS=2
 ```
 
 Las credenciales reales del broker y de los servicios externos deben completarse únicamente en `.env`.
+
+Para KLD, `.env.example` documenta `city.KLD.q` como cola dirigida y `market.KLD` como cola de mercado; `energy.x` sirve para mensajes dirigidos y `market` para ofertas con routing `market.offer.KLD`. `RABBITMQ_MARKET_*` y `WALLET_*` están preparados como nombres de configuración.
 
 ### 2.3 Levantar el backend
 

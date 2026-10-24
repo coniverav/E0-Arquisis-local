@@ -14,6 +14,10 @@ from protocol.publisher import (
 )
 from protocol.intake import DiscardMessage, decode_incoming_payload
 from protocol.market import validate_market_feed
+from protocol.outbound import (
+    routing_key_for_directed_response,
+    select_outbound_destination,
+)
 from protocol.routing import select_master_url
 
 import aio_pika
@@ -55,6 +59,7 @@ HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
 CITY_ID = os.environ["CITY_ID"]
 RABBITMQ_MARKET_QUEUE = os.getenv("RABBITMQ_MARKET_QUEUE", f"market.{CITY_ID}")
 RABBITMQ_OUTBOUND_EXCHANGE = os.environ["RABBITMQ_OUTBOUND_EXCHANGE"]
+RABBITMQ_MARKET_EXCHANGE = os.getenv("RABBITMQ_MARKET_EXCHANGE", "market")
 RABBITMQ_CENTRAL_ROUTING_KEY = os.environ["RABBITMQ_CENTRAL_ROUTING_KEY"]
 
 HEARTBEAT = Path("/tmp/energyshark_connector_heartbeat")
@@ -166,6 +171,7 @@ def build_nack_audit_payload(
 def build_outbound_audit_payload(
     response: dict,
     routing_key: str,
+    exchange_name: str | None = None,
 ) -> dict:
     data = response.get("data") or {}
 
@@ -180,6 +186,7 @@ def build_outbound_audit_payload(
             else None
         ),
         "routingKey": routing_key,
+        "exchange": exchange_name or RABBITMQ_OUTBOUND_EXCHANGE,
         "payload": response,
     }
 
@@ -188,10 +195,12 @@ async def register_outbound_pending(
     client: httpx.AsyncClient,
     response: dict,
     routing_key: str,
+    exchange_name: str | None = None,
 ) -> None:
     audit_payload = build_outbound_audit_payload(
         response,
         routing_key,
+        exchange_name,
     )
 
     result = await forward_to_master(
@@ -240,21 +249,23 @@ async def complete_successful_message(
     exchange,
     city_user_id: str,
     client: httpx.AsyncClient,
+    routing_key: str | None = None,
 ) -> None:
     if handling.action == "ack":
         response = handling.response
+        routing_key = routing_key or RABBITMQ_CENTRAL_ROUTING_KEY
 
         await register_outbound_pending(
             client,
             response,
-            RABBITMQ_CENTRAL_ROUTING_KEY,
+            routing_key,
         )
 
         try:
             await dispatch_protocol_response(
                 result=handling,
                 exchange=exchange,
-                routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                routing_key=routing_key,
                 user_id=city_user_id,
             )
         except Exception as exc:
@@ -299,8 +310,12 @@ async def publish_backend_outbox() -> None:
             async with connection:
                 channel = await connection.channel()
 
-                exchange = await channel.get_exchange(
+                directed_exchange = await channel.get_exchange(
                     RABBITMQ_OUTBOUND_EXCHANGE,
+                    ensure=False,
+                )
+                market_exchange = await channel.get_exchange(
+                    RABBITMQ_MARKET_EXCHANGE,
                     ensure=False,
                 )
 
@@ -333,18 +348,23 @@ async def publish_backend_outbox() -> None:
                         for item in items:
                             payload = item["payload"]
                             msg_id = str(item["msgId"])
-                            routing_key = (
-                                item.get("routingKey")
-                                or RABBITMQ_CENTRAL_ROUTING_KEY
-                            )
-
                             expires_at = item.get("expiresAt")
                             if expires_at and datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at.replace("Z", "+00:00")):
                                 continue
 
                             try:
+                                exchange_name, routing_key = select_outbound_destination(
+                                    item,
+                                    city_id=CITY_ID,
+                                    directed_exchange=RABBITMQ_OUTBOUND_EXCHANGE,
+                                    market_exchange=RABBITMQ_MARKET_EXCHANGE,
+                                    central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                                )
                                 await publish_protocol_message(
-                                    exchange=exchange,
+                                    exchange=(
+                                        market_exchange if exchange_name == RABBITMQ_MARKET_EXCHANGE
+                                        else directed_exchange
+                                    ),
                                     routing_key=routing_key,
                                     payload=payload,
                                     user_id=city_user_id,
@@ -503,6 +523,10 @@ async def consume_forever() -> None:
                                 continue
 
                             if handling.action == "nack":
+                                response_routing_key = routing_key_for_directed_response(
+                                    amqp_user_id=message.user_id,
+                                    central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                                )
                                 audit_payload = build_nack_audit_payload(
                                     payload,
                                     handling.response,
@@ -537,7 +561,7 @@ async def consume_forever() -> None:
                                 await register_outbound_pending(
                                     client,
                                     handling.response,
-                                    RABBITMQ_CENTRAL_ROUTING_KEY,
+                                    response_routing_key,
                                 )
 
                                 try:
@@ -545,7 +569,7 @@ async def consume_forever() -> None:
                                         result=handling,
                                         exchange=exchange,
                                         routing_key=(
-                                            RABBITMQ_CENTRAL_ROUTING_KEY
+                                            response_routing_key
                                         ),
                                         user_id=city_user_id,
                                     )
@@ -591,6 +615,10 @@ async def consume_forever() -> None:
                                     exchange=exchange,
                                     city_user_id=city_user_id,
                                     client=client,
+                                    routing_key=routing_key_for_directed_response(
+                                        amqp_user_id=message.user_id,
+                                        central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+                                    ),
                                 )
 
                             elif result == "drop":

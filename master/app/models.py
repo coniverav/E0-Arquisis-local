@@ -531,6 +531,8 @@ class OutboundMessage(SQLModel, table=True):
     # Ruta de publicación cuando esté disponible.
     routing_key: Optional[str] = Field(default=None)
 
+    exchange_name: str = Field(default="energy.x", nullable=False)
+
     # PENDING / PUBLISHED / FAILED
     status: str = Field(index=True, nullable=False)
 

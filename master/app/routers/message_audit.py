@@ -19,6 +19,7 @@ from ..schemas import (
     AuditAnomalyListOut,
     AuditAnomalyOut,
     InboundMessageAuditIn,
+    MarketFeedMessageIn,
     InboundMessageAuditListOut,
     InboundMessageAuditOut,
     OutboundMessageAuditIn,
@@ -343,6 +344,28 @@ def update_outbound_audit(
         "status": message.status,
         "attemptCount": message.attempt_count,
     }
+
+@router.post("/inbound/market", response_model=InboundMessageAuditOut)
+def receive_market_feed(
+    payload: MarketFeedMessageIn,
+    session: Session = Depends(get_session),
+):
+    """Guarda el feed en el inbox antes del ACK de entrega RabbitMQ.
+
+    RECEIVED significa recepción durable. No implica aplicar una oferta al mercado.
+    Una redelivery crea otra evidencia y no tiene efectos económicos.
+    """
+    message = record_inbound_message(
+        session,
+        msg_id=str(payload.msgId),
+        idpk=str(payload.idpk),
+        message_type=payload.type,
+        payload=payload.model_dump(mode="json", exclude_none=True),
+        cycle_id=payload.cycleId,
+        sender=payload.cityId or payload.sender,
+    )
+    return _inbound_message_to_out(session, message)
+
 
 #Persiste mensajes descartados o NACKeados por el connector antes de que lleguen al procesamiento normal del master.
 @router.post(

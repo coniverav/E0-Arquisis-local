@@ -1,4 +1,5 @@
 import math
+import re
 from datetime import datetime
 from uuid import UUID
 from .models import ProtocolEnvelope, ValidationResult
@@ -19,6 +20,16 @@ KNOWN_TYPES = {
     "take",
     "negotiation-report",
     "distance-table",
+    "bid",
+    "bid-accepted",
+    "bid-rejected",
+    "swap-proposed",
+    "swap-settled",
+    "swap-rejected",
+    "swap-cancelled",
+    "swap-expired",
+    "trade-recorded",
+    "imbalance-settlement",
 }
 
 
@@ -30,13 +41,25 @@ CENTRAL_TYPES = {
     "give",
     "take",
     "error",
+    "swap-proposed",
+    "swap-settled",
+    "swap-rejected",
+    "swap-cancelled",
+    "swap-expired",
+    "trade-recorded",
+    "imbalance-settlement",
 }
 
 CITY_TYPES = {
     "request",
     "negotiation-proposal",
     "negotiation-report",
+    "bid",
+    "bid-accepted",
+    "bid-rejected",
 }
+
+CITY_CODE = re.compile(r"^[A-Z0-9]{3}$")
 
 NACK_CODES = {
     "MALFORMED_MESSAGE": 422,
@@ -103,9 +126,9 @@ def _validate_identity(message: ProtocolEnvelope) -> ValidationResult | None:
             )
 
     elif message.type in CITY_TYPES:
-        if not isinstance(message.city_id, str) or not message.city_id:
+        if not isinstance(message.city_id, str) or not CITY_CODE.fullmatch(message.city_id):
             return _malformed(
-                f"{message.type} debe incluir cityId"
+                f"{message.type} debe incluir un cityId válido"
             )
 
         if message.sender is not None:
@@ -137,6 +160,9 @@ def _validate_cycle(message: ProtocolEnvelope) -> ValidationResult | None:
         "take",
         "negotiation-report",
         "error",
+        "bid",
+        "bid-accepted",
+        "bid-rejected",
     }
 
     if message.type in required:
@@ -378,6 +404,20 @@ def _validate_distance_table(message: ProtocolEnvelope) -> ValidationResult:
 
     return ValidationResult(valid=True)
 
+
+def _validate_v3_directed_data(message: ProtocolEnvelope) -> ValidationResult:
+    #Esta tarjeta verifica recepción e identidad. La validación completa de contenido v3 se incorporará desde Contracts con las tareas de mercado/wallet.
+    data = message.data
+    if not isinstance(data, dict):
+        return _malformed(f"{message.type} debe incluir data")
+    if message.type == "bid":
+        if not isinstance(data.get("offerId"), str) or not data["offerId"]:
+            return _malformed("bid.data.offerId debe ser un string no vacío")
+        quantity = data.get("quantity")
+        if not isinstance(quantity, int) or isinstance(quantity, bool) or quantity <= 0:
+            return _malformed("bid.data.quantity debe ser un entero positivo")
+    return ValidationResult(valid=True)
+
 #Diccionario con las funciones de validación de contenido
 CONTENT_VALIDATORS = {
     "status-statement": _validate_status_statement,
@@ -392,6 +432,16 @@ CONTENT_VALIDATORS = {
     "nack": _validate_nack,
     "error": _validate_error,
     "distance-table": _validate_distance_table,
+    "bid": _validate_v3_directed_data,
+    "bid-accepted": _validate_v3_directed_data,
+    "bid-rejected": _validate_v3_directed_data,
+    "swap-proposed": _validate_v3_directed_data,
+    "swap-settled": _validate_v3_directed_data,
+    "swap-rejected": _validate_v3_directed_data,
+    "swap-cancelled": _validate_v3_directed_data,
+    "swap-expired": _validate_v3_directed_data,
+    "trade-recorded": _validate_v3_directed_data,
+    "imbalance-settlement": _validate_v3_directed_data,
 }
 
 #Función que valida un mensaje genérico ya parseado

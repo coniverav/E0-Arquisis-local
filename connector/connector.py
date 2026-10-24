@@ -15,6 +15,7 @@ from protocol.publisher import (
 from protocol.intake import DiscardMessage, decode_incoming_payload
 from protocol.market import validate_market_feed
 from protocol.outbound import (
+    CITY_ROUTING_KEY,
     routing_key_for_directed_response,
     select_outbound_destination,
 )
@@ -106,6 +107,18 @@ def audit_text(payload: dict | None, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def authenticated_inbound_route(payload: dict, amqp_user_id: str | None) -> str | None:
+    """Obtiene el destino de respuesta del transporte, nunca del cityId declarado."""
+    if isinstance(amqp_user_id, str) and CITY_ROUTING_KEY.fullmatch(amqp_user_id):
+        return routing_key_for_directed_response(
+            amqp_user_id=amqp_user_id,
+            central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+        )
+    if amqp_user_id is None and payload.get("sender") == "central" and payload.get("cityId") is None:
+        return RABBITMQ_CENTRAL_ROUTING_KEY
+    return None
+
+
 #Construye la evidencia que se enviará al master para un mensaje descartado antes de entrar al procesamiento normal del protocolo.
 def build_discard_audit_payload(
     body: bytes,
@@ -142,8 +155,12 @@ def build_discard_audit_payload(
 def build_nack_audit_payload(
     payload: dict,
     response: dict,
+    amqp_user_id: str | None = None,
 ) -> dict:
     data = response.get("data", {})
+    reason = data.get("message", "Mensaje rechazado por el protocolo")
+    if response.get("reason") == "IDENTITY_MISMATCH":
+        reason = f"{reason}; AMQP user_id={amqp_user_id!r}; cityId={payload.get('cityId')!r}"
 
     return {
         "status": "NACKED",
@@ -159,13 +176,10 @@ def build_nack_audit_payload(
         ),
         "type": audit_text(payload, "type"),
         "cycleId": audit_text(payload, "cycleId"),
-        "sender": audit_text(payload, "sender"),
+        "sender": audit_text(payload, "sender") or audit_text(payload, "cityId"),
         "payload": payload,
         "reasonCode": response.get("reason"),
-        "reason": data.get(
-            "message",
-            "Mensaje rechazado por el protocolo",
-        ),
+        "reason": reason,
     }
 
 def build_outbound_audit_payload(
@@ -513,9 +527,24 @@ async def consume_forever() -> None:
                                 amqp_user_id=message.user_id,
                             )
 
+                            response_routing_key = authenticated_inbound_route(
+                                payload, message.user_id,
+                            )
+
+                            if handling.action in {"ack", "nack"} and response_routing_key is None:
+                                audit = build_discard_audit_payload(message.body, DiscardMessage(
+                                    f"Sin ruta AMQP autenticada para responder; user_id={message.user_id!r}",
+                                    payload=payload,
+                                ))
+                                result = await forward_to_master(client, audit, url=MASTER_AUDIT_URL)
+                                await message.reject(requeue=result != "ack")
+                                if result != "ack":
+                                    await asyncio.sleep(HTTP_RETRY_SECONDS)
+                                continue
+
                             if handling.action == "discard":
                                 audit = build_discard_audit_payload(message.body, DiscardMessage(
-                                    "Respuesta de protocolo inválida: se descarta para evitar bucles", payload=payload))
+                                    handling.discard_reason or "Respuesta de protocolo inválida: se descarta para evitar bucles", payload=payload))
                                 result = await forward_to_master(client, audit, url=MASTER_AUDIT_URL)
                                 await message.reject(requeue=result != "ack")
                                 if result != "ack":
@@ -523,13 +552,10 @@ async def consume_forever() -> None:
                                 continue
 
                             if handling.action == "nack":
-                                response_routing_key = routing_key_for_directed_response(
-                                    amqp_user_id=message.user_id,
-                                    central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
-                                )
                                 audit_payload = build_nack_audit_payload(
                                     payload,
                                     handling.response,
+                                    amqp_user_id=message.user_id,
                                 )
 
                                 audit_result = await forward_to_master(
@@ -615,10 +641,7 @@ async def consume_forever() -> None:
                                     exchange=exchange,
                                     city_user_id=city_user_id,
                                     client=client,
-                                    routing_key=routing_key_for_directed_response(
-                                        amqp_user_id=message.user_id,
-                                        central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
-                                    ),
+                                    routing_key=response_routing_key,
                                 )
 
                             elif result == "drop":

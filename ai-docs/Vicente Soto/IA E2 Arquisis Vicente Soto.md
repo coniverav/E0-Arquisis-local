@@ -135,3 +135,55 @@ Backend con PostgreSQL temporal: 10 passed
 La migración llegó a `e214outbound` en el PostgreSQL temporal, que se detuvo después de las pruebas. La configuración Compose validó con `.env.example`. No se leyó `.env`, no se publicó en el broker del curso y no se desplegó en AWS.
 
 La publicación automática de ofertas, la lógica comercial de bids, la wallet y la validación JSON Schema completa desde Contracts permanecen fuera de esta implementación.
+
+---
+
+# E2-015 - Validar identidad `user_id` de mensajes entre ciudades
+
+## 1. Comprensión de la tarjeta
+
+### Prompt relevante
+
+> "Quiero implementar exclusivamente la tarjeta **E2-015: Validar identidad `user_id` de mensajes entre ciudades**, correspondiente a **G02 y RF05** del enunciado E2 de EnergyShark."
+
+El pedido exigió comparar el `user_id` AMQP con el `cityId` de mensajes dirigidos, responder `IDENTITY_MISMATCH/403` cuando correspondiera, conservar la correlación mediante `msgId` y auditar rechazos y descartes. También precisó que los eventos de la central y la wallet usan otra identificación, que el feed de mercado no lleva ACK/NACK de protocolo y que las pruebas debían ser locales, sin usar el broker de producción.
+
+### Resumen de la respuesta y utilidad
+
+La revisión del connector E1 mostró que ya existían parser, ACK/NACK, validación básica de identidad y auditoría, pero el catálogo del validador todavía no reconocía `bid`, `bid-accepted`, `bid-rejected` ni eventos de wallet. Se contrastaron las reglas con los schemas oficiales v3 usados en E2-009. Esto permitió acotar el cambio a la recepción dirigida y conservar el consumidor de mercado de E2-013 y el routing de E2-014.
+
+---
+
+## 2. Validación, respuesta y auditoría
+
+### Prompt relevante
+
+> "Un mensaje con `user_id` y `cityId` incompatibles debe generar NACK con `IDENTITY_MISMATCH`."
+
+### Resumen de la respuesta y utilidad
+
+En `connector/protocol/handler.py` se adelantó la comparación de identidad para mensajes de ciudad identificables, conservando la prioridad E1 de `IDPK_EQUALS_MSGID`. Un `bid` con identidad discordante genera NACK sin pasar al backend. Se mantuvo `MALFORMED_MESSAGE/422` para mensajes inválidos con `msgId` utilizable y el descarte sin respuesta para cuerpos no parseables o sin `msgId` válido. Los mensajes que declaran `sender: "central"` se tratan por separado; los tipos de eventos wallet dirigidos dejaron de rechazarse como desconocidos solo por ser nuevos en v3.
+
+En `connector/connector.py`, la ruta de respuesta de una ciudad se toma del `user_id` AMQP observado, nunca del `cityId` declarado en el JSON. Si no hay una ruta autenticada a la cual responder, el mensaje se descarta y audita, sin enviarlo al procesamiento de negocio ni publicar una respuesta hacia una identidad supuesta. La auditoría de `IDENTITY_MISMATCH` conserva el `msgId` original, el motivo del NACK, el `cityId` declarado y el `user_id` observado. El ACK de RabbitMQ sigue siendo distinto del ACK/NACK del protocolo.
+
+En `connector/protocol/validation.py` se reconocieron los tipos dirigidos v3 necesarios para esta recepción y se añadió una comprobación básica de contenido de `bid`. `connector/protocol/responses.py` limita el eco de `cycleId` en el NACK a un string de hasta 64 caracteres, según el contrato oficial. La validación completa de todos los campos v3 permanece pendiente de la integración con Contracts.
+
+---
+
+## 3. Pruebas locales y límites
+
+### Prompt relevante
+
+> "Como pruebo entonces lo que se hizo aqui?"
+
+### Resumen de la respuesta y utilidad
+
+Se añadió `connector/tests/test_city_identity.py` con 13 pruebas para identidad coincidente y discordante, `bid` malformado, cuerpos no parseables, ausencia de `msgId`, eventos de central y wallet, auditoría, destino de los NACK y ausencia de llamadas de negocio para mensajes rechazados. Las pruebas existentes de mercado y E1 también se ejecutaron.
+
+```text
+Pruebas nuevas de E2-015: 13 passed
+Suite completa del connector: 123 passed
+git diff --check: sin errores
+```
+
+Los NACK `IDENTITY_MISMATCH` y `MALFORMED_MESSAGE`, y los fixtures de `bid` y `swap-proposed`, se contrastaron localmente con los schemas oficiales v3. No se conectó al broker de producción ni se probó un despliegue real. El procesamiento comercial de bids y eventos wallet, junto con la validación JSON Schema completa desde Contracts, siguen pendientes de otras tarjetas. La ausencia de `user_id` permite detectar la identidad inválida, pero no ofrece una dirección de respuesta confiable; por eso el connector audita y descarta ese caso en vez de usar el `cityId` no verificado como destino.

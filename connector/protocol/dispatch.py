@@ -9,8 +9,11 @@ async def dispatch_protocol_response(
     routing_key: str,
     user_id: str,
 ) -> bool:
-    if result.response is None:
+    # Un mensaje recibido de tipo ack/nack/error nunca debe iniciar otra respuesta.
+    if result.action not in {"ack", "nack"}:
         return False
+    if result.response is None or result.response.get("type") != result.action:
+        raise ValueError("ACK/NACK planificado sin respuesta del mismo tipo")
 
     await publish_protocol_message(
         exchange=exchange,

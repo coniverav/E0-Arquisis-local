@@ -72,6 +72,7 @@ def test_successful_message_publishes_protocol_ack_before_rabbit_ack():
             exchange=exchange,
             city_user_id="city.KLD",
             client=client,
+            routing_key="central",
         )
     )
 
@@ -154,6 +155,7 @@ def test_failed_protocol_ack_does_not_ack_rabbit_delivery():
                 exchange=exchange,
                 city_user_id="city.KLD",
                 client=client,
+                routing_key="central",
             )
         )
 
@@ -175,3 +177,23 @@ def test_failed_protocol_ack_does_not_ack_rabbit_delivery():
         "status": "FAILED",
         "error": "broker publish failed",
     }
+
+
+def test_protocol_ack_requires_authenticated_route_before_persistence():
+    handling = SimpleNamespace(action="ack", response={"msgId": "response-id"})
+    delivery = AsyncMock()
+    client = AsyncMock()
+    exchange = AsyncMock()
+
+    with pytest.raises(ValueError, match="routing key autenticada"):
+        asyncio.run(complete_successful_message(
+            handling=handling,
+            message=delivery,
+            exchange=exchange,
+            city_user_id="city.KLD",
+            client=client,
+        ))
+
+    client.post.assert_not_awaited()
+    exchange.publish.assert_not_awaited()
+    delivery.ack.assert_not_awaited()

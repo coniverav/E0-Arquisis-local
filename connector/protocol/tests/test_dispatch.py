@@ -1,6 +1,7 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock
+import pytest
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import ProtocolHandlingResult
 
@@ -62,4 +63,30 @@ def test_dispatch_without_response_does_not_publish():
     )
 
     assert published is False
+    exchange.publish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", ["ignore", "discard"])
+def test_non_response_action_never_publishes_even_with_accidental_payload(action):
+    exchange = AsyncMock()
+    result = ProtocolHandlingResult(action=action, response={"type": "ack"})
+
+    published = asyncio.run(dispatch_protocol_response(
+        result=result, exchange=exchange, routing_key="central", user_id="city.KLD",
+    ))
+
+    assert published is False
+    exchange.publish.assert_not_awaited()
+
+
+@pytest.mark.parametrize("response", [None, {"type": "nack"}])
+def test_planned_ack_without_matching_response_fails_before_publish(response):
+    exchange = AsyncMock()
+    result = ProtocolHandlingResult(action="ack", response=response)
+
+    with pytest.raises(ValueError, match="mismo tipo"):
+        asyncio.run(dispatch_protocol_response(
+            result=result, exchange=exchange, routing_key="central", user_id="city.KLD",
+        ))
+
     exchange.publish.assert_not_awaited()

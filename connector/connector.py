@@ -267,7 +267,8 @@ async def complete_successful_message(
 ) -> None:
     if handling.action == "ack":
         response = handling.response
-        routing_key = routing_key or RABBITMQ_CENTRAL_ROUTING_KEY
+        if not routing_key:
+            raise ValueError("ACK dirigido sin routing key autenticada")
 
         await register_outbound_pending(
             client,

@@ -323,6 +323,8 @@ class OutboundMessageAuditIn(BaseModel):
     cycleId: str | None = None
     targetMsgId: str | None = None
     routingKey: str | None = None
+    exchange: str | None = None
+    dispatchRequired: bool = False
 
     payload: dict[str, Any] = Field(default_factory=dict)
 

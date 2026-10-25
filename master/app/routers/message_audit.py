@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from sqlalchemy import or_
 from typing import Literal
 
@@ -7,6 +8,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from ..database import get_session
+from ..config import CITY_ID
 from ..services.budget_carryover import lock_city_ledger
 from ..models import (
     Cycle,
@@ -124,6 +126,21 @@ def create_outbound_audit(
     Registra durablemente la intención de publicar un mensaje.
     """
 
+    if payload.type in {"offer", "offer-updated", "offer-withdrawn"}:
+        if (
+            payload.exchange != "market"
+            or payload.routingKey != f"market.offer.{CITY_ID}"
+            or payload.payload.get("cityId") != CITY_ID
+        ):
+            raise HTTPException(status_code=422, detail="market offer requires own exchange and routing key")
+    if payload.type in {"bid", "bid-accepted", "bid-rejected"}:
+        if (
+            payload.exchange != "energy.x"
+            or not isinstance(payload.routingKey, str)
+            or re.fullmatch(r"city\.[A-Z0-9]{3}", payload.routingKey) is None
+        ):
+            raise HTTPException(status_code=422, detail="bid requires directed exchange and city routing key")
+
     existing = session.exec(
         select(OutboundMessage).where(
             OutboundMessage.msg_id == str(payload.msgId)
@@ -131,6 +148,12 @@ def create_outbound_audit(
     ).first()
 
     if existing is not None:
+        if (
+            existing.exchange_name != (payload.exchange or "energy.x")
+            or existing.routing_key != payload.routingKey
+            or existing.payload != payload.payload
+        ):
+            raise HTTPException(status_code=409, detail="msgId already has a different destination or payload")
         return {
             "id": existing.id,
             "status": existing.status,
@@ -146,6 +169,8 @@ def create_outbound_audit(
         cycle_id=payload.cycleId,
         target_msg_id=payload.targetMsgId,
         routing_key=payload.routingKey,
+        exchange_name=payload.exchange or "energy.x",
+        dispatch_required=payload.dispatchRequired,
     )
 
     return {
@@ -220,6 +245,7 @@ def list_outbound_dispatch(
                 "idpk": message.idpk,
                 "type": message.message_type,
                 "routingKey": message.routing_key,
+                "exchange": message.exchange_name,
                 "payload": message.payload,
                 "expiresAt": message.expires_at,
             }

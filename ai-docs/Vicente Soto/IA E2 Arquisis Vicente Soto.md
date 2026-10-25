@@ -187,3 +187,53 @@ git diff --check: sin errores
 ```
 
 Los NACK `IDENTITY_MISMATCH` y `MALFORMED_MESSAGE`, y los fixtures de `bid` y `swap-proposed`, se contrastaron localmente con los schemas oficiales v3. No se conectó al broker de producción ni se probó un despliegue real. El procesamiento comercial de bids y eventos wallet, junto con la validación JSON Schema completa desde Contracts, siguen pendientes de otras tarjetas. La ausencia de `user_id` permite detectar la identidad inválida, pero no ofrece una dirección de respuesta confiable; por eso el connector audita y descarta ese caso en vez de usar el `cityId` no verificado como destino.
+
+---
+
+# E2-016 - Gestionar ACK/NACK dirigidos y evitar respuestas infinitas
+
+## 1. Comprensión de la tarjeta
+
+### Prompt relevante
+
+> "Quiero implementar exclusivamente la tarjeta **E2-016: Gestionar ACK/NACK dirigidos y evitar respuestas infinitas**, correspondiente a **G02** del enunciado E2 de EnergyShark."
+
+Se pidió verificar la correlación y el routing de ACK/NACK para mensajes recibidos en `city.KLD.q`, evitar respuestas automáticas a `ack`, `nack` y `error`, y mantener el feed `market.KLD` sin ACK/NACK de protocolo. La tarjeta debía conservar E2-013, E2-014 y E2-015 sin incorporar lógica comercial ni cambiar topología RabbitMQ.
+
+### Resumen de la respuesta y utilidad
+
+La revisión del connector, las pruebas E1/E2 y los schemas oficiales v3 del commit `6cae6dcf1be954eb80c28fa34af52b1fcadf91de` mostró que `plan_protocol_response()` ya construía respuestas con `data.target` igual al `msgId` original y no respondía a `ack`, `nack` o `error`. El consumidor de mercado tampoco invocaba el publicador de respuestas. El trabajo se concentró en cerrar dos rutas de fallo y probar el flujo completo con mocks.
+
+---
+
+## 2. Destino autenticado y prevención de respuestas recursivas
+
+### Prompt relevante
+
+> "Los mensajes provenientes de otras ciudades no reciban sus respuestas en la routing key `central` por defecto."
+
+### Resumen de la respuesta y utilidad
+
+En `connector/connector.py`, `complete_successful_message()` dejó de sustituir una routing key ausente por `central`: ahora exige una ruta autenticada antes de persistir y publicar el ACK. El flujo de recepción continúa obteniendo `city.{CODE}` del `user_id` AMQP observado y reserva `central` para mensajes de la central identificados como tales.
+
+En `connector/protocol/dispatch.py`, `dispatch_protocol_response()` publica únicamente cuando la acción planificada es `ack` o `nack` y el payload tiene ese mismo tipo. Una acción `ignore` o `discard` no publica, incluso si por error recibiera un payload; una acción ACK/NACK sin respuesta coherente falla antes de publicar. Se conservaron las confirmaciones internas de RabbitMQ y el registro outbound previo a la publicación.
+
+---
+
+## 3. Pruebas y alcance de la verificación
+
+### Prompt relevante
+
+> "Como yo pruebo esto que acabas de hacer?"
+
+### Resumen de la respuesta y utilidad
+
+Se creó `connector/tests/test_directed_ack_nack.py` y se ampliaron `connector/tests/test_connector_flow.py` y `connector/protocol/tests/test_dispatch.py`. Las pruebas simulan la entrega por la cola de ciudad y comprueban ACK/NACK correlacionados, publicación en `energy.x`, routing hacia otra ciudad o `central`, auditoría de rechazos y descartes, y ausencia de respuestas al recibir `ack`, `nack`, `error` o feed. También comprueban que la publicación del protocolo preceda al ACK interno de RabbitMQ y que un ACK sin routing key no se publique.
+
+```text
+Pruebas relacionadas: 18 passed, 5 subtests passed
+Suite completa del connector: 136 passed, 5 subtests passed
+git diff --check: sin errores
+```
+
+Cuatro ACK/NACK generados se validaron localmente contra los schemas oficiales v3. Las pruebas utilizaron mocks y el entorno Python existente, sin levantar Docker ni conectarse al broker de producción. Un ACK de protocolo confirma recepción y no aceptación comercial; la lógica de bids, swaps y wallet continúa fuera de esta tarjeta.

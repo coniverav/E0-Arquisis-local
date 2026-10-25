@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, Text, Numeric, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Numeric, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -464,6 +464,7 @@ class InboundMessage(SQLModel, table=True):
 
     message_type: Optional[str] = Field(default=None, index=True)
     cycle_id: Optional[str] = Field(default=None, index=True)
+    offer_id: Optional[str] = Field(default=None, index=True)
 
     payload: Optional[dict[str, Any]] = Field(
         default=None,
@@ -494,6 +495,59 @@ class InboundMessage(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
+
+
+class MarketCycle(SQLModel, table=True):
+    """Estado terminal del feed para un ciclo, independiente del ledger E1."""
+
+    __tablename__ = "market_cycles"
+
+    cycle_id: str = Field(primary_key=True)
+    closed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    closed_msg_id: Optional[str] = Field(default=None)
+
+
+class MarketOffer(SQLModel, table=True):
+    """Snapshot conservador de la única oferta de una ciudad en un ciclo."""
+
+    __tablename__ = "market_offers"
+    __table_args__ = (UniqueConstraint("cycle_id", "city_id", name="uq_market_offer_cycle_city"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cycle_id: str = Field(foreign_key="market_cycles.cycle_id", index=True, nullable=False)
+    city_id: str = Field(index=True, nullable=False)
+    offer_id: str = Field(nullable=False)
+    initial_quantity: Optional[int] = Field(default=None)
+    remaining: Optional[int] = Field(default=None)
+    price_per_energy: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(), nullable=True)
+    )
+    state: str = Field(nullable=False)  # ACTIVE / UNRESOLVED / WITHDRAWN / CLOSED
+    uncertain: bool = Field(default=False, nullable=False)
+    last_event_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    last_event_msg_id: str = Field(nullable=False)
+
+
+class MarketEventClaim(SQLModel, table=True):
+    """Unicidad transaccional de idpk/msgId del feed entre réplicas de master."""
+
+    __tablename__ = "market_event_claims"
+    __table_args__ = (
+        UniqueConstraint("sender", "idpk", name="uq_market_event_sender_idpk"),
+        UniqueConstraint("sender", "msg_id", name="uq_market_event_sender_msg_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    sender: str = Field(nullable=False)
+    idpk: str = Field(nullable=False)
+    msg_id: str = Field(nullable=False)
+    fingerprint: str = Field(nullable=False)
+    inbound_id: int = Field(sa_column=Column(
+        Integer, ForeignKey("inbound_messages.id", ondelete="RESTRICT"),
+        nullable=False, index=True,
+    ))
 
 
 class OutboundMessage(SQLModel, table=True):

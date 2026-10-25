@@ -13,6 +13,7 @@ from ..services.budget_carryover import lock_city_ledger
 from ..models import (
     Cycle,
     InboundMessage,
+    MarketEventClaim,
     OutboundMessage,
     ProcessedIdpk,
     Negotiation,
@@ -48,6 +49,7 @@ from ..services.message_audit import (
     record_inbound_message,
     record_outbound_message,
 )
+from ..services.market_feed import persist_market_feed
 
 #En un duplicado interesa también conocer cuál fue el mensaje que realmente obtuvo el claim y aplicó la operación.
 def _inbound_message_to_out(
@@ -67,6 +69,13 @@ def _inbound_message_to_out(
 
         if processed is not None:
             related_msg_id = processed.msg_id
+        elif message.message_type in {"offer", "offer-updated", "offer-withdrawn", "market-closed"}:
+            claim = session.exec(select(MarketEventClaim).where(
+                MarketEventClaim.sender == message.sender,
+                MarketEventClaim.idpk == message.idpk,
+            )).first()
+            if claim is not None:
+                related_msg_id = claim.msg_id
 
     return InboundMessageAuditOut(
         id=message.id,
@@ -376,20 +385,8 @@ def receive_market_feed(
     payload: MarketFeedMessageIn,
     session: Session = Depends(get_session),
 ):
-    """Guarda el feed en el inbox antes del ACK de entrega RabbitMQ.
-
-    RECEIVED significa recepción durable. No implica aplicar una oferta al mercado.
-    Una redelivery crea otra evidencia y no tiene efectos económicos.
-    """
-    message = record_inbound_message(
-        session,
-        msg_id=str(payload.msgId),
-        idpk=str(payload.idpk),
-        message_type=payload.type,
-        payload=payload.model_dump(mode="json", exclude_none=True),
-        cycle_id=payload.cycleId,
-        sender=payload.cityId or payload.sender,
-    )
+    """Confirma la recepción solo después de persistir inbox, claim y snapshot."""
+    message = persist_market_feed(session, payload)
     return _inbound_message_to_out(session, message)
 
 

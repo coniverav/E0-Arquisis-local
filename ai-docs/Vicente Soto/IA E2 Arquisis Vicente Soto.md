@@ -237,3 +237,55 @@ git diff --check: sin errores
 ```
 
 Cuatro ACK/NACK generados se validaron localmente contra los schemas oficiales v3. Las pruebas utilizaron mocks y el entorno Python existente, sin levantar Docker ni conectarse al broker de producción. Un ACK de protocolo confirma recepción y no aceptación comercial; la lógica de bids, swaps y wallet continúa fuera de esta tarjeta.
+
+---
+
+# E2-017 - Persistir feed de ofertas y `market-closed`
+
+## 1. Comprensión de la tarjeta
+
+### Prompt relevante
+
+> "Quiero implementar exclusivamente la tarjeta **E2-017: Persistir feed de ofertas y `market-closed`**, correspondiente a **RF02 y G02** del enunciado E2 de EnergyShark."
+
+Se pidió conservar en PostgreSQL `offer`, `offer-updated`, `offer-withdrawn` y `market-closed`, mantener un snapshot por ciudad y ciclo, deduplicar reintentos y tratar conservadoramente eventos fuera de orden. El alcance excluyó bids, wallet, estrategias, interfaz de mercado, pruebas contra el broker de producción, commits y despliegues.
+
+### Resumen de la respuesta y utilidad
+
+La revisión de los schemas oficiales v3 y del consumidor de E2-013 permitió reutilizar `inbound_messages` como historial de cada recepción y el endpoint interno existente como entrada del feed. El contrato no aporta un número de secuencia que permita reconstruir inequívocamente el orden de entregas; por eso se conserva la evidencia de eventos conflictivos y se marca el snapshot como incierto cuando corresponde.
+
+---
+
+## 2. Persistencia, deduplicación y consistencia
+
+### Prompt relevante
+
+> "Evitar que un mensaje duplicado aplique dos veces sus efectos."
+
+### Resumen de la respuesta y utilidad
+
+Se agregó la migración `e217_market_feed.py`: `offer_id` en `inbound_messages`, `market_event_claims` para reclamar `idpk` y `msgId` por emisor, `market_cycles` para registrar el cierre y `market_offers` para el snapshot único por `(cycle_id, city_id)`. `app/services/market_feed.py` guarda la recepción, la reclamación y el cambio de estado en una transacción PostgreSQL. Un reenvío queda registrado como `DUPLICATE` sin reaplicar la oferta; un identificador reutilizado con contenido distinto queda como `NOT_PROCESSED`.
+
+La oferta registra cantidad y precio iniciales; `offer-updated` cambia `remaining` y precio; `offer-withdrawn` deja la oferta retirada; `market-closed`, emitido por la central, cierra únicamente su ciclo. Los eventos atrasados, contradictorios o posteriores al cierre no sobrescriben silenciosamente el estado. El bloqueo del ciclo serializa eventos entre las dos instancias de backend. Se ajustó la validación del feed en connector y backend para rechazar formas inválidas antes de persistirlas. No se añadieron endpoints públicos ni lógica comercial.
+
+---
+
+## 3. Pruebas, relación con el enunciado y límites
+
+### Prompts relevantes
+
+> "Ok, como pruebo esto de forma local, además, esto cumple con lo que se pide en enunciado?"
+
+> "Probar con el broker de producción porque quedó fuera de la tarjeta?"
+
+### Resumen de la respuesta y utilidad
+
+Se probaron historial y snapshot, actualización de precio y `remaining`, retiro, cierre por ciclo, duplicados, separación entre ciudades y ciclos, eventos fuera de orden, rollback y concurrencia. Las pruebas del connector cubrieron ACK de entrega RabbitMQ posterior a la persistencia, reencolado ante fallo, ausencia de ACK/NACK de protocolo, reconexión y cierre. La suite completa detectó que una prueba antigua borraba `inbound_messages` sin borrar antes los nuevos claims; se corrigió su limpieza y se repitió la suite sobre una base temporal limpia.
+
+```text
+Backend con PostgreSQL temporal: 180 passed, 3 subtests passed
+Connector: 137 passed, 8 subtests passed
+git diff --check con CRLF reconocido: sin errores
+```
+
+Se compartieron comandos para repetir las pruebas con una base PostgreSQL desechable y se explicó cómo observar, después de un despliegue, los logs y las tablas en EC2. No se conectó esta implementación al broker de producción, no se publicaron mensajes reales y no se verificó AWS. Se distinguió que E2-017 prepara el libro de ofertas para RF02 y aporta al consumo de G02, pero RF02 completo aún exige vista, transporte, precio efectivo y rutas deshabilitadas; G02 operativo requiere comprobación en el entorno desplegado.

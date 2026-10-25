@@ -1,6 +1,8 @@
 # Define esquemas Pydantic, es decir, qué forma deben tener los JSON que entran y salen de la API
 
 from datetime import datetime
+import math
+import re
 from typing import Any, Literal
 from uuid import UUID
 from decimal import Decimal
@@ -333,7 +335,7 @@ class OutboundMessageResultIn(BaseModel):
     error: str | None = None
 
 class MarketFeedMessageIn(BaseModel):
-    """Envelope mínimo del feed; conserva campos extra para el procesamiento futuro."""
+    """Forma de los cuatro eventos del feed; las ciudades admiten campos extra."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -352,6 +354,27 @@ class MarketFeedMessageIn(BaseModel):
             raise ValueError("idpk y msgId deben ser distintos")
         if self.timestamp.tzinfo is None:
             raise ValueError("timestamp debe incluir zona horaria")
+        if self.type == "market-closed":
+            if (self.sender != "central" or "cityId" in self.model_fields_set
+                    or self.data or self.model_extra):
+                raise ValueError("market-closed requiere sender central y data vacío")
+            return self
+
+        if (not isinstance(self.cityId, str)
+                or re.fullmatch(r"[A-Z0-9]{3}", self.cityId) is None
+                or self.sender is not None):
+            raise ValueError("Oferta requiere cityId válido y no sender")
+        if not isinstance(self.data.get("offerId"), str) or not self.data["offerId"]:
+            raise ValueError("data.offerId debe ser un string no vacío")
+        if self.type in {"offer", "offer-updated"}:
+            field = "quantity" if self.type == "offer" else "remaining"
+            quantity = self.data.get(field)
+            if not isinstance(quantity, int) or isinstance(quantity, bool):
+                raise ValueError(f"data.{field} debe ser entero")
+            price = self.data.get("pricePerEnergy")
+            if (not isinstance(price, (int, float)) or isinstance(price, bool)
+                    or (isinstance(price, float) and not math.isfinite(price))):
+                raise ValueError("data.pricePerEnergy debe ser numérico finito")
         return self
 
 

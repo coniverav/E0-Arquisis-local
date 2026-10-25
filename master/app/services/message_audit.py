@@ -28,6 +28,8 @@ def record_inbound_message(
     raw_payload: str | None = None,
     cycle_id: str | None = None,
     sender: str | None = None,
+    offer_id: str | None = None,
+    commit: bool = True,
 ) -> InboundMessage:
     """
     Persiste durablemente la recepción de un mensaje.
@@ -40,6 +42,7 @@ def record_inbound_message(
         idpk=idpk,
         message_type=message_type,
         cycle_id=cycle_id,
+        offer_id=offer_id,
         payload=payload,
         raw_payload=raw_payload,
         status=INBOUND_RECEIVED,
@@ -48,8 +51,11 @@ def record_inbound_message(
     )
 
     session.add(message)
-    session.commit()
-    session.refresh(message)
+    if commit:
+        session.commit()
+        session.refresh(message)
+    else:
+        session.flush()
 
     return message
 

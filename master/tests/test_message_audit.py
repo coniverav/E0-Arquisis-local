@@ -5,7 +5,7 @@ from sqlalchemy import delete
 from sqlmodel import Session
 
 from app.database import engine, run_migrations
-from app.models import InboundMessage, OutboundMessage
+from app.models import InboundMessage, MarketEventClaim, OutboundMessage
 from app.services.message_audit import (
     INBOUND_DUPLICATE,
     INBOUND_PROCESSED,
@@ -28,6 +28,7 @@ class MessageAuditTests(unittest.TestCase):
     def setUp(self):
         with Session(engine) as session:
             session.exec(delete(OutboundMessage))
+            session.exec(delete(MarketEventClaim))
             session.exec(delete(InboundMessage))
             session.commit()
 

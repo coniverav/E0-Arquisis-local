@@ -50,6 +50,22 @@ class MarketValidationTests(unittest.TestCase):
         with self.assertRaises(DiscardMessage):
             validate_market_feed(payload, amqp_user_id="city.HGW")
 
+    def test_invalid_offer_data_and_closed_event_are_discarded(self):
+        missing_quantity = offer_payload()
+        missing_quantity["data"].pop("quantity")
+        boolean_price = offer_payload()
+        boolean_price["data"]["pricePerEnergy"] = True
+        closed_with_offer = market_closed_payload()
+        closed_with_offer["data"] = {"offerId": "unexpected"}
+        for payload, user_id in (
+            (missing_quantity, "city.HGW"),
+            (boolean_price, "city.HGW"),
+            (closed_with_offer, None),
+        ):
+            with self.subTest(message_type=payload["type"]):
+                with self.assertRaises(DiscardMessage):
+                    validate_market_feed(payload, amqp_user_id=user_id)
+
 
 class MarketDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_broker_ack_follows_durable_http_receipt_without_protocol_reply(self):

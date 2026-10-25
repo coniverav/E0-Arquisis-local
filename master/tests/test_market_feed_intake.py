@@ -27,7 +27,7 @@ def offer_payload():
 
 
 class MarketFeedIntakeTests(unittest.TestCase):
-    def test_valid_feed_is_recorded_as_received_without_business_processing(self):
+    def test_valid_feed_uses_atomic_market_persistence(self):
         payload = offer_payload()
         response_body = {
             "id": 1,
@@ -35,7 +35,7 @@ class MarketFeedIntakeTests(unittest.TestCase):
             "idpk": payload["idpk"],
             "type": "offer",
             "cycleId": payload["cycleId"],
-            "status": "RECEIVED",
+            "status": "PROCESSED",
             "reasonCode": None,
             "reason": None,
             "receivedAt": payload["timestamp"],
@@ -46,7 +46,7 @@ class MarketFeedIntakeTests(unittest.TestCase):
         }
         app.dependency_overrides[get_session] = lambda: sentinel.session
         with (
-            patch("app.routers.message_audit.record_inbound_message", return_value=sentinel.row) as record,
+            patch("app.routers.message_audit.persist_market_feed", return_value=sentinel.row) as persist,
             patch("app.routers.message_audit._inbound_message_to_out", return_value=response_body) as to_out,
         ):
             try:
@@ -55,10 +55,10 @@ class MarketFeedIntakeTests(unittest.TestCase):
                 app.dependency_overrides.clear()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["status"], "RECEIVED")
-        self.assertEqual(record.call_args.kwargs["message_type"], "offer")
-        self.assertEqual(record.call_args.kwargs["sender"], "HGW")
-        self.assertEqual(record.call_args.kwargs["payload"]["futureField"], "preserved")
+        self.assertEqual(response.json()["status"], "PROCESSED")
+        self.assertEqual(persist.call_args.args[1].type, "offer")
+        self.assertEqual(persist.call_args.args[1].cityId, "HGW")
+        self.assertEqual(persist.call_args.args[1].model_extra["futureField"], "preserved")
         to_out.assert_called_once_with(sentinel.session, sentinel.row)
 
     def test_bad_envelope_is_not_accepted_by_internal_route(self):
@@ -66,6 +66,19 @@ class MarketFeedIntakeTests(unittest.TestCase):
         payload["idpk"] = payload["msgId"]
         with self.assertRaises(ValidationError):
             MarketFeedMessageIn.model_validate(payload)
+
+    def test_invalid_offer_shape_and_closed_event_are_not_accepted(self):
+        missing_quantity = offer_payload()
+        missing_quantity["data"].pop("quantity")
+        boolean_price = offer_payload()
+        boolean_price["data"]["pricePerEnergy"] = True
+        closed_with_offer = offer_payload()
+        closed_with_offer.update(type="market-closed", sender="central", data={"offerId": "bad"})
+        closed_with_offer.pop("cityId")
+        for payload in (missing_quantity, boolean_price, closed_with_offer):
+            with self.subTest(message_type=payload["type"]):
+                with self.assertRaises(ValidationError):
+                    MarketFeedMessageIn.model_validate(payload)
 
 
 if __name__ == "__main__":

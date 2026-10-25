@@ -98,6 +98,24 @@ class Cycle(SQLModel, table=True):
         ),
     )
 
+    # Campos de tiempos de mercado central v3 (E2-023)
+    market_opens_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_last_offer_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_last_bid_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_closes_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
     report_window_opened_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(

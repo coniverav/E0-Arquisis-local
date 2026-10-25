@@ -265,6 +265,7 @@ def ingest_protocol_message(
             configure_cycle_schedule(
                 cycle,
                 valid_until=valid_until,
+                market_times=payload.data.get("market"),
             )
 
             session.add(cycle)

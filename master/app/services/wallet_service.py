@@ -1,0 +1,343 @@
+"""Servicio de operaciones durables con la Wallet Central (E2-020, E2-021, E2-022).
+
+Implementa:
+- Gestión durable de Idempotency-Key (UUIDv4) en Postgres: si falla la conexión o hay timeout,
+  se recupera o reintenta con la misma clave exacta.
+- Registro en base de datos del estado SwapRecord antes de llamar a la wallet.
+- Procesamiento de respuestas HTTP 202 sin asumir liquidación (AD5).
+- Consumo y correlación de eventos swap-* (`swap-proposed`, `swap-settled`, `swap-rejected`,
+  `swap-expired`, `swap-cancelled`) por data.idpk y swapId.
+- Actualización de balances wallet (available/held/creditLine) respetando a la wallet como
+  autoridad económica (E2-022, AD5).
+"""
+
+from datetime import datetime, timezone
+from decimal import Decimal
+import logging
+from typing import Any, Optional
+import uuid
+
+from sqlmodel import Session, select
+
+from app.models import (
+    SwapRecord,
+    WalletBalanceSnapshot,
+    OfferReservation,
+    MarketOffer,
+)
+from app.services.wallet_client import (
+    WalletClient,
+    WalletError,
+    WalletTimeoutError,
+    WalletSwapWriteResponse,
+    WalletBalanceResponse,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class WalletService:
+    """Gestiona el ciclo de vida de los swaps y sincronización con la Wallet."""
+
+    def __init__(self, client: Optional[WalletClient] = None):
+        self.client = client or WalletClient()
+
+    def get_or_create_swap_record(
+        self,
+        session: Session,
+        *,
+        idpk: str,
+        cycle_id: str,
+        role: str,
+        counterpart_city_id: str,
+        give_asset: str,
+        give_amount: Decimal,
+        take_asset: str,
+        take_amount: Decimal,
+        memo: Optional[str] = None,
+        swap_id: Optional[str] = None,
+    ) -> SwapRecord:
+        """
+        Obtiene un SwapRecord existente o crea uno nuevo con Idempotency-Key durable.
+        Garantiza que llamadas repetidas con el mismo idpk reutilicen la misma llave.
+        """
+        existing = session.exec(
+            select(SwapRecord).where(SwapRecord.idpk == idpk)
+        ).first()
+
+        if existing:
+            return existing
+
+        now = datetime.now(timezone.utc)
+        record = SwapRecord(
+            idpk=idpk,
+            swap_id=swap_id,
+            cycle_id=cycle_id,
+            role=role,
+            counterpart_city_id=counterpart_city_id,
+            give_asset=give_asset,
+            give_amount=give_amount,
+            take_asset=take_asset,
+            take_amount=take_amount,
+            memo=memo,
+            status="SUBMITTED",
+            idempotency_key=str(uuid.uuid4()),
+            created_at=now,
+        )
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+        return record
+
+    async def execute_propose_swap(
+        self,
+        session: Session,
+        record: SwapRecord,
+    ) -> WalletSwapWriteResponse:
+        """
+        Envía la propuesta de swap a la wallet usando la idempotency_key durable persistida.
+        """
+        logger.info(
+            "Enviando propuesta de swap a la wallet: idpk=%s key=%s",
+            record.idpk, record.idempotency_key
+        )
+        try:
+            resp = await self.client.propose_swap(
+                idempotency_key=record.idempotency_key,
+                give_asset=record.give_asset,
+                give_amount=record.give_amount,
+                take_asset=record.take_asset,
+                take_amount=record.take_amount,
+                counterpart_city_id=record.counterpart_city_id,
+                memo=record.memo,
+            )
+            # Si la wallet responde con swapId en el cuerpo HTTP 202, lo asociamos preliminarmente
+            swap_id_in_resp = resp.data.get("swapId") or resp.data.get("id")
+            if swap_id_in_resp and not record.swap_id:
+                record.swap_id = swap_id_in_resp
+                session.add(record)
+                session.commit()
+            return resp
+        except WalletTimeoutError as exc:
+            # En caso de timeout o red rota, el record mantiene su idempotency_key para reintentos posteriores
+            logger.warning(
+                "Timeout enviando swap idpk=%s con key=%s. La operación sigue SUBMITTED para recuperación: %s",
+                record.idpk, record.idempotency_key, exc
+            )
+            raise
+
+    async def execute_accept_swap(
+        self,
+        session: Session,
+        record: SwapRecord,
+    ) -> WalletSwapWriteResponse:
+        """
+        Acepta un swap en la wallet usando accept_idempotency_key durable (E2-020).
+        """
+        if not record.swap_id:
+            raise ValueError(f"No se puede aceptar swap {record.idpk} sin swap_id asignado")
+
+        if not record.accept_idempotency_key:
+            record.accept_idempotency_key = str(uuid.uuid4())
+            record.status = "ACCEPT_SUBMITTED"
+            session.add(record)
+            session.commit()
+
+        try:
+            resp = await self.client.accept_swap(
+                record.swap_id,
+                idempotency_key=record.accept_idempotency_key,
+            )
+            return resp
+        except WalletTimeoutError as exc:
+            logger.warning(
+                "Timeout aceptando swap %s (key=%s): %s",
+                record.swap_id, record.accept_idempotency_key, exc
+            )
+            raise
+
+    def process_swap_event(
+        self,
+        session: Session,
+        *,
+        event_type: str,
+        data: dict[str, Any],
+    ) -> Optional[SwapRecord]:
+        """
+        Procesa eventos de wallet de RabbitMQ (E2-021):
+        - swap-proposed
+        - swap-settled
+        - swap-rejected
+        - swap-expired
+        - swap-cancelled
+
+        Correlaciona por data.idpk y data.swapId, aplicando transiciones de estado
+        y liberando o confirmando reservas de energía según AD4 / AD5.
+        """
+        idpk = data.get("idpk")
+        swap_id = data.get("swapId") or data.get("id")
+
+        query = select(SwapRecord)
+        if idpk:
+            query = query.where(SwapRecord.idpk == idpk)
+        elif swap_id:
+            query = query.where(SwapRecord.swap_id == swap_id)
+        else:
+            logger.warning("Evento %s sin idpk ni swapId en payload", event_type)
+            return None
+
+        record = session.exec(query).first()
+        if not record:
+            logger.warning(
+                "SwapRecord no encontrado para evento %s (idpk=%s, swap_id=%s)",
+                event_type, idpk, swap_id
+            )
+            return None
+
+        now = datetime.now(timezone.utc)
+        if swap_id and not record.swap_id:
+            record.swap_id = swap_id
+
+        # Actualización de token o expiración si viene en el evento
+        if "swapToken" in data:
+            record.swap_token = data["swapToken"]
+        if "expiresAt" in data and isinstance(data["expiresAt"], str):
+            try:
+                record.expires_at = datetime.fromisoformat(data["expiresAt"].replace("Z", "+00:00"))
+            except ValueError:
+                pass
+
+        if event_type == "swap-proposed":
+            record.status = "PROPOSED"
+
+        elif event_type == "swap-settled":
+            record.status = "SETTLED"
+            record.settled_at = now
+            # Confirmar reserva asociada si somos vendedores (AD4)
+            if record.memo:
+                self._update_offer_and_reservation(
+                    session,
+                    offer_id=record.memo,
+                    bid_idpk=record.idpk,
+                    action="COMMIT",
+                )
+
+        elif event_type in ("swap-rejected", "swap-expired", "swap-cancelled"):
+            if event_type == "swap-rejected":
+                record.status = "REJECTED"
+                record.rejection_reason = data.get("reason", "UNKNOWN_REJECTION")
+            elif event_type == "swap-expired":
+                record.status = "EXPIRED"
+            else:
+                record.status = "CANCELLED"
+
+            # Liberar reserva de energía si existía retención local (AD4)
+            if record.memo:
+                self._update_offer_and_reservation(
+                    session,
+                    offer_id=record.memo,
+                    bid_idpk=record.idpk,
+                    action="RELEASE",
+                )
+
+        session.add(record)
+        session.commit()
+        session.refresh(record)
+
+        # Si el evento incluye balancesActualizados (balancesAfter), registrar snapshot (E2-022)
+        if "balancesAfter" in data and isinstance(data["balancesAfter"], dict):
+            self.record_balance_snapshot(
+                session,
+                cycle_id=record.cycle_id,
+                source="EVENT",
+                balances_dict=data["balancesAfter"],
+            )
+
+        return record
+
+    def _update_offer_and_reservation(
+        self,
+        session: Session,
+        *,
+        offer_id: str,
+        bid_idpk: str,
+        action: str,  # "COMMIT" o "RELEASE"
+    ) -> None:
+        """Actualiza la reserva de oferta según la confirmación o cancelación del swap."""
+        res = session.exec(
+            select(OfferReservation).where(
+                OfferReservation.offer_id == offer_id,
+                OfferReservation.bid_idpk == bid_idpk,
+            )
+        ).first()
+
+        now = datetime.now(timezone.utc)
+        if res:
+            if action == "COMMIT":
+                res.status = "COMMITTED"
+                # Descontar definitivamente del remaining de la oferta
+                offer = session.exec(
+                    select(MarketOffer).where(MarketOffer.offer_id == offer_id)
+                ).first()
+                if offer:
+                    offer.remaining_quantity = max(0, offer.remaining_quantity - res.quantity)
+                    offer.last_updated_at = now
+                    session.add(offer)
+            elif action == "RELEASE":
+                res.status = "RELEASED"
+                res.released_at = now
+            session.add(res)
+            session.commit()
+
+    def record_balance_snapshot(
+        self,
+        session: Session,
+        *,
+        cycle_id: Optional[str],
+        source: str,
+        balances_dict: dict[str, Any],
+    ) -> WalletBalanceSnapshot:
+        """
+        Guarda un snapshot de los balances informado por la wallet (E2-022).
+        """
+        now = datetime.now(timezone.utc)
+        kwh = balances_dict.get("kwh", {})
+        cr = balances_dict.get("cr", {})
+
+        snapshot = WalletBalanceSnapshot(
+            cycle_id=cycle_id,
+            source=source,
+            kwh_available=Decimal(str(kwh.get("available", 0))),
+            kwh_held=Decimal(str(kwh.get("held", 0))),
+            cr_available=Decimal(str(cr.get("available", 0))),
+            cr_held=Decimal(str(cr.get("held", 0))),
+            credit_line=Decimal(str(balances_dict.get("creditLine", 0))),
+            recorded_at=now,
+        )
+        session.add(snapshot)
+        session.commit()
+        session.refresh(snapshot)
+        return snapshot
+
+    async def sync_balance_from_wallet(
+        self,
+        session: Session,
+        cycle_id: Optional[str] = None,
+    ) -> WalletBalanceSnapshot:
+        """Consulta GET /balance a la central y persiste el snapshot más reciente."""
+        bal: WalletBalanceResponse = await self.client.get_balance()
+        now = datetime.now(timezone.utc)
+        snapshot = WalletBalanceSnapshot(
+            cycle_id=cycle_id,
+            source="REST_SYNC",
+            kwh_available=bal.kwh_available,
+            kwh_held=bal.kwh_held,
+            cr_available=bal.cr_available,
+            cr_held=bal.cr_held,
+            credit_line=bal.credit_line,
+            recorded_at=now,
+        )
+        session.add(snapshot)
+        session.commit()
+        session.refresh(snapshot)
+        return snapshot

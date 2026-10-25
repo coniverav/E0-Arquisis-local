@@ -3,6 +3,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+import signal
 import ssl
 
 from protocol.dispatch import dispatch_protocol_response
@@ -12,6 +13,7 @@ from protocol.publisher import (
     publish_protocol_message,
 )
 from protocol.intake import DiscardMessage, decode_incoming_payload
+from protocol.market import validate_market_feed
 from protocol.routing import select_master_url
 
 import aio_pika
@@ -28,6 +30,7 @@ RABBITMQ_QUEUE = os.environ["RABBITMQ_QUEUE"]
 MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/messages",)
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
+MASTER_MARKET_URL = f"{MASTER_AUDIT_URL.rstrip('/')}/market"
 MASTER_OUTBOUND_AUDIT_URL = os.getenv(
     "MASTER_OUTBOUND_AUDIT_URL",
     "http://master:8000/internal/audit/outbound",
@@ -50,6 +53,7 @@ HTTP_RETRY_SECONDS = float(os.getenv("HTTP_RETRY_SECONDS", "2"))
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "10"))
 
 CITY_ID = os.environ["CITY_ID"]
+RABBITMQ_MARKET_QUEUE = os.getenv("RABBITMQ_MARKET_QUEUE", f"market.{CITY_ID}")
 RABBITMQ_OUTBOUND_EXCHANGE = os.environ["RABBITMQ_OUTBOUND_EXCHANGE"]
 RABBITMQ_CENTRAL_ROUTING_KEY = os.environ["RABBITMQ_CENTRAL_ROUTING_KEY"]
 
@@ -609,12 +613,90 @@ async def consume_forever() -> None:
             await asyncio.sleep(CONNECTOR_RETRY_SECONDS)
 
 
+async def process_market_message(message, client: httpx.AsyncClient) -> None:
+    """Confirma al broker solo tras guardar el feed o auditar su descarte."""
+    try:
+        payload = decode_incoming_payload(message.body)
+        validate_market_feed(payload, amqp_user_id=message.user_id)
+    except DiscardMessage as exc:
+        logger.warning("Descartando mensaje de mercado inválido: %s", exc)
+        audit = build_discard_audit_payload(message.body, exc)
+        result = await forward_to_master(client, audit, url=MASTER_AUDIT_URL)
+        if result == "ack":
+            await message.reject(requeue=False)
+        else:
+            # Sin evidencia durable, no se elimina la entrega.
+            await message.reject(requeue=True)
+            await asyncio.sleep(HTTP_RETRY_SECONDS)
+        return
+
+    result = await forward_to_master(client, payload, url=MASTER_MARKET_URL)
+    if result == "ack":
+        await message.ack()
+        return
+
+    #También un 4xx del backend puede ser una incompatibilidad temporal de versiones. No descartar silenciosamente un evento válido del feed.
+    logger.warning("No se pudo persistir el mensaje de mercado; reencolando")
+    await message.reject(requeue=True)
+    await asyncio.sleep(HTTP_RETRY_SECONDS)
+
+
+async def consume_market_forever() -> None:
+    """Consume el feed en su propia conexión, aislado de la cola dirigida."""
+    tls_context = ssl.create_default_context()
+
+    while True:
+        try:
+            logger.info("Conectando a RabbitMQ; cola=%s", RABBITMQ_MARKET_QUEUE)
+            connection = await aio_pika.connect(
+                RABBITMQ_URL,
+                ssl_context=tls_context,
+                timeout=10,
+                client_properties={"connection_name": "energyshark-market-connector"},
+            )
+
+            async with connection:
+                channel = await connection.channel()
+                await channel.set_qos(prefetch_count=20)
+                #ensure=False no declara ni comprueba pasivamente topología.
+                queue = await channel.get_queue(RABBITMQ_MARKET_QUEUE, ensure=False)
+                logger.info("Conectado. Esperando feed en %s", RABBITMQ_MARKET_QUEUE)
+
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                    async with queue.iterator() as iterator:
+                        async for message in iterator:
+                            await process_market_message(message, client)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Consumo de mercado interrumpido (%s). Reintentando en %.1fs...",
+                exc,
+                CONNECTOR_RETRY_SECONDS,
+            )
+            await asyncio.sleep(CONNECTOR_RETRY_SECONDS)
+
+
 async def main() -> None:
+    loop = asyncio.get_running_loop()
+    current_task = asyncio.current_task()
+    installed_signals = []
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(signum, current_task.cancel)
+            installed_signals.append(signum)
+        except (NotImplementedError, RuntimeError):
+            pass
+
     heartbeat_task = asyncio.create_task(
         heartbeat()
     )
     consumer_task = asyncio.create_task(
         consume_forever()
+    )
+    market_task = asyncio.create_task(
+        consume_market_forever()
     )
     outbox_task = asyncio.create_task(
         publish_backend_outbox()
@@ -623,19 +705,24 @@ async def main() -> None:
     try:
         await asyncio.gather(
             consumer_task,
+            market_task,
             outbox_task,
         )
     finally:
         heartbeat_task.cancel()
         consumer_task.cancel()
+        market_task.cancel()
         outbox_task.cancel()
 
         await asyncio.gather(
             heartbeat_task,
             consumer_task,
+            market_task,
             outbox_task,
             return_exceptions=True,
         )
+        for signum in installed_signals:
+            loop.remove_signal_handler(signum)
 
 
 if __name__ == "__main__":

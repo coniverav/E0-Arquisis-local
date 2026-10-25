@@ -330,6 +330,29 @@ class OutboundMessageResultIn(BaseModel):
     status: Literal["PUBLISHED", "FAILED"]
     error: str | None = None
 
+class MarketFeedMessageIn(BaseModel):
+    """Envelope mínimo del feed; conserva campos extra para el procesamiento futuro."""
+
+    model_config = ConfigDict(extra="allow")
+
+    idpk: UUID
+    msgId: UUID
+    type: Literal["offer", "offer-updated", "offer-withdrawn", "market-closed"]
+    timestamp: datetime
+    cycleId: str = Field(min_length=1)
+    data: dict[str, Any]
+    cityId: str | None = None
+    sender: str | None = None
+
+    @model_validator(mode="after")
+    def validate_envelope(self):
+        if self.idpk == self.msgId:
+            raise ValueError("idpk y msgId deben ser distintos")
+        if self.timestamp.tzinfo is None:
+            raise ValueError("timestamp debe incluir zona horaria")
+        return self
+
+
 #Evidencia de un mensaje rechazado por el connector antes de llegar al procesamiento normal del master.
 class InboundMessageAuditIn(BaseModel):
     status: Literal["DISCARDED", "NACKED"]

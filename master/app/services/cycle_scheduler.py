@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from sqlmodel import Session, select
 
@@ -17,23 +18,54 @@ def configure_cycle_schedule(
     cycle: Cycle,
     *,
     valid_until: datetime,
+    market_times: dict[str, Any] | None = None,
 ) -> None:
     """
-    Configura los tiempos del ciclo a partir del validUntil
-    entregado por la central.
+    Configura los tiempos del ciclo a partir de los timestamps oficiales
+    entregados por la central en status-statement (E2-023, G03, RF01).
 
-    La transición desde PENDING es responsabilidad del scheduler.
+    Nunca se calculan a partir del ID del ciclo ni se asume reloj local.
     """
 
     cycle.valid_until = valid_until
 
-    cycle.report_window_opens_at = max(
-        cycle.report_window_opens_at or (valid_until - timedelta(seconds=CYCLE_REPORT_WINDOW_SECONDS)),
-        valid_until
-        - timedelta(
+    if market_times and isinstance(market_times, dict):
+        def _parse_ts(key: str) -> datetime | None:
+            val = market_times.get(key)
+            if isinstance(val, str):
+                try:
+                    return datetime.fromisoformat(val.replace("Z", "+00:00"))
+                except ValueError:
+                    return None
+            return None
+
+        opens_at = _parse_ts("opensAt")
+        last_offer = _parse_ts("lastOfferAt")
+        last_bid = _parse_ts("lastBidAt")
+        closes_at = _parse_ts("closesAt")
+        report_opens = _parse_ts("reportOpensAt")
+
+        if opens_at:
+            cycle.market_opens_at = opens_at
+        if last_offer:
+            cycle.market_last_offer_at = last_offer
+        if last_bid:
+            cycle.market_last_bid_at = last_bid
+        if closes_at:
+            cycle.market_closes_at = closes_at
+        if report_opens:
+            cycle.report_window_opens_at = report_opens
+
+    # Si report_window_opens_at no vino explícito en market, usar ventana configurada
+    if cycle.report_window_opens_at is None:
+        cycle.report_window_opens_at = valid_until - timedelta(
             seconds=CYCLE_REPORT_WINDOW_SECONDS
         )
-    )
+    else:
+        cycle.report_window_opens_at = max(
+            cycle.report_window_opens_at,
+            valid_until - timedelta(seconds=CYCLE_REPORT_WINDOW_SECONDS)
+        )
 
 
 def process_cycle_windows(

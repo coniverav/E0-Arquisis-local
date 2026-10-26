@@ -98,6 +98,24 @@ class Cycle(SQLModel, table=True):
         ),
     )
 
+    # Campos de tiempos de mercado central v3 (E2-023)
+    market_opens_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_last_offer_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_last_bid_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    market_closes_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
     report_window_opened_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(
@@ -645,3 +663,268 @@ class OutboundMessage(SQLModel, table=True):
             nullable=True,
         ),
     )
+
+
+# =============================================================================
+# Modelos v3 (E2-018): Mercado, Wallet, Swaps, Bids, Ofertas y Estrategias
+# =============================================================================
+
+
+class MarketOffer(SQLModel, table=True):
+    """
+    Oferta de venta de energía en el mercado (RF02, RF03).
+    Aplica tanto a ofertas locales (publicadas por nuestra ciudad) como remotas
+    (recibidas a través del feed market.{CODE}).
+    """
+
+    __tablename__ = "market_offers"
+
+    __table_args__ = (
+        UniqueConstraint("offer_id", name="uq_market_offers_offer_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    offer_id: str = Field(index=True, nullable=False)
+    cycle_id: str = Field(index=True, nullable=False)
+    city_id: str = Field(index=True, nullable=False)
+    is_local: bool = Field(default=False, index=True, nullable=False)
+
+    initial_quantity: int = Field(nullable=False)
+    remaining_quantity: int = Field(nullable=False)
+    price_per_energy: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+
+    # ACTIVE / WITHDRAWN / CLOSED
+    status: str = Field(default="ACTIVE", index=True, nullable=False)
+
+    published_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    last_updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
+    withdrawn_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    reservations: list["OfferReservation"] = Relationship(
+        back_populates="offer",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+    bids: list["MarketBid"] = Relationship(
+        back_populates="offer",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
+
+
+class OfferReservation(SQLModel, table=True):
+    """
+    Reserva de energía de una oferta local para serialización estricta (AD4).
+    Garantiza que dos bids concurrentes no comprometan el mismo KWH antes de
+    la confirmación del swap en la wallet.
+    """
+
+    __tablename__ = "offer_reservations"
+
+    __table_args__ = (
+        UniqueConstraint("bid_idpk", name="uq_offer_reservations_bid_idpk"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    offer_id: str = Field(foreign_key="market_offers.offer_id", index=True, nullable=False)
+    bid_idpk: str = Field(index=True, nullable=False)
+    quantity: int = Field(nullable=False)
+
+    # HOLD (comprometido en espera de swap) / COMMITTED (swap-settled) / RELEASED (rejected/expired/cancelled)
+    status: str = Field(default="HOLD", index=True, nullable=False)
+
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    released_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    offer: Optional[MarketOffer] = Relationship(back_populates="reservations")
+
+
+class MarketBid(SQLModel, table=True):
+    """
+    Bid de compra/venta de energía (RF03, AD4).
+    Registra tanto bids recibidos de compradores (somos seller) como enviados (somos buyer).
+    """
+
+    __tablename__ = "market_bids"
+
+    __table_args__ = (
+        UniqueConstraint("idpk", name="uq_market_bids_idpk"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    msg_id: str = Field(index=True, nullable=False)
+    cycle_id: str = Field(index=True, nullable=False)
+
+    # INCOMING (recibido como vendedor) / OUTGOING (enviado como comprador)
+    direction: str = Field(index=True, nullable=False)
+
+    offer_id: str = Field(foreign_key="market_offers.offer_id", index=True, nullable=False)
+    counterpart_city_id: str = Field(index=True, nullable=False)
+    quantity: int = Field(nullable=False)
+
+    # PENDING / ACCEPTED / REJECTED
+    status: str = Field(default="PENDING", index=True, nullable=False)
+    rejection_reason: Optional[str] = Field(default=None, index=True)
+    available_on_rejection: Optional[int] = Field(default=None)
+
+    swap_id: Optional[str] = Field(default=None, index=True)
+
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    responded_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    offer: Optional[MarketOffer] = Relationship(back_populates="bids")
+
+
+class SwapRecord(SQLModel, table=True):
+    """
+    Operación de swap gestionada a través de la wallet REST (AD5, RF03).
+    Correlaciona idpk, swapId, tokens JWK ES256 y ciclo.
+    """
+
+    __tablename__ = "swap_records"
+
+    __table_args__ = (
+        UniqueConstraint("idpk", name="uq_swap_records_idpk"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    swap_id: Optional[str] = Field(default=None, index=True)
+    cycle_id: str = Field(index=True, nullable=False)
+
+    # PROPOSER (nosotros propusimos el swap) / ACCEPTOR (nosotros lo aceptamos)
+    role: str = Field(index=True, nullable=False)
+    counterpart_city_id: str = Field(index=True, nullable=False)
+
+    give_asset: str = Field(nullable=False)  # KWH o CR
+    give_amount: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    take_asset: str = Field(nullable=False)  # CR o KWH
+    take_amount: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    memo: Optional[str] = Field(default=None, index=True)
+
+    # SUBMITTED (POST 202 enviado) / PROPOSED / ACCEPT_SUBMITTED / SETTLED / REJECTED / EXPIRED / CANCELLED
+    status: str = Field(default="SUBMITTED", index=True, nullable=False)
+    rejection_reason: Optional[str] = Field(default=None)
+
+    idempotency_key: str = Field(index=True, nullable=False)
+    accept_idempotency_key: Optional[str] = Field(default=None, index=True)
+    swap_token: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    expires_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    settled_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class WalletBalanceSnapshot(SQLModel, table=True):
+    """
+    Snapshots y estado de saldo consultado desde la Wallet central (AD5, E2-022).
+    La wallet es la autoridad económica de CR y KWH.
+    """
+
+    __tablename__ = "wallet_balance_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    cycle_id: Optional[str] = Field(default=None, index=True)
+    # EVENT (derivado de swap-settled/trade-recorded/funding) / REST_SYNC (GET /balance)
+    source: str = Field(index=True, nullable=False)
+
+    kwh_available: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(20, 4), nullable=False),
+    )
+    kwh_held: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(20, 4), nullable=False),
+    )
+    cr_available: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(20, 4), nullable=False),
+    )
+    cr_held: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(20, 4), nullable=False),
+    )
+    credit_line: Decimal = Field(
+        default=Decimal("0.00"),
+        sa_column=Column(Numeric(20, 4), nullable=False),
+    )
+
+    recorded_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class StrategyConfig(SQLModel, table=True):
+    """
+    Configuración de estrategia de mercado editable sin redeploy (AD6, RF04).
+    Cada edición genera una versión persistida que entra en vigencia en el siguiente ciclo.
+    """
+
+    __tablename__ = "strategy_configs"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    version: int = Field(index=True, unique=True, nullable=False)
+    # PENDING / ACTIVE / ARCHIVED
+    status: str = Field(default="PENDING", index=True, nullable=False)
+
+    offer_price_markup: Decimal = Field(
+        default=Decimal("1.20"),
+        sa_column=Column(Numeric(10, 4), nullable=False),
+    )
+    offer_quantity_fraction: Decimal = Field(
+        default=Decimal("1.00"),
+        sa_column=Column(Numeric(10, 4), nullable=False),
+    )
+    # FIFO, MAX_REMAINING, BATCH
+    bid_acceptance_policy: str = Field(default="FIFO", nullable=False)
+    # CHEAPEST_EFFECTIVE_PRICE, MIN_DISTANCE
+    offer_selection_policy: str = Field(
+        default="CHEAPEST_EFFECTIVE_PRICE", nullable=False
+    )
+    # Tiempo de espera antes de comprar en segundos (span para RF06)
+    span_seconds: int = Field(default=60, nullable=False)
+
+    effective_from_cycle_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    created_by: Optional[str] = Field(default=None)
+

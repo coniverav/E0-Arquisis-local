@@ -490,3 +490,22 @@ class MarketBookOut(BaseModel):
     disabledRouteTransportCost: Decimal | None = None
     total: int
     offers: list[MarketBookOfferOut]
+
+
+class MarketBuyCandidatesOut(BaseModel):
+    """E2-037: orden y elegibilidad de compra, sin enviar un bid."""
+
+    cycleId: str
+    asOf: datetime
+    strategyVersion: int | None = None
+    selectionPolicy: str | None = None
+    spanSeconds: int | None = None
+    minBid: int | None = None
+    buyingOpensAt: datetime | None = None
+    lastBidAt: datetime | None = None
+    closesAt: datetime | None = None
+    marketClosed: bool
+    canBid: bool
+    reason: str | None = None
+    total: int
+    candidates: list[MarketBookOfferOut]

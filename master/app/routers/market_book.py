@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session
 
 from ..database import get_session
-from ..schemas import MarketBookOut
+from ..schemas import MarketBookOut, MarketBuyCandidatesOut
 from ..services.market_book import get_market_book
+from ..services.offer_selection import get_buy_candidates
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -22,3 +23,12 @@ def read_market_book(
     return get_market_book(
         session, cycle_id=cycleId, include_inactive=includeInactive
     )
+
+
+@router.get("/buy-candidates", response_model=MarketBuyCandidatesOut)
+def read_buy_candidates(
+    cycleId: str = Query(..., min_length=1, max_length=64),
+    session: Session = Depends(get_session),
+) -> MarketBuyCandidatesOut:
+    """Solo lectura. Nunca encola bids ni opera fuera de la ventana oficial."""
+    return get_buy_candidates(session, cycle_id=cycleId)

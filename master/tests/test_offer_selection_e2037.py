@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from app.database import engine, run_migrations
@@ -202,21 +203,32 @@ def test_pinned_strategy_not_replaced_by_newer_pending_version():
 def test_http_endpoint_is_readonly():
     with Session(engine) as s:
         now = datetime.now(timezone.utc)
-        cid, _ = _setup(
+        cid, version = _setup(
             s, opened=now - timedelta(minutes=2), last_bid=now + timedelta(minutes=3),
             closes=now + timedelta(minutes=4), span=0,
         )
         _offer(s, cid)
         s.commit()
-    response = TestClient(app).get("/market/buy-candidates", params={"cycleId": cid})
-    assert response.status_code == 200, response.text
-    result = response.json()
-    assert result["canBid"] is True and result["total"] == 1
-    assert result["candidates"][0]["cityId"] == "HGW"
-    with Session(engine) as s:
-        assert s.exec(select(OutboundMessage).where(
-            OutboundMessage.cycle_id == cid
-        )).all() == []
+    try:
+        response = TestClient(app).get("/market/buy-candidates", params={"cycleId": cid})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["canBid"] is True and result["total"] == 1
+        assert result["candidates"][0]["cityId"] == "HGW"
+        with Session(engine) as s:
+            assert s.exec(select(OutboundMessage).where(
+                OutboundMessage.cycle_id == cid
+            )).all() == []
+    finally:
+        # La consulta HTTP necesita filas confirmadas, pero no deben quedar
+        # visibles para otros tests (p. ej. la estrategia creada en NOW).
+        with Session(engine) as s:
+            s.exec(delete(MarketFeedOffer).where(MarketFeedOffer.cycle_id == cid))
+            s.exec(delete(DistanceTable).where(DistanceTable.cycle_id == cid))
+            s.exec(delete(MarketCycle).where(MarketCycle.cycle_id == cid))
+            s.exec(delete(Cycle).where(Cycle.cycle_id == cid))
+            s.exec(delete(StrategyConfig).where(StrategyConfig.version == version))
+            s.commit()
 
 
 def test_unknown_cycle_no_side_effects():

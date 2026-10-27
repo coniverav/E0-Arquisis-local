@@ -58,14 +58,6 @@ class Cycle(SQLModel, table=True):
     __tablename__ = "cycles"
 
     cycle_id: str = Field(primary_key=True)
-    
-    # AD6: versión fija de estrategia utilizada en este ciclo.
-    # NULL permite conservar los ciclos anteriores a E2.
-    strategy_version: Optional[int] = Field(
-        default=None,
-        foreign_key="strategy_configs.version",
-        index=True,
-    )
 
     # status-statement
     status_msg_id: Optional[str] = Field(default=None, index=True)

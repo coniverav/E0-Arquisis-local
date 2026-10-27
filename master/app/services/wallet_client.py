@@ -16,6 +16,7 @@ from typing import Any, Optional
 import httpx
 
 from app.config import WALLET_API_KEY, WALLET_BASE_URL, WALLET_TIMEOUT_SECONDS
+from app.services.wallet_observability import ObservedWalletAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +103,9 @@ class WalletClient:
                 retry_after=retry_after,
             )
         if response.is_error:
-            logger.error(
-                "Wallet HTTP %s error: %s",
-                response.status_code,
-                response.text[:200],
-            )
+            logger.error("Wallet HTTP error status_code=%s", response.status_code)
             raise WalletError(
-                f"Wallet request failed with HTTP {response.status_code}: {response.text}",
+                f"Wallet request failed with HTTP {response.status_code}",
                 status_code=response.status_code,
             )
 
@@ -121,7 +118,7 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, params=params, headers=headers)
                 self._handle_response_error(res)
                 data = res.json()
@@ -140,8 +137,8 @@ class WalletClient:
                     timestamp=data.get("timestamp"),
                 )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.error("Timeout/Network error querying wallet balance: %s", exc)
-            raise WalletTimeoutError(f"Wallet balance connection failed: {exc}") from exc
+            logger.error("Wallet connection error endpoint=balance error_type=%s", type(exc).__name__)
+            raise WalletTimeoutError("Wallet balance connection failed") from exc
 
     async def propose_swap(
         self,
@@ -169,11 +166,7 @@ class WalletClient:
             payload["memo"] = memo
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.info(
-                    "POST /swaps with Idempotency-Key=%s counterpart=%s give=%s take=%s",
-                    idempotency_key, counterpart_city_id, give_amount, take_amount
-                )
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, json=payload, headers=headers)
                 self._handle_response_error(res)
                 return WalletSwapWriteResponse(
@@ -183,11 +176,8 @@ class WalletClient:
                     accepted_for_processing=(res.status_code == 202),
                 )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning(
-                "Timeout or connection failure calling POST /swaps (key=%s): %s",
-                idempotency_key, exc
-            )
-            raise WalletTimeoutError(f"POST /swaps timed out or network failed: {exc}") from exc
+            logger.warning("Wallet connection error endpoint=swaps_propose error_type=%s", type(exc).__name__)
+            raise WalletTimeoutError("POST /swaps timed out or network failed") from exc
 
     async def accept_swap(
         self,
@@ -203,11 +193,7 @@ class WalletClient:
         headers = self._get_headers(idempotency_key=idempotency_key)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                logger.info(
-                    "POST /swaps/%s/accept with Idempotency-Key=%s",
-                    swap_id, idempotency_key
-                )
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, headers=headers)
                 self._handle_response_error(res)
                 return WalletSwapWriteResponse(
@@ -217,11 +203,8 @@ class WalletClient:
                     accepted_for_processing=(res.status_code == 202),
                 )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            logger.warning(
-                "Timeout or connection failure calling POST /swaps/%s/accept (key=%s): %s",
-                swap_id, idempotency_key, exc
-            )
-            raise WalletTimeoutError(f"POST /swaps/{swap_id}/accept timed out: {exc}") from exc
+            logger.warning("Wallet connection error endpoint=swaps_accept error_type=%s", type(exc).__name__)
+            raise WalletTimeoutError("POST /swaps accept timed out") from exc
 
     async def cancel_swap(
         self,
@@ -236,7 +219,7 @@ class WalletClient:
         headers = self._get_headers(idempotency_key=idempotency_key)
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, headers=headers)
                 self._handle_response_error(res)
                 return WalletSwapWriteResponse(
@@ -246,7 +229,7 @@ class WalletClient:
                     accepted_for_processing=(res.status_code == 202),
                 )
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise WalletTimeoutError(f"POST /swaps/{swap_id}/cancel timed out: {exc}") from exc
+            raise WalletTimeoutError("POST /swaps cancel timed out") from exc
 
     async def get_swap(self, swap_id: str) -> dict[str, Any]:
         """
@@ -256,12 +239,12 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, headers=headers)
                 self._handle_response_error(res)
                 return res.json()
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise WalletTimeoutError(f"GET /swaps/{swap_id} failed: {exc}") from exc
+            raise WalletTimeoutError("GET /swaps failed") from exc
 
     async def get_statement(self, cycle_id: Optional[str] = None) -> list[dict[str, Any]]:
         """
@@ -272,10 +255,10 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, params=params, headers=headers)
                 self._handle_response_error(res)
                 data = res.json()
                 return data if isinstance(data, list) else data.get("transactions", [])
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            raise WalletTimeoutError(f"GET /statement failed: {exc}") from exc
+            raise WalletTimeoutError("GET /statement failed") from exc

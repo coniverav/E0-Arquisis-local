@@ -1,2 +1,3 @@
 aio-pika>=9.4,<10
 httpx>=0.27,<1
+newrelic==13.6.1

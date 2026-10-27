@@ -109,33 +109,35 @@ class WalletClient:
                 status_code=response.status_code,
             )
 
-    async def get_balance(self, city_id: Optional[str] = None) -> WalletBalanceResponse:
-        """
-        Consulta saldos disponibles y retenidos (GET /balance).
-        """
+
+    async def get_balance(
+        self, city_id: Optional[str] = None
+    ) -> WalletBalanceResponse:
+        """Consulta el saldo oficial de la propia ciudad (GET /balance)."""
+
         endpoint = f"{self.base_url}/balance"
-        params = {"cityId": city_id} if city_id else {}
         headers = self._get_headers()
 
         try:
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
-                res = await client.get(endpoint, params=params, headers=headers)
+                res = await client.get(endpoint, headers=headers)
                 self._handle_response_error(res)
                 data = res.json()
 
-                # Normalización de respuesta según catálogo
-                # Estructura habitual: {"cityId": ..., "kwh": {"available": ..., "held": ...}, "cr": ...}
-                kwh_info = data.get("kwh", {})
-                cr_info = data.get("cr", {})
+                assets = data["assets"]
+                kwh_info = assets["KWH"]
+                cr_info = assets["CR"]
+
                 return WalletBalanceResponse(
-                    city_id=data.get("cityId", city_id or ""),
-                    kwh_available=Decimal(str(kwh_info.get("available", 0))),
-                    kwh_held=Decimal(str(kwh_info.get("held", 0))),
-                    cr_available=Decimal(str(cr_info.get("available", 0))),
-                    cr_held=Decimal(str(cr_info.get("held", 0))),
-                    credit_line=Decimal(str(data.get("creditLine", 0))),
-                    timestamp=data.get("timestamp"),
+                    city_id=data["cityId"],
+                    kwh_available=Decimal(str(kwh_info["available"])),
+                    kwh_held=Decimal(str(kwh_info["held"])),
+                    cr_available=Decimal(str(cr_info["available"])),
+                    cr_held=Decimal(str(cr_info["held"])),
+                    credit_line=Decimal(str(cr_info["creditLine"])),
+                    timestamp=data.get("asOf"),
                 )
+
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             logger.error("Wallet connection error endpoint=balance error_type=%s", type(exc).__name__)
             raise WalletTimeoutError("Wallet balance connection failed") from exc

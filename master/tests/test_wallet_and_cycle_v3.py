@@ -46,6 +46,36 @@ async def test_wallet_client_headers_and_auth():
 
 
 @pytest.mark.anyio
+async def test_wallet_balance_uses_observed_client_and_v3_assets():
+    """La oferta seller lee el saldo v3 sin perder la observabilidad de develop."""
+    client = WalletClient(base_url="https://wallet.central.test", api_key="test-key")
+    balance_response = httpx.Response(200, json={
+        "cityId": "KLD",
+        "assets": {
+            "KWH": {"available": 15400, "held": 600},
+            "CR": {"available": 1000.25, "held": 10, "creditLine": 500},
+        },
+        "asOf": "2026-10-27T00:00:00Z",
+    })
+    with patch("app.services.wallet_client.ObservedWalletAsyncClient") as observed:
+        observed.return_value.__aenter__.return_value.get = AsyncMock(
+            return_value=balance_response
+        )
+        balance = await client.get_balance()
+
+    observed.assert_called_once()
+    observed.return_value.__aenter__.return_value.get.assert_awaited_once_with(
+        "https://wallet.central.test/balance", headers=client._get_headers()
+    )
+    assert balance.city_id == "KLD"
+    assert balance.kwh_available == Decimal("15400")
+    assert balance.kwh_held == Decimal("600")
+    assert balance.cr_available == Decimal("1000.25")
+    assert balance.credit_line == Decimal("500")
+    assert balance.timestamp == "2026-10-27T00:00:00Z"
+
+
+@pytest.mark.anyio
 async def test_wallet_client_rate_limit_handling():
     """Valida detección de HTTP 429 y Retry-After (E2-019)."""
     client = WalletClient()

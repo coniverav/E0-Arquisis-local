@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete
 from sqlmodel import Session, select
 
 from ..database import get_session
@@ -14,6 +15,7 @@ from ..models import (
     DistanceTable,
     Negotiation,
     NegotiationReport,
+    ProcessedIdpk,
 )
 from ..schemas import ProtocolMessageIn
 from ..services.negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
@@ -51,7 +53,16 @@ from ..services.negotiation_payments import (
     enqueue_take_payment,
     process_give_payment,
 )
+from ..services.wallet_service import WalletService
 
+
+SWAP_EVENT_TYPES = {
+    "swap-proposed",
+    "swap-settled",
+    "swap-rejected",
+    "swap-cancelled",
+    "swap-expired",
+}
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -152,6 +163,8 @@ def ingest_protocol_message(
     )
 
     audit_status = INBOUND_PROCESSED
+    audit_reason = None
+    response_status = "ok"
 
     try:
         lock_city_ledger(session)
@@ -584,6 +597,27 @@ def ingest_protocol_message(
             else:
                 audit_status = INBOUND_DUPLICATE
 
+        elif payload.type in SWAP_EVENT_TYPES:
+
+            record = WalletService().process_swap_event(
+                session,
+                event_type=payload.type,
+                data=payload.data,
+            )
+
+            if record is None:
+                # No dejar el idpk reclamado: si el evento llegó antes de que
+                # exista el SwapRecord, un reenvío posterior todavía puede
+                # correlacionarlo (E2-021).
+                session.exec(
+                    delete(ProcessedIdpk).where(
+                        ProcessedIdpk.idpk == str(payload.idpk)
+                    )
+                )
+                audit_status = INBOUND_NOT_PROCESSED
+                audit_reason = "SWAP_UNKNOWN"
+                response_status = "not_processed"
+
         else:
 
             mark_inbound_result(
@@ -604,15 +638,17 @@ def ingest_protocol_message(
             session,
             audit_message,
             status=audit_status,
+            reason=audit_reason,
             commit=False,
         )
 
         session.commit()
 
         return {
-            "status": "ok",
+            "status": response_status,
             "type": payload.type,
             "cycleId": payload.cycleId,
+            "reason": audit_reason,
         }
 
     except Exception as exc:

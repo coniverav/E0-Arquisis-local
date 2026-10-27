@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/cycle-bound.schema.json",
+  "title": "CycleBound",
+  "description": "Mensaje ligado a un ciclo. El `cycleId` no tiene patrón a propósito: un mensaje de ciudad que nombra un ciclo que no existe está bien formado y se rechaza con `error` `CYCLE_UNKNOWN` (404), no con `nack` `MALFORMED_MESSAGE`.",
+  "type": "object",
+  "required": ["cycleId"],
+  "properties": {
+    "cycleId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Ciclo al que pertenece el mensaje, con el formato que emite la central (por ejemplo `cycle-9431`)."
+    }
+  }
+}

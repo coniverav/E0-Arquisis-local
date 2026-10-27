@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/balances-after.schema.json",
+  "title": "BalancesAfter",
+  "description": "Saldos de la ciudad que recibe el evento, por activo, después de la operación. Trae sólo los suyos, nunca los de la contraparte.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["CR", "KWH"],
+  "properties": { "CR": { "$ref": "#/$defs/CrBalance" }, "KWH": { "$ref": "#/$defs/KwhBalance" } },
+  "$defs": {
+    "CrBalance": {
+      "title": "CrBalance",
+      "description": "Saldos en créditos.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "held"],
+      "properties": {
+        "available": {
+          "$ref": "cr.schema.json",
+          "description": "Créditos disponibles. Puede ser negativo: por swaps hasta `-creditLine`, y más allá por débitos de la central (transporte, desbalance, multas)."
+        },
+        "held": {
+          "$ref": "cr.schema.json",
+          "type": "number",
+          "minimum": 0,
+          "description": "Créditos retenidos por swaps pendientes."
+        }
+      }
+    },
+    "KwhBalance": {
+      "title": "KwhBalance",
+      "description": "Saldos en kWh, enteros. `KWH` no tiene línea de crédito: nunca es negativo.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "held"],
+      "properties": {
+        "available": {
+          "$ref": "kwh.schema.json",
+          "type": "integer",
+          "minimum": 0,
+          "description": "kWh disponibles."
+        },
+        "held": {
+          "$ref": "kwh.schema.json",
+          "type": "integer",
+          "minimum": 0,
+          "description": "kWh retenidos por swaps pendientes."
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,9 @@
 import logging
 import time
+import asyncio
+from datetime import datetime, timezone
+from sqlmodel import Session, select
 
-from sqlmodel import Session
 
 from ..config import (
     CITY_ID,
@@ -9,6 +11,10 @@ from ..config import (
     RABBITMQ_CENTRAL_ROUTING_KEY,
 )
 from ..database import engine
+from ..models import Cycle
+
+from ..services.seller_offer import enqueue_seller_offer
+
 from ..services.cycle_scheduler import (
     process_cycle_windows,
 )
@@ -72,6 +78,22 @@ def run() -> None:
 
                 session.commit()
 
+
+                # Ciclos abiertos que podrían tener energía para vender.
+                now = datetime.now(timezone.utc)
+
+                offer_cycles = session.exec(
+                    select(Cycle.cycle_id)
+                    .where(Cycle.status_idpk.is_not(None))
+                    .where(Cycle.market_opens_at.is_not(None))
+                    .where(Cycle.market_opens_at <= now)
+                    .where(Cycle.market_last_offer_at > now)
+                    .where(Cycle.generation_capacity > Cycle.consumption)
+                    .order_by(Cycle.market_opens_at.desc())
+                    .limit(3)
+                ).all()
+
+
                 if (
                     result["cycles_prepared"]
                     or result["report_windows_opened"]
@@ -97,6 +119,27 @@ def run() -> None:
                         negotiations_timed_out,
                         negotiation_retries,
                     )
+
+
+            # Crear oferta automática para cada ciclo elegible.
+            # El worker revisa periódicamente los ciclos abiertos con excedente.
+            # Si la wallet está temporalmente caída, registrará el error y podrá reintentarlo en el siguiente recorrido).
+            for cycle_id in offer_cycles:
+                try:
+                    created = asyncio.run(enqueue_seller_offer(cycle_id))
+
+                    if created:
+                        logger.info(
+                            "Oferta seller registrada para %s",
+                            cycle_id,
+                        )
+
+                except Exception:
+                    logger.exception(
+                        "No se pudo crear oferta para %s",
+                        cycle_id,
+                    )
+
 
         except Exception:
             logger.exception(

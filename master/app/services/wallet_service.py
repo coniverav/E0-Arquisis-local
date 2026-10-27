@@ -12,7 +12,7 @@ Implementa:
 """
 
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
 import uuid
@@ -241,17 +241,19 @@ class WalletService:
                 )
 
         session.add(record)
-        session.commit()
-        session.refresh(record)
 
-        # Si el evento incluye balancesActualizados (balancesAfter), registrar snapshot (E2-022)
-        if "balancesAfter" in data and isinstance(data["balancesAfter"], dict):
+        # El snapshot se agrega antes del commit para que la liquidación del
+        # swap, la reserva y los balances queden en la misma transacción.
+        if isinstance(data.get("balancesAfter"), dict):
             self.record_balance_snapshot(
                 session,
                 cycle_id=record.cycle_id,
                 source="EVENT",
                 balances_dict=data["balancesAfter"],
             )
+
+        session.flush()
+        session.refresh(record)
 
         return record
 
@@ -287,7 +289,7 @@ class WalletService:
                 res.status = "RELEASED"
                 res.released_at = now
             session.add(res)
-            session.commit()
+            session.flush()
 
     def record_balance_snapshot(
         self,
@@ -299,24 +301,45 @@ class WalletService:
     ) -> WalletBalanceSnapshot:
         """
         Guarda un snapshot de los balances informado por la wallet (E2-022).
+
+        El contrato v3.0.1 (`common/balances-after`) usa `CR`/`KWH` en
+        mayúscula y no incluye `creditLine`. Un evento no puede inventar la
+        línea de crédito, así que se persiste `NULL`.
         """
         now = datetime.now(timezone.utc)
-        kwh = balances_dict.get("kwh", {})
-        cr = balances_dict.get("cr", {})
+        cr = balances_dict.get("CR")
+        kwh = balances_dict.get("KWH")
+
+        if not isinstance(cr, dict) or not isinstance(kwh, dict):
+            raise ValueError(
+                "balancesAfter debe traer CR y KWH en mayúscula "
+                "(contrato v3.0.1); no se aceptan kwh/cr"
+            )
+
+        def amount(asset: str, values: dict[str, Any], key: str) -> Decimal:
+            if key not in values:
+                raise ValueError(
+                    f"balancesAfter.{asset}.{key} es obligatorio"
+                )
+            try:
+                return Decimal(str(values[key]))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"balancesAfter.{asset}.{key} debe ser numérico"
+                ) from exc
 
         snapshot = WalletBalanceSnapshot(
             cycle_id=cycle_id,
             source=source,
-            kwh_available=Decimal(str(kwh.get("available", 0))),
-            kwh_held=Decimal(str(kwh.get("held", 0))),
-            cr_available=Decimal(str(cr.get("available", 0))),
-            cr_held=Decimal(str(cr.get("held", 0))),
-            credit_line=Decimal(str(balances_dict.get("creditLine", 0))),
+            kwh_available=amount("KWH", kwh, "available"),
+            kwh_held=amount("KWH", kwh, "held"),
+            cr_available=amount("CR", cr, "available"),
+            cr_held=amount("CR", cr, "held"),
+            credit_line=None,
             recorded_at=now,
         )
         session.add(snapshot)
-        session.commit()
-        session.refresh(snapshot)
+        session.flush()
         return snapshot
 
     async def sync_balance_from_wallet(

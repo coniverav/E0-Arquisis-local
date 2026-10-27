@@ -11,7 +11,9 @@ import app.models  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Las migraciones también se ejecutan dentro del proceso de pruebas;
+    # conservar los loggers de observabilidad ya inicializados.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = SQLModel.metadata
 

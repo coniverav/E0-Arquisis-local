@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/central-sender.schema.json",
+  "title": "CentralSender",
+  "description": "Identifica a la central como emisora. Los mensajes de la central no llevan `cityId` (la central no es una ciudad) sino `sender`. Los eventos de la wallet que la central reenvía también llevan `sender: \"central\"`.",
+  "type": "object",
+  "required": ["sender"],
+  "properties": {
+    "sender": {
+      "const": "central",
+      "description": "Emisor del mensaje. En estos mensajes siempre la central."
+    }
+  }
+}

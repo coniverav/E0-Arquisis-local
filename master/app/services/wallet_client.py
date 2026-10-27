@@ -10,12 +10,17 @@ Implementa:
 """
 
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
 import httpx
 
-from app.config import WALLET_API_KEY, WALLET_BASE_URL, WALLET_TIMEOUT_SECONDS
+from app.config import (
+    CITY_ID,
+    WALLET_API_KEY,
+    WALLET_BASE_URL,
+    WALLET_TIMEOUT_SECONDS,
+)
 from app.services.wallet_observability import ObservedWalletAsyncClient
 
 logger = logging.getLogger(__name__)
@@ -49,6 +54,10 @@ class WalletBalanceResponse:
     cr_held: Decimal
     credit_line: Decimal
     timestamp: Optional[str] = None
+    # `GET /balance` v3.0.1: obligatorios en el schema aunque sean null al
+    # primer cierre. Se conservan para la conciliación de E2-044/E2-050.
+    last_settled_cycle: Optional[str] = None
+    balance_at_last_close_cr: Optional[Decimal] = None
 
 
 @dataclass
@@ -109,33 +118,51 @@ class WalletClient:
                 status_code=response.status_code,
             )
 
-    async def get_balance(self, city_id: Optional[str] = None) -> WalletBalanceResponse:
-        """
-        Consulta saldos disponibles y retenidos (GET /balance).
-        """
+
+    async def get_balance(self) -> WalletBalanceResponse:
+        """Consulta el saldo oficial de la propia ciudad (GET /balance)."""
+
         endpoint = f"{self.base_url}/balance"
-        params = {"cityId": city_id} if city_id else {}
         headers = self._get_headers()
 
         try:
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
-                res = await client.get(endpoint, params=params, headers=headers)
+                res = await client.get(endpoint, headers=headers)
                 self._handle_response_error(res)
                 data = res.json()
 
-                # Normalización de respuesta según catálogo
-                # Estructura habitual: {"cityId": ..., "kwh": {"available": ..., "held": ...}, "cr": ...}
-                kwh_info = data.get("kwh", {})
-                cr_info = data.get("cr", {})
-                return WalletBalanceResponse(
-                    city_id=data.get("cityId", city_id or ""),
-                    kwh_available=Decimal(str(kwh_info.get("available", 0))),
-                    kwh_held=Decimal(str(kwh_info.get("held", 0))),
-                    cr_available=Decimal(str(cr_info.get("available", 0))),
-                    cr_held=Decimal(str(cr_info.get("held", 0))),
-                    credit_line=Decimal(str(data.get("creditLine", 0))),
-                    timestamp=data.get("timestamp"),
-                )
+                try:
+                    assets = data["assets"]
+                    kwh_info = assets["KWH"]
+                    cr_info = assets["CR"]
+                    if data["cityId"] != CITY_ID:
+                        raise WalletError(
+                            "GET /balance devolvió cityId inesperado: "
+                            f"{data['cityId']!r} != {CITY_ID!r}"
+                        )
+
+                    last_close = data.get("balanceAtLastClose") or {}
+
+                    return WalletBalanceResponse(
+                        city_id=data["cityId"],
+                        kwh_available=Decimal(str(kwh_info["available"])),
+                        kwh_held=Decimal(str(kwh_info["held"])),
+                        cr_available=Decimal(str(cr_info["available"])),
+                        cr_held=Decimal(str(cr_info["held"])),
+                        credit_line=Decimal(str(cr_info["creditLine"])),
+                        timestamp=data.get("asOf"),
+                        last_settled_cycle=data.get("lastSettledCycle"),
+                        balance_at_last_close_cr=(
+                            Decimal(str(last_close["CR"]))
+                            if last_close.get("CR") is not None
+                            else None
+                        ),
+                    )
+                except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
+                    raise WalletError(
+                        "Respuesta de GET /balance no cumple v3.0.1"
+                    ) from exc
+
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             logger.error("Wallet connection error endpoint=balance error_type=%s", type(exc).__name__)
             raise WalletTimeoutError("Wallet balance connection failed") from exc

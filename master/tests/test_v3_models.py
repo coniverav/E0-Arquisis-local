@@ -218,7 +218,7 @@ def test_strategy_config_versioning():
             created_by="operator",
         )
         session.add(strat2)
-        session.commit()
+        session.flush()
 
         active = session.exec(
             select(StrategyConfig).where(StrategyConfig.version == v1)
@@ -231,3 +231,4 @@ def test_strategy_config_versioning():
         ).one()
         assert pending.status == "PENDING"
         assert pending.span_seconds == 120
+        session.rollback()

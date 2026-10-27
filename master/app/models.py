@@ -899,9 +899,12 @@ class WalletBalanceSnapshot(SQLModel, table=True):
         default=Decimal("0.00"),
         sa_column=Column(Numeric(20, 4), nullable=False),
     )
-    credit_line: Decimal = Field(
-        default=Decimal("0.00"),
-        sa_column=Column(Numeric(20, 4), nullable=False),
+    # NULL cuando el evento no informa la línea de crédito: `balancesAfter`
+    # trae sólo `CR` y `KWH` (available/held). El valor oficial sólo llega
+    # por `GET /balance` (REST_SYNC).
+    credit_line: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(20, 4), nullable=True),
     )
 
     recorded_at: datetime = Field(

@@ -1,0 +1,144 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/status-statement.schema.json",
+  "title": "StatusStatement",
+  "description": "Posición física y condiciones de mercado de la ciudad que lo recibe, para un ciclo. La central lo envía una vez por ciclo al abrir la ventana (en orden aleatorio, repartido en los primeros 60 segundos, en el mismo instante en que acredita los créditos y los kWh del ciclo en la wallet), y también como respuesta a un `request` con `ask: \"status-statement\"`. Es el de la E1 con dos agregados: `data.energy.sellable` y el bloque `data.market`.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{CODE}"],
+    "userId": "none"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": { "type": { "const": "status-statement" }, "data": { "$ref": "#/$defs/Data" } },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "StatusStatementData",
+      "description": "Contenido del `status-statement`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["energy", "market", "validUntil"],
+      "properties": {
+        "energy": { "$ref": "#/$defs/Energy" },
+        "market": { "$ref": "#/$defs/Market" },
+        "validUntil": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Instante en que se cierra la ventana de negociación de este ciclo; desde ahí comienza el consumo del ciclo siguiente."
+        }
+      }
+    },
+    "Energy": {
+      "title": "StatusStatementEnergy",
+      "description": "Posición física de su ciudad en este ciclo.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generationCapacity", "consumption", "generationCost", "sellable"],
+      "properties": {
+        "generationCapacity": {
+          "type": "number",
+          "description": "Energía que su ciudad puede generar en este ciclo, en kWh. Lleva hasta dos decimales, como en la E1."
+        },
+        "consumption": {
+          "type": "number",
+          "description": "Energía que su ciudad debe consumir en este ciclo, en kWh. Lleva hasta dos decimales, como en la E1."
+        },
+        "generationCost": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Costo de generar un kWh en su ciudad durante este ciclo, en créditos por kWh."
+        },
+        "sellable": {
+          "$ref": "../common/kwh.schema.json",
+          "type": "integer",
+          "minimum": 0,
+          "description": "kWh que la central acreditó en la cuenta de energía de su ciudad en la wallet para este ciclo: `floor(max(0, generationCapacity - consumption))`, redondeado hacia abajo porque `KWH` es entero. Es lo único que pueden vender."
+        }
+      }
+    },
+    "Market": {
+      "title": "StatusStatementMarket",
+      "description": "Condiciones de mercado del ciclo. Todo es publicado o derivable: nada obliga a consultar a la central. Los instantes son configuración del despliegue; léanlos de aquí, no los calculen.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "buybackPrice",
+        "imbalancePrice",
+        "minBid",
+        "opensAt",
+        "lastOfferAt",
+        "lastBidAt",
+        "closesAt",
+        "reportOpensAt",
+        "limits"
+      ],
+      "properties": {
+        "buybackPrice": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos por kWh que la central paga al cierre por cada kWh no vendido: `round2(1.05 × generationCost)` (la fórmula publicada; el factor es configuración del despliegue). Es el piso natural de cualquier oferta."
+        },
+        "imbalancePrice": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos por kWh que la central cobra al cierre por cada kWh de consumo no cubierto: `round2(3 × max(generationCost de todas las ciudades del ciclo))`. Es el mismo número para todas las ciudades del ciclo y el techo natural de cualquier oferta."
+        },
+        "minBid": {
+          "$ref": "../common/kwh.schema.json",
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cantidad mínima de un `bid`, en kWh. Un `bid` menor se rechaza con `BID_TOO_SMALL`."
+        },
+        "opensAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Apertura del mercado del ciclo: desde aquí el activo `KWH` está habilitado para swaps."
+        },
+        "lastOfferAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Último instante para publicar `offer`, `offer-updated` u `offer-withdrawn`."
+        },
+        "lastBidAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Último instante para que un vendedor acepte bids (proponga swaps)."
+        },
+        "closesAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Cierre del mercado: la wallet deja de aceptar swaps que involucren `KWH` y la central liquida lo que quedó (`imbalance-settlement`, `market-closed`)."
+        },
+        "reportOpensAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Apertura del periodo de cierre: desde aquí, y hasta `validUntil`, se acepta el `negotiation-report`."
+        },
+        "limits": { "$ref": "#/$defs/Limits" }
+      }
+    },
+    "Limits": {
+      "title": "MarketLimits",
+      "description": "Límites por ciudad, en una ventana deslizante de 60 segundos. El límite de `request` a la central (10 por minuto) es fijo, lo publica el enunciado y no viaja aquí.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marketOpsPerMinute", "walletWritesPerMinute", "walletReadsPerMinute"],
+      "properties": {
+        "marketOpsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Máximo de `offer` + `offer-updated` + `offer-withdrawn` por minuto."
+        },
+        "walletWritesPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Máximo de escrituras (`POST`) en la wallet por minuto. Al exceder: HTTP 429 con `Retry-After`, y nada se acepta."
+        },
+        "walletReadsPerMinute": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Máximo de lecturas (`GET`) en la wallet por minuto. Al exceder: HTTP 429 con `Retry-After`."
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_HALF_UP
+import logging
 from uuid import uuid4
 
 from sqlmodel import Session, select
@@ -16,6 +17,8 @@ from app.services.wallet_client import WalletClient
 CENT = Decimal("0.01")
 DEFAULT_MARKUP = Decimal("1.20")
 DEFAULT_FRACTION = Decimal("1.00")
+
+logger = logging.getLogger(__name__)
 
 
 def calculate_offer(
@@ -151,6 +154,18 @@ async def enqueue_seller_offer(
             )
 
             if quantity <= 0:
+                return False
+
+            # El contrato v3 define `minBid` como la cantidad mínima de un bid.
+            # Una oferta menor no puede recibir ningún bid válido (BID_TOO_SMALL).
+            min_bid = int(market.get("minBid") or 0)
+            if quantity < min_bid:
+                logger.info(
+                    "Oferta descartada para %s: quantity=%s < minBid=%s",
+                    cycle_id,
+                    quantity,
+                    min_bid,
+                )
                 return False
 
             # Identificadores independientes para el mensaje.

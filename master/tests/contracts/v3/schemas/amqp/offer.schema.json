@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/offer.schema.json",
+  "title": "Offer",
+  "description": "La oferta de un vendedor: cuánta energía está dispuesto a enviar en el ciclo y a qué precio. Una oferta por ciudad y ciclo. Se publica directamente al exchange `market` con la routing key propia `market.offer.{CODE}` (el broker rechaza cualquier otra) y llega a la cola `market.{CODE}` de todas las ciudades. Es difusión, no un mensaje dirigido: nunca se responde con `ack`. `offer`, `offer-updated` y `offer-withdrawn` suman a lo sumo `marketOpsPerMinute` operaciones por minuto por ciudad (el valor viaja en `status-statement.data.market.limits`). Nadie valida la oferta antes de que el mercado la vea: un vendedor puede anunciar más de lo que tiene, pero no venderlo, porque la wallet no retiene kWh que la cuenta no tiene. Por eso el `remaining` que ven los compradores es siempre potencialmente viejo.",
+  "x-amqp": {
+    "exchange": "market",
+    "routingKey": "market.offer.{CODE}",
+    "sender": [
+      "city"
+    ],
+    "receivers": [
+      "market.{CODE} (todas)"
+    ],
+    "userId": "required"
+  },
+  "allOf": [
+    {
+      "$ref": "../common/envelope.schema.json"
+    },
+    {
+      "$ref": "../common/city-sender.schema.json"
+    },
+    {
+      "$ref": "../common/cycle-bound.schema.json"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "type",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "offer"
+    },
+    "data": {
+      "$ref": "#/$defs/Data"
+    }
+  },
+  "$defs": {
+    "Data": {
+      "title": "OfferData",
+      "description": "Contenido de la oferta.",
+      "type": "object",
+      "required": [
+        "offerId",
+        "quantity",
+        "pricePerEnergy"
+      ],
+      "properties": {
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identificador de la oferta, elegido por el vendedor (por ejemplo `HGW-9431`). Una oferta por ciudad y ciclo; los bids y el `memo` del swap la nombran con este valor."
+        },
+        "quantity": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "kWh que el vendedor ofrece en el ciclo, enteros."
+        },
+        "pricePerEnergy": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Precio por kWh en créditos, fijado por el vendedor. Es el precio final: el bid no lleva precio, y el comprador lo acepta al enviar el bid."
+        }
+      }
+    }
+  }
+}

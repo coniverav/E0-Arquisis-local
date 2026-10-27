@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/city-code.schema.json",
+  "title": "CityCode",
+  "description": "Código de una ciudad, tal como aparece en la tabla de ciudades: tres letras mayúsculas o dígitos, sin el prefijo `city.` de la routing key. Es un patrón y no una lista: la lista de ciudades la publica el enunciado y puede crecer sin cambiar este contrato.",
+  "type": "string",
+  "pattern": "^[A-Z0-9]{3}$"
+}

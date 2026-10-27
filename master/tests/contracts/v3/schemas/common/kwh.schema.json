@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/kwh.schema.json",
+  "title": "Kwh",
+  "description": "Cantidad de energía en kWh. Es entera, porque el activo `KWH` de la wallet no tiene decimales: un valor fraccionario no valida.",
+  "type": "integer"
+}

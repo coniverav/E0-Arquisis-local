@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/cr.schema.json",
+  "title": "Cr",
+  "description": "Monto en créditos (`CR`), con dos decimales (`x-decimals: 2`). Viaja como `number` JSON: conviértanlo a centavos enteros al parsear (por ejemplo, `Math.round(x * 100)`) y hagan la aritmética en enteros. A propósito no se exige que sea múltiplo de 0.01 en el schema: con números de punto flotante, un validador rechazaría montos correctos como `0.07`.",
+  "type": "number",
+  "x-decimals": 2
+}

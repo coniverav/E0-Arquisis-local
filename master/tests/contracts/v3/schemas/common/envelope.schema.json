@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/envelope.schema.json",
+  "title": "Envelope",
+  "description": "Campos que todo mensaje lleva, recibido o enviado (envelope de la E1). `idpk` debe ser distinto de `msgId`: las respuestas referencian el `msgId` en `data.target`. JSON Schema no puede comparar dos campos entre sí, así que esa regla no la verifica este schema: el receptor responde `nack` `IDPK_EQUALS_MSGID` (422) cuando son iguales.",
+  "type": "object",
+  "required": ["idpk", "msgId", "type", "timestamp"],
+  "properties": {
+    "idpk": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Llave de idempotencia de la operación. Reintentar la misma operación reusa la misma llave, y debe ser distinta de `msgId`."
+    },
+    "msgId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Identificador único de este envío, un UUID aleatorio generado por quien envía. Siempre distinto de `idpk`: las respuestas lo referencian en `data.target`."
+    },
+    "type": {
+      "type": "string",
+      "description": "Tipo de mensaje. Cada schema de `amqp/` fija su valor."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Instante en que se emitió este mensaje (ISO 8601, UTC)."
+    }
+  }
+}

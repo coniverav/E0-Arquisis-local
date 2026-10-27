@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/asset-amount.schema.json",
+  "title": "AssetAmount",
+  "description": "Una pata de un swap: un activo y un monto, siempre positivo. `KWH` es entero; `CR` lleva dos decimales (`x-decimals: 2`) y viaja como `number`.",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset", "amount"],
+      "properties": {
+        "asset": { "const": "CR", "description": "Créditos." },
+        "amount": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "x-decimals": 2,
+          "description": "Monto en créditos, con dos decimales."
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["asset", "amount"],
+      "properties": {
+        "asset": { "const": "KWH", "description": "Energía." },
+        "amount": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "description": "Monto en kWh, entero."
+        }
+      }
+    }
+  ]
+}

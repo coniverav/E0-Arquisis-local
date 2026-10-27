@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/balance.schema.json",
+  "title": "Balance",
+  "description": "Cuerpo de `GET /balance`: los saldos propios de la ciudad dueña de la clave, por activo, disponibles y retenidos. `creditLine` viene sólo en `CR`: `KWH` no tiene línea de crédito. `lastSettledCycle` y `balanceAtLastClose` son `null` hasta el primer cierre de la ciudad; `balanceAtLastClose` trae sólo `CR`, porque `KWH` no arrastra entre ciclos.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cityId", "assets", "asOf", "lastSettledCycle", "balanceAtLastClose"],
+  "properties": {
+    "cityId": {
+      "$ref": "../common/city-code.schema.json",
+      "description": "La ciudad dueña de la clave `X-Api-Key`."
+    },
+    "assets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["CR", "KWH"],
+      "description": "Saldos por activo.",
+      "properties": {
+        "CR": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "held", "creditLine"],
+          "description": "Créditos. Arrastran entre ciclos.",
+          "properties": {
+            "available": {
+              "$ref": "../common/cr.schema.json",
+              "description": "Créditos disponibles. Puede ser negativo: por swaps hasta `-creditLine`, y más allá por débitos de la central (transporte, desbalance, multas)."
+            },
+            "held": {
+              "$ref": "../common/cr.schema.json",
+              "type": "number",
+              "minimum": 0,
+              "description": "Créditos retenidos por swaps pendientes."
+            },
+            "creditLine": {
+              "$ref": "../common/cr.schema.json",
+              "type": "number",
+              "minimum": 0,
+              "description": "Línea de crédito vigente, que la central fija cada ciclo. Para retener `CR` la wallet exige `available + creditLine ≥ monto`."
+            }
+          }
+        },
+        "KWH": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["available", "held"],
+          "description": "kWh, enteros y sin línea de crédito. No arrastran: al cierre toda cuenta queda en 0 kWh.",
+          "properties": {
+            "available": {
+              "$ref": "../common/kwh.schema.json",
+              "type": "integer",
+              "minimum": 0,
+              "description": "kWh disponibles."
+            },
+            "held": {
+              "$ref": "../common/kwh.schema.json",
+              "type": "integer",
+              "minimum": 0,
+              "description": "kWh retenidos por swaps pendientes."
+            }
+          }
+        }
+      }
+    },
+    "asOf": {
+      "$ref": "../common/instant.schema.json",
+      "description": "Instante al que corresponden los saldos."
+    },
+    "lastSettledCycle": {
+      "description": "El último ciclo cerrado de la ciudad (por ejemplo `cycle-9430`); `null` hasta su primer cierre.",
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    },
+    "balanceAtLastClose": {
+      "description": "Saldo en `CR` al último cierre de la ciudad; `null` hasta su primer cierre. Trae sólo `CR`.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["CR"],
+          "properties": { "CR": { "$ref": "../common/cr.schema.json", "description": "Créditos al último cierre." } }
+        },
+        { "type": "null" }
+      ]
+    }
+  }
+}

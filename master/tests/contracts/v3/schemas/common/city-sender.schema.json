@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/city-sender.schema.json",
+  "title": "CitySender",
+  "description": "Identifica a la ciudad emisora. Todo mensaje que envía una ciudad lleva su `cityId`; además debe publicarse con la propiedad AMQP `user_id` igual a `city.{CODE}`, que el receptor compara con este campo (`IDENTITY_MISMATCH` si no corresponde o falta).",
+  "type": "object",
+  "required": ["cityId"],
+  "properties": {
+    "cityId": {
+      "$ref": "city-code.schema.json",
+      "description": "Código de la ciudad que envía, tal como aparece en la tabla de ciudades. El código pelado, sin el prefijo de la routing key."
+    }
+  }
+}

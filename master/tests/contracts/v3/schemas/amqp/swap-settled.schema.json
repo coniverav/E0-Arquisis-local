@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/swap-settled.schema.json",
+  "title": "SwapSettled",
+  "description": "Ambas patas del swap se liquidaron en una sola transacción: los kWh retenidos del vendedor pasaron al comprador y los créditos retenidos del comprador, al vendedor. Va al proponente y al aceptante, cada uno con sus propios saldos en `balancesAfter`. Evento de la wallet que la central reenvía a `city.{CODE}`, con `sender: \"central\"` y el envelope de la E1 (el `idpk` del envelope es el de este envío, como en todo mensaje). No lleva `cycleId`: la wallet no sabe de ciclos. `data.idpk` es igual a la `Idempotency-Key` de la operación que lo causó.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["wallet"],
+    "receivers": ["city.{proponente}", "city.{aceptante}"],
+    "userId": "none"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "swap-settled" },
+    "data": {
+      "title": "SwapSettledData",
+      "description": "Contenido del `swap-settled`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "swapId",
+        "idpk",
+        "proposer",
+        "acceptor",
+        "give",
+        "take",
+        "memo",
+        "settledAt",
+        "balancesAfter"
+      ],
+      "properties": {
+        "swapId": { "type": "string", "minLength": 1, "description": "Identificador del swap." },
+        "idpk": {
+          "type": "string",
+          "format": "uuid",
+          "description": "La `Idempotency-Key` de la operación que causó este evento."
+        },
+        "proposer": {
+          "$ref": "../common/city-code.schema.json",
+          "description": "Ciudad que propuso el swap."
+        },
+        "acceptor": {
+          "$ref": "../common/city-code.schema.json",
+          "description": "Ciudad que aceptó el swap."
+        },
+        "give": {
+          "$ref": "../common/asset-amount.schema.json",
+          "description": "Lo que entrega el proponente."
+        },
+        "take": {
+          "$ref": "../common/asset-amount.schema.json",
+          "description": "Lo que el proponente pide a cambio; lo entrega quien acepta."
+        },
+        "memo": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Texto opaco del proponente, de a lo sumo 128 bytes (por convención, el `offerId` de la oferta). La wallet no lo interpreta."
+        },
+        "settledAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Instante en que se liquidaron ambas patas."
+        },
+        "balancesAfter": {
+          "$ref": "../common/balances-after.schema.json",
+          "description": "Saldos de la ciudad que recibe este evento después de la operación."
+        }
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}

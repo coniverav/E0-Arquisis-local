@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/instant.schema.json",
+  "title": "Instant",
+  "description": "Instante ISO 8601 con zona horaria, en UTC (por ejemplo `2026-10-20T14:05:00Z`).",
+  "type": "string",
+  "format": "date-time"
+}

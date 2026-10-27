@@ -1,0 +1,19 @@
+{
+  "cityId": "KLD",
+  "assets": {
+    "CR": {
+      "available": 1791000.0,
+      "held": 0.0,
+      "creditLine": 1200000.0
+    },
+    "KWH": {
+      "available": 7300,
+      "held": 0
+    }
+  },
+  "asOf": "2026-10-26T14:06:14.602Z",
+  "lastSettledCycle": "cycle-9430",
+  "balanceAtLastClose": {
+    "CR": 1150000.0
+  }
+}

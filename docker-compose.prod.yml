@@ -60,6 +60,8 @@ services:
       NEW_RELIC_APP_NAME: ${NEW_RELIC_APP_NAME:-EnergyShark Backend}
       NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
       NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
+      WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -97,6 +99,8 @@ services:
       NEW_RELIC_APP_NAME: ${NEW_RELIC_APP_NAME:-EnergyShark Backend}
       NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
       NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
+      WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:
         condition: service_healthy
@@ -121,6 +125,8 @@ services:
       CYCLE_SCHEDULER_POLL_SECONDS: ${CYCLE_SCHEDULER_POLL_SECONDS}
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
+      WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:
         condition: service_healthy

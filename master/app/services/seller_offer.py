@@ -128,26 +128,26 @@ async def enqueue_seller_offer(
                     "status-statement no trae market.buybackPrice"
                 )
 
-            # Utilizar estrategia activa o valores predeterminados.
+            # AD6: usar exclusivamente la versión asignada a este ciclo.
+            # (estrategia se decide al inicio del ciclo, no al momento de crear la oferta)
+            if cycle.strategy_version is None:
+                raise ValueError(
+                    f"El ciclo {cycle_id} no tiene estrategia AD6 asignada"
+                )
+
             strategy = session.exec(
-                select(StrategyConfig)
-                .where(StrategyConfig.status == "ACTIVE")
-                .order_by(StrategyConfig.version.desc())
-            ).first()
+                select(StrategyConfig).where(
+                    StrategyConfig.version == cycle.strategy_version
+                )
+            ).one()
 
             quantity, price = calculate_offer(
                 sellable=int(energy["sellable"]),
                 wallet_available=balance.kwh_available,
                 generation_cost=Decimal(str(energy["generationCost"])),
                 buyback_price=Decimal(str(market["buybackPrice"])),
-                markup=(
-                    strategy.offer_price_markup
-                    if strategy else DEFAULT_MARKUP
-                ),
-                fraction=(
-                    strategy.offer_quantity_fraction
-                    if strategy else DEFAULT_FRACTION
-                ),
+                markup=strategy.offer_price_markup,
+                fraction=strategy.offer_quantity_fraction,
             )
 
             if quantity <= 0:

@@ -51,6 +51,8 @@ from ..services.negotiation_payments import (
     enqueue_take_payment,
     process_give_payment,
 )
+from ..services.strategy_cycles import bind_strategy_to_cycle
+
 
 IDEMPOTENT_MESSAGE_TYPES = {
     "status-statement",
@@ -297,6 +299,10 @@ def ingest_protocol_message(
             bind_strategy_to_cycle(session, cycle)
 
             session.add(cycle)
+
+            # AD6: la estrategia queda fijada al recibir el status-statement.
+            bind_strategy_to_cycle(session, cycle)
+
             session.flush()
             synchronize_budget_carryover(session)
 

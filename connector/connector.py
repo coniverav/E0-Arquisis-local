@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import ssl
 
+from observability import ObservedIncomingMessage, record_consumer_connection
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
 from protocol.publisher import (
@@ -447,6 +448,7 @@ async def consume_forever() -> None:
 
     while True:
         try:
+            record_consumer_connection("city", "connecting")
             logger.info("Conectando a RabbitMQ; cola=%s", RABBITMQ_QUEUE)
             # Usamos conexión normal + bucle de retry explícito. Así evitamos que una
             # reconexión robusta intente restaurar/declarar topología que este usuario
@@ -477,11 +479,13 @@ async def consume_forever() -> None:
                     CITY_ID
                 )
 
+                record_consumer_connection("city", "connected")
                 logger.info("Conectado. Esperando eventos en %s", RABBITMQ_QUEUE)
 
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
                     async with queue.iterator() as iterator:
                         async for message in iterator:
+                            message = ObservedIncomingMessage(message, "city")
                             try:
                                 payload = decode_incoming_payload(message.body)
                             except DiscardMessage as exc:
@@ -657,9 +661,10 @@ async def consume_forever() -> None:
             raise
         except Exception as exc:
             # El proceso NO muere si RabbitMQ pierde conexión.
+            record_consumer_connection("city", "retrying", type(exc).__name__)
             logger.warning(
-                "Conexión/consumo interrumpido (%s). Reintentando en %.1fs...",
-                exc,
+                "Conexión/consumo city interrumpido (%s). Reintentando en %.1fs...",
+                type(exc).__name__,
                 CONNECTOR_RETRY_SECONDS,
             )
             await asyncio.sleep(CONNECTOR_RETRY_SECONDS)
@@ -667,6 +672,7 @@ async def consume_forever() -> None:
 
 async def process_market_message(message, client: httpx.AsyncClient) -> None:
     """Confirma al broker solo tras guardar el feed o auditar su descarte."""
+    message = ObservedIncomingMessage(message, "market")
     try:
         payload = decode_incoming_payload(message.body)
         validate_market_feed(payload, amqp_user_id=message.user_id)
@@ -699,6 +705,7 @@ async def consume_market_forever() -> None:
 
     while True:
         try:
+            record_consumer_connection("market", "connecting")
             logger.info("Conectando a RabbitMQ; cola=%s", RABBITMQ_MARKET_QUEUE)
             connection = await aio_pika.connect(
                 RABBITMQ_URL,
@@ -712,6 +719,7 @@ async def consume_market_forever() -> None:
                 await channel.set_qos(prefetch_count=20)
                 #ensure=False no declara ni comprueba pasivamente topología.
                 queue = await channel.get_queue(RABBITMQ_MARKET_QUEUE, ensure=False)
+                record_consumer_connection("market", "connected")
                 logger.info("Conectado. Esperando feed en %s", RABBITMQ_MARKET_QUEUE)
 
                 async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
@@ -722,9 +730,10 @@ async def consume_market_forever() -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            record_consumer_connection("market", "retrying", type(exc).__name__)
             logger.warning(
                 "Consumo de mercado interrumpido (%s). Reintentando en %.1fs...",
-                exc,
+                type(exc).__name__,
                 CONNECTOR_RETRY_SECONDS,
             )
             await asyncio.sleep(CONNECTOR_RETRY_SECONDS)

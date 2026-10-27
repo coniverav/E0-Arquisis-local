@@ -11,7 +11,7 @@ RUN apt-get update \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY connector.py healthcheck.py ./
+COPY connector.py healthcheck.py observability.py ./
 COPY protocol ./protocol
 
 # File checking: no hace falta exponer una API HTTP para connector.

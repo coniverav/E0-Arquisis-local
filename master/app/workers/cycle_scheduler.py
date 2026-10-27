@@ -14,6 +14,7 @@ from ..database import engine
 from ..models import Cycle
 
 from ..services.seller_offer import enqueue_seller_offer
+from ..services.seller_offer_events import close_expired_local_offers
 
 from ..services.cycle_scheduler import (
     process_cycle_windows,
@@ -76,8 +77,12 @@ def run() -> None:
                     )
                 )
 
+                # E2-029: cerrar ofertas locales después de market.closesAt.
+                # No se publica withdrawn después de market.lastOfferAt.
+                local_offers_closed = close_expired_local_offers(session)
                 session.commit()
-
+                if local_offers_closed:
+                    logger.info("Ofertas seller cerradas: %s", local_offers_closed)
 
                 # Ciclos abiertos que podrían tener energía para vender.
                 now = datetime.now(timezone.utc)

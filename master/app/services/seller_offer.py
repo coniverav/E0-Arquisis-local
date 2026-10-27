@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from app.config import CITY_ID
 from app.database import engine
-from app.models import Cycle, MarketOffer, OutboundMessage, StrategyConfig
+from app.models import Cycle, MarketCycle, MarketOffer, OutboundMessage, StrategyConfig
 from app.services.wallet_client import WalletClient
 
 
@@ -88,6 +88,9 @@ async def enqueue_seller_offer(
 
         if not _eligible(cycle, now):
             return False
+        market_state = session.get(MarketCycle, cycle_id)
+        if market_state is not None and market_state.closed_at is not None:
+            return False
 
         existing = session.exec(
             select(MarketOffer).where(MarketOffer.offer_id == offer_id)
@@ -113,6 +116,9 @@ async def enqueue_seller_offer(
             ).first()
 
             if not _eligible(cycle, now):
+                return False
+            market_state = session.get(MarketCycle, cycle_id)
+            if market_state is not None and market_state.closed_at is not None:
                 return False
 
             existing = session.exec(

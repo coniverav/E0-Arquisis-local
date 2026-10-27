@@ -32,6 +32,7 @@ from ..services.idempotency import claim_idpk
 from ..services.cycle_scheduler import (
     configure_cycle_schedule,
 )
+from ..services.strategy_config import bind_strategy_to_cycle
 from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
@@ -267,6 +268,10 @@ def ingest_protocol_message(
                 valid_until=valid_until,
                 market_times=payload.data.get("market"),
             )
+
+            # AD6: elegir la estrategia al abrir el ciclo, en la misma
+            # transacción que registra el status-statement.
+            bind_strategy_to_cycle(session, cycle)
 
             session.add(cycle)
             session.flush()

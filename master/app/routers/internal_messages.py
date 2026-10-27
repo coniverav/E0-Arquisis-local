@@ -33,6 +33,7 @@ from ..services.cycle_scheduler import (
     configure_cycle_schedule,
 )
 from ..services.strategy_config import bind_strategy_to_cycle
+from ..services.bid_responses import process_bid_reply
 from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
@@ -62,6 +63,8 @@ IDEMPOTENT_MESSAGE_TYPES = {
     "give",
     "take",
     "negotiation-report",
+    "bid-accepted",
+    "bid-rejected",
 }
 
 router = APIRouter(
@@ -161,11 +164,31 @@ def ingest_protocol_message(
             )
 
             if not claimed:
+                # Un reintento v3 puede cambiar msgId/timestamp, pero no la
+                # operación. No clasificar payloads distintos como duplicados.
+                is_same_operation = True
+                if payload.type in {"bid-accepted", "bid-rejected"}:
+                    from ..models import InboundMessage
+                    earlier = session.exec(select(InboundMessage).where(
+                        InboundMessage.idpk == str(payload.idpk),
+                        InboundMessage.status == INBOUND_PROCESSED,
+                    ).order_by(InboundMessage.id)).first()
+                    if earlier is None or earlier.message_type != payload.type:
+                        is_same_operation = False
+                    else:
+                        old_body = dict(earlier.payload or {})
+                        new_body = payload.model_dump(mode="json")
+                        for key in ("msgId", "timestamp"):
+                            old_body.pop(key, None)
+                            new_body.pop(key, None)
+                        is_same_operation = old_body == new_body
                 mark_inbound_result(
                     session,
                     audit_message,
-                    status=INBOUND_DUPLICATE,
-                    reason="idpk already processed",
+                    status=(INBOUND_DUPLICATE if is_same_operation
+                            else INBOUND_NOT_PROCESSED),
+                    reason=("idpk already processed" if is_same_operation
+                            else "IDPK_PAYLOAD_CONFLICT"),
                     commit=False,
                 )
 
@@ -457,6 +480,23 @@ def ingest_protocol_message(
 
             else:
                 audit_status = INBOUND_DUPLICATE
+
+        elif payload.type in {"bid-accepted", "bid-rejected"}:
+            # E2-039: target puede corresponder a cualquier intento en la
+            # outbox con mismo idpk. No altera ledger ni confirma wallet.
+            audit_status, response_reason = process_bid_reply(
+                session, payload=payload, now=now,
+            )
+            if response_reason is not None:
+                mark_inbound_result(
+                    session, audit_message,
+                    status=audit_status, reason=response_reason, commit=False,
+                )
+                session.commit()
+                return {
+                    "status": "not_processed", "type": payload.type,
+                    "reason": response_reason,
+                }
 
         elif payload.type == "ack":
 

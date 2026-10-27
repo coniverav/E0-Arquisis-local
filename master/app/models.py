@@ -527,10 +527,10 @@ class MarketCycle(SQLModel, table=True):
     closed_msg_id: Optional[str] = Field(default=None)
 
 
-class MarketOffer(SQLModel, table=True):
+class MarketFeedOffer(SQLModel, table=True):
     """Snapshot conservador de la única oferta de una ciudad en un ciclo."""
 
-    __tablename__ = "market_offers"
+    __tablename__ = "market_feed_offers"
     __table_args__ = (UniqueConstraint("cycle_id", "city_id", name="uq_market_offer_cycle_city"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)

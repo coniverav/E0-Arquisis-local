@@ -8,7 +8,7 @@ from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, select
 
-from app.models import InboundMessage, MarketCycle, MarketEventClaim, MarketOffer
+from app.models import InboundMessage, MarketCycle, MarketEventClaim, MarketFeedOffer
 from app.schemas import MarketFeedMessageIn
 from app.services.message_audit import (
     INBOUND_DUPLICATE,
@@ -36,10 +36,10 @@ def _lock_market_cycle(session: Session, cycle_id: str) -> MarketCycle:
     ).with_for_update()).one()
 
 
-def _offer_snapshot(session: Session, cycle_id: str, city_id: str) -> MarketOffer | None:
-    return session.exec(select(MarketOffer).where(
-        MarketOffer.cycle_id == cycle_id,
-        MarketOffer.city_id == city_id,
+def _offer_snapshot(session: Session, cycle_id: str, city_id: str) -> MarketFeedOffer | None:
+    return session.exec(select(MarketFeedOffer).where(
+        MarketFeedOffer.cycle_id == cycle_id,
+        MarketFeedOffer.city_id == city_id,
     )).first()
 
 
@@ -62,7 +62,7 @@ def _apply_offer_event(
 
     if payload.type == "offer":
         if snapshot is None:
-            session.add(MarketOffer(
+            session.add(MarketFeedOffer(
                 cycle_id=payload.cycleId, city_id=payload.cityId, offer_id=offer_id,
                 initial_quantity=payload.data["quantity"],
                 remaining=payload.data["quantity"],
@@ -86,7 +86,7 @@ def _apply_offer_event(
 
     if payload.type == "offer-updated":
         if snapshot is None:
-            session.add(MarketOffer(
+            session.add(MarketFeedOffer(
                 cycle_id=payload.cycleId, city_id=payload.cityId, offer_id=offer_id,
                 remaining=payload.data["remaining"],
                 price_per_energy=Decimal(str(payload.data["pricePerEnergy"])),
@@ -109,7 +109,7 @@ def _apply_offer_event(
 
     # offer-withdrawn es terminal para la oferta de este ciclo.
     if snapshot is None:
-        session.add(MarketOffer(
+        session.add(MarketFeedOffer(
             cycle_id=payload.cycleId, city_id=payload.cityId, offer_id=offer_id,
             remaining=0, state="WITHDRAWN", uncertain=True,
             last_event_at=event_time, last_event_msg_id=str(payload.msgId),
@@ -138,8 +138,8 @@ def _apply_market_closed(
     cycle.closed_at = payload.timestamp
     cycle.closed_msg_id = str(payload.msgId)
     session.add(cycle)
-    for snapshot in session.exec(select(MarketOffer).where(
-        MarketOffer.cycle_id == payload.cycleId
+    for snapshot in session.exec(select(MarketFeedOffer).where(
+        MarketFeedOffer.cycle_id == payload.cycleId
     )).all():
         if snapshot.state in {"ACTIVE", "UNRESOLVED"}:
             snapshot.state = "CLOSED"

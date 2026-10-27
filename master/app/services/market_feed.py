@@ -138,6 +138,10 @@ def _apply_market_closed(
     cycle.closed_at = payload.timestamp
     cycle.closed_msg_id = str(payload.msgId)
     session.add(cycle)
+
+    # E2-029: mercado cerrado por central => cierre local SIN emisión tardía.
+    from app.services.seller_offer_events import close_local_offers
+    close_local_offers(session, cycle_id=payload.cycleId, now=payload.timestamp)
     for snapshot in session.exec(select(MarketFeedOffer).where(
         MarketFeedOffer.cycle_id == payload.cycleId
     )).all():

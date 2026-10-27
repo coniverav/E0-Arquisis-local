@@ -79,6 +79,9 @@ IDEMPOTENT_MESSAGE_TYPES = {
     "bid-rejected",
 }
 
+# E2-021/E2-029: deduplicar tambien eventos de Wallet por envelope.idpk.
+IDEMPOTENT_MESSAGE_TYPES.update(SWAP_EVENT_TYPES)
+
 router = APIRouter(
     prefix="/internal",
     tags=["internal"],
@@ -181,7 +184,7 @@ def ingest_protocol_message(
                 # Un reintento v3 puede cambiar msgId/timestamp, pero no la
                 # operación. No clasificar payloads distintos como duplicados.
                 is_same_operation = True
-                if payload.type in {"bid-accepted", "bid-rejected"}:
+                if payload.type in ({"bid-accepted", "bid-rejected"} | SWAP_EVENT_TYPES):
                     from ..models import InboundMessage
                     earlier = session.exec(select(InboundMessage).where(
                         InboundMessage.idpk == str(payload.idpk),
@@ -209,7 +212,7 @@ def ingest_protocol_message(
                 session.commit()
 
                 return {
-                    "status": "duplicate",
+                    "status": "duplicate" if is_same_operation else "not_processed",
                     "type": payload.type,
                     "cycleId": payload.cycleId,
                 }

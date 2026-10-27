@@ -194,6 +194,11 @@ class WalletService:
             )
             return None
 
+        # E2-029: un mismo swap terminal no debe descontar la oferta dos veces
+        # aunque el evento llegue con otro envelope (o se reprocese).
+        if record.status in {"SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}:
+            return record
+
         now = datetime.now(timezone.utc)
         if swap_id and not record.swap_id:
             record.swap_id = swap_id
@@ -270,26 +275,35 @@ class WalletService:
             select(OfferReservation).where(
                 OfferReservation.offer_id == offer_id,
                 OfferReservation.bid_idpk == bid_idpk,
-            )
+            ).with_for_update()
         ).first()
 
+        if res is None or res.status != "HOLD":
+            # Reserva inexistente o ya terminal: no descontar otra vez.
+            return
+
         now = datetime.now(timezone.utc)
-        if res:
-            if action == "COMMIT":
-                res.status = "COMMITTED"
-                # Descontar definitivamente del remaining de la oferta
-                offer = session.exec(
-                    select(MarketOffer).where(MarketOffer.offer_id == offer_id)
-                ).first()
-                if offer:
-                    offer.remaining_quantity = max(0, offer.remaining_quantity - res.quantity)
-                    offer.last_updated_at = now
-                    session.add(offer)
-            elif action == "RELEASE":
-                res.status = "RELEASED"
-                res.released_at = now
-            session.add(res)
-            session.flush()
+        if action == "COMMIT":
+            offer = session.exec(
+                select(MarketOffer).where(
+                    MarketOffer.offer_id == offer_id
+                ).with_for_update()
+            ).first()
+            res.status = "COMMITTED"
+            if offer is not None:
+                offer.remaining_quantity = max(0, offer.remaining_quantity - res.quantity)
+                offer.last_updated_at = now
+                session.add(offer)
+                # El settlement de Wallet es autoridad; no el HTTP 202.
+                from app.services.seller_offer_events import enqueue_confirmed_offer_update
+                enqueue_confirmed_offer_update(session, offer, now=now)
+        elif action == "RELEASE":
+            res.status = "RELEASED"
+            res.released_at = now
+        else:
+            raise ValueError("Acción de reserva no reconocida")
+        session.add(res)
+        session.flush()
 
     def record_balance_snapshot(
         self,

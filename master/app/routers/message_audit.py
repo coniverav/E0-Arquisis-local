@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import re
-from sqlalchemy import or_
+from sqlalchemy import or_, exists
+from sqlalchemy.orm import aliased
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -234,8 +235,24 @@ def list_outbound_dispatch(
         Cycle.report_window_opens_at <= now,
         Cycle.scheduler_state != "CLOSED",
     )
+    # E2-029: si una actualización se despacha antes de la oferta base,
+    # el feed queda inconsistente. Esperar el PUBLISHED del mensaje previo.
+    previous_market = aliased(OutboundMessage)
+    market_types = ("offer", "offer-updated", "offer-withdrawn")
+    has_earlier_unpublished_market = exists(
+        select(previous_market.id).where(
+            previous_market.cycle_id == OutboundMessage.cycle_id,
+            previous_market.message_type.in_(market_types),
+            previous_market.id < OutboundMessage.id,
+            previous_market.status != "PUBLISHED",
+        )
+    )
     messages = session.exec(
         select(OutboundMessage)
+        .where(or_(
+            ~OutboundMessage.message_type.in_(market_types),
+            ~has_earlier_unpublished_market,
+        ))
         .where(
             OutboundMessage.dispatch_required.is_(True)
         )
@@ -252,7 +269,7 @@ def list_outbound_dispatch(
         .where(or_(OutboundMessage.message_type != "negotiation-report",
                    OutboundMessage.cycle_id.in_(open_report_cycles)))
         .order_by(
-            OutboundMessage.created_at.asc()
+            OutboundMessage.created_at.asc(), OutboundMessage.id.asc()
         )
         .limit(limit)
     ).all()

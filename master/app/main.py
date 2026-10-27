@@ -32,6 +32,7 @@ from .routers.message_audit import (
 from .routers.distance_tables import router as distance_tables_router
 from .routers.connectivity import router as connectivity_router
 from .routers.market_book import router as market_book_router
+from .routers.buy_bids import router as buy_bids_router
 from .routers.negotiations import router as negotiations_router
 
 
@@ -61,6 +62,7 @@ app.include_router(negotiations_router)
 app.include_router(distance_tables_router)
 app.include_router(connectivity_router)
 app.include_router(market_book_router)
+app.include_router(buy_bids_router)
 
 def _event_to_out(session: Session, event: Event) -> EventOut:
     demands = session.exec(

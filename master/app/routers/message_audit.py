@@ -50,6 +50,7 @@ from ..services.message_audit import (
     record_outbound_message,
 )
 from ..services.market_feed import persist_market_feed
+from ..services.buy_bids import renew_failed_bid_dispatches
 
 #En un duplicado interesa también conocer cuál fue el mensaje que realmente obtuvo el claim y aplicó la operación.
 def _inbound_message_to_out(
@@ -77,6 +78,14 @@ def _inbound_message_to_out(
             if claim is not None:
                 related_msg_id = claim.msg_id
 
+    # El JWT del swap es un token portador. Nunca exponerlo en auditoría HTTP.
+    safe_payload = message.payload
+    if message.message_type == "bid-accepted" and isinstance(safe_payload, dict):
+        safe_payload = dict(safe_payload)
+        if isinstance(safe_payload.get("data"), dict):
+            safe_payload["data"] = dict(safe_payload["data"])
+            safe_payload["data"].pop("swapToken", None)
+
     return InboundMessageAuditOut(
         id=message.id,
         msgId=message.msg_id,
@@ -89,8 +98,8 @@ def _inbound_message_to_out(
         receivedAt=message.received_at,
         processedAt=message.processed_at,
         relatedMsgId=related_msg_id,
-        payload=message.payload,
-        rawPayload=message.raw_payload,
+        payload=safe_payload,
+        rawPayload=(None if message.message_type == "bid-accepted" else message.raw_payload),
     )
 
 def _inbound_message_to_anomaly_out(
@@ -205,6 +214,7 @@ def list_outbound_dispatch(
     lock_city_ledger(session)
     now = datetime.now(timezone.utc)
     expire_report_dispatches(session, now)
+    renew_failed_bid_dispatches(session, now=now)
     for proposal in session.exec(select(OutboundMessage).where(
         OutboundMessage.message_type == "negotiation-proposal",
         OutboundMessage.dispatch_required.is_(True),

@@ -14,7 +14,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://test:test@localhost/
 
 from app.database import engine, run_migrations
 from app.main import app
-from app.models import InboundMessage, MarketCycle, MarketEventClaim, MarketOffer
+from app.models import InboundMessage, MarketCycle, MarketEventClaim, MarketFeedOffer
 
 
 URL = "/internal/audit/inbound/market"
@@ -48,8 +48,8 @@ def post(payload, *, client=None):
 
 def snapshot(cycle, city):
     with Session(engine) as session:
-        return session.exec(select(MarketOffer).where(
-            MarketOffer.cycle_id == cycle, MarketOffer.city_id == city,
+        return session.exec(select(MarketFeedOffer).where(
+            MarketFeedOffer.cycle_id == cycle, MarketFeedOffer.city_id == city,
         )).one()
 
 

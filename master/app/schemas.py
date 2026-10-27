@@ -455,3 +455,28 @@ class AuditAnomalyOut(BaseModel):
 class AuditAnomalyListOut(BaseModel):
     total: int
     items: list[AuditAnomalyOut]
+
+
+# E2-035: lectura del libro de ofertas vigente desde market_feed_offers.
+class MarketBookOfferOut(BaseModel):
+    cycleId: str
+    cityId: str
+    offerId: str
+    quantity: int | None = None
+    remaining: int | None = None
+    pricePerEnergy: Decimal | None = None
+    lastEventAt: datetime
+    lastEventMsgId: str
+    state: str
+    uncertain: bool
+    stale: bool
+
+
+class MarketBookOut(BaseModel):
+    cycleId: str
+    asOf: datetime
+    marketClosed: bool
+    marketClosedAt: datetime | None = None
+    closesAt: datetime | None = None
+    total: int
+    offers: list[MarketBookOfferOut]

@@ -156,6 +156,8 @@ class DistanceTableOut(BaseModel):
     timestamp: datetime
     receivedAt: datetime
     distances: dict[str, Any]
+    cycleId: str | None = None
+    disabledRouteTransportCost: Decimal | None = None
 
 class ConnectivityItemOut(BaseModel):
     destination: str
@@ -455,3 +457,36 @@ class AuditAnomalyOut(BaseModel):
 class AuditAnomalyListOut(BaseModel):
     total: int
     items: list[AuditAnomalyOut]
+
+
+# E2-035: lectura del libro de ofertas vigente desde market_feed_offers.
+class MarketBookOfferOut(BaseModel):
+    cycleId: str
+    cityId: str
+    offerId: str
+    quantity: int | None = None
+    remaining: int | None = None
+    pricePerEnergy: Decimal | None = None
+    lastEventAt: datetime
+    lastEventMsgId: str
+    state: str
+    uncertain: bool
+    stale: bool
+    # E2-036: calculados desde la tabla del COMPRADOR de este ciclo.
+    distanceMeters: Decimal | None = None
+    routeEnabled: bool | None = None
+    transportRate: Decimal | None = None
+    transportPerEnergy: Decimal | None = None
+    effectivePricePerEnergy: Decimal | None = None
+
+
+class MarketBookOut(BaseModel):
+    cycleId: str
+    asOf: datetime
+    marketClosed: bool
+    marketClosedAt: datetime | None = None
+    closesAt: datetime | None = None
+    distanceTableTimestamp: datetime | None = None
+    disabledRouteTransportCost: Decimal | None = None
+    total: int
+    offers: list[MarketBookOfferOut]

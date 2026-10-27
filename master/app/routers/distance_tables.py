@@ -41,4 +41,6 @@ def get_current_distance_table(
         timestamp=distance_table.source_timestamp,
         receivedAt=distance_table.received_at,
         distances=distance_table.distances,
+        cycleId=distance_table.cycle_id,
+        disabledRouteTransportCost=distance_table.disabled_route_transport_cost,
     )

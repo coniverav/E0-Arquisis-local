@@ -446,6 +446,16 @@ class DistanceTable(SQLModel, table=True):
         ),
     )
 
+    # E2-036: en v3 cada tabla aplica al ciclo indicado por la central.
+    # NULL conserva la compatibilidad con mensajes antiguos de E1.
+    cycle_id: Optional[str] = Field(default=None, index=True, nullable=True)
+
+    # Tarifa punitiva oficial: no se calcula a partir de la tabla local.
+    disabled_route_transport_cost: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(20, 4), nullable=True),
+    )
+
     received_at: datetime = Field(
         sa_column=Column(
             DateTime(timezone=True),

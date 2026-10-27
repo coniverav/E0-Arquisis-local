@@ -397,6 +397,11 @@ def ingest_protocol_message(
                     idpk=str(payload.idpk),
                     source_timestamp=payload.timestamp,
                     distances=payload.data["distances"],
+                    cycle_id=payload.cycleId,
+                    disabled_route_transport_cost=(
+                        _decimal(payload.data["disabledRouteTransportCost"])
+                        if "disabledRouteTransportCost" in payload.data else None
+                    ),
                     received_at=now,
                 )
 

@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
-from ..models import Cycle, MarketCycle, MarketFeedOffer
+from ..models import Cycle, DistanceTable, MarketCycle, MarketFeedOffer
+from .transport_pricing import calculate_transport
 from ..schemas import MarketBookOfferOut, MarketBookOut
 
 
@@ -31,6 +32,18 @@ def get_market_book(
         or (closes_at is not None and now >= closes_at)
     )
 
+    # Evita aplicar accidentalmente al ciclo actual una tabla de otro ciclo.
+    # Como la central puede actualizarla varias veces, se usa la más reciente.
+    distance_table = session.exec(
+        select(DistanceTable)
+        .where(DistanceTable.cycle_id == cycle_id)
+        .order_by(
+            DistanceTable.source_timestamp.desc(),
+            DistanceTable.received_at.desc(),
+            DistanceTable.id.desc(),
+        )
+    ).first()
+
     snapshots = session.exec(
         select(MarketFeedOffer).where(MarketFeedOffer.cycle_id == cycle_id)
     ).all()
@@ -42,7 +55,13 @@ def get_market_book(
                     or snapshot.remaining is None or snapshot.remaining <= 0
                     or snapshot.price_per_energy is None):
                 continue
+        transport = calculate_transport(
+            distance_table,
+            seller_city=snapshot.city_id,
+            price_per_energy=snapshot.price_per_energy,
+        )
         items.append(MarketBookOfferOut(
+            **transport,
             cycleId=snapshot.cycle_id,
             cityId=snapshot.city_id,
             offerId=snapshot.offer_id,
@@ -67,5 +86,9 @@ def get_market_book(
     return MarketBookOut(
         cycleId=cycle_id, asOf=now, marketClosed=closed,
         marketClosedAt=market_closed_at, closesAt=closes_at,
+        distanceTableTimestamp=(distance_table.source_timestamp if distance_table else None),
+        disabledRouteTransportCost=(
+            distance_table.disabled_route_transport_cost if distance_table else None
+        ),
         total=len(items), offers=items,
     )

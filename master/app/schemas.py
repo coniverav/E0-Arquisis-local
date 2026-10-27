@@ -156,6 +156,8 @@ class DistanceTableOut(BaseModel):
     timestamp: datetime
     receivedAt: datetime
     distances: dict[str, Any]
+    cycleId: str | None = None
+    disabledRouteTransportCost: Decimal | None = None
 
 class ConnectivityItemOut(BaseModel):
     destination: str
@@ -470,6 +472,12 @@ class MarketBookOfferOut(BaseModel):
     state: str
     uncertain: bool
     stale: bool
+    # E2-036: calculados desde la tabla del COMPRADOR de este ciclo.
+    distanceMeters: Decimal | None = None
+    routeEnabled: bool | None = None
+    transportRate: Decimal | None = None
+    transportPerEnergy: Decimal | None = None
+    effectivePricePerEnergy: Decimal | None = None
 
 
 class MarketBookOut(BaseModel):
@@ -478,5 +486,7 @@ class MarketBookOut(BaseModel):
     marketClosed: bool
     marketClosedAt: datetime | None = None
     closesAt: datetime | None = None
+    distanceTableTimestamp: datetime | None = None
+    disabledRouteTransportCost: Decimal | None = None
     total: int
     offers: list[MarketBookOfferOut]

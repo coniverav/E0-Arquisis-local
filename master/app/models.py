@@ -98,6 +98,14 @@ class Cycle(SQLModel, table=True):
         ),
     )
 
+    # AD6: versión inmutable de estrategia que se utilizó en este ciclo.
+    # Se asigna al recibir el primer status-statement y no se recalcula.
+    strategy_version: Optional[int] = Field(
+        default=None,
+        foreign_key="strategy_configs.version",
+        index=True,
+    )
+
     # Campos de tiempos de mercado central v3 (E2-023)
     market_opens_at: Optional[datetime] = Field(
         default=None,

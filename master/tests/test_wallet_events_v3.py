@@ -44,6 +44,7 @@ class SwapEventIngressTests(unittest.TestCase):
         self.swap_idpk = str(uuid4())
         self.envelope_idpk = str(uuid4())
         self.msg_id = str(uuid4())
+        self.extra_envelope_idpks: list[str] = []
 
         official = deepcopy(example("swap-settled.json"))
         official["idpk"] = self.envelope_idpk
@@ -86,6 +87,17 @@ class SwapEventIngressTests(unittest.TestCase):
                     ProcessedIdpk.idpk == self.envelope_idpk
                 )
             )
+            for extra_idpk in self.extra_envelope_idpks:
+                session.exec(
+                    delete(InboundMessage).where(
+                        InboundMessage.idpk == extra_idpk
+                    )
+                )
+                session.exec(
+                    delete(ProcessedIdpk).where(
+                        ProcessedIdpk.idpk == extra_idpk
+                    )
+                )
             session.commit()
 
     def _seed(self, *, with_swap: bool = True, with_offer: bool = True):
@@ -189,6 +201,52 @@ class SwapEventIngressTests(unittest.TestCase):
         self.assertEqual(replay.status_code, 200)
         self.assertEqual(replay.json()["status"], "duplicate")
         self.assertEqual(len(self._snapshots()), 1)
+
+    def test_settle_repeated_with_new_envelope_does_not_duplicate_effects(self):
+        """Un reintento con envelope nuevo no debe repetir el settle.
+
+        El connector puede republicar el mismo swap-settled con otro
+        envelope.idpk. La deduplicacion por envelope no lo detecta, asi que
+        el guard terminal del swap debe impedir un segundo descuento o
+        snapshot.
+        """
+        self._seed()
+
+        self.assertEqual(self._post().json()["status"], "ok")
+
+        replay = deepcopy(self.envelope)
+        replay["idpk"] = str(uuid4())
+        replay["msgId"] = str(uuid4())
+        replay["timestamp"] = datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        validate("amqp/swap-settled", replay)
+        self.extra_envelope_idpks.append(replay["idpk"])
+
+        response = self._post(replay)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "ok")
+        self.assertEqual(len(self._snapshots()), 1)
+
+        with Session(engine) as session:
+            records = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).all()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].status, "SETTLED")
+
+            reservation = session.exec(
+                select(OfferReservation).where(
+                    OfferReservation.offer_id == self.offer_id
+                )
+            ).one()
+            self.assertEqual(reservation.status, "COMMITTED")
+
+            offer = session.exec(
+                select(MarketOffer).where(MarketOffer.offer_id == self.offer_id)
+            ).one()
+            self.assertEqual(offer.remaining_quantity, 12700)
 
     def test_unknown_swap_is_not_processed_and_releases_idpk(self):
         self._seed(with_swap=False, with_offer=False)

@@ -17,6 +17,15 @@ BID_POLICIES = frozenset({"FIFO", "MAX_REMAINING", "BATCH"})
 SELECTION_POLICIES = frozenset({"CHEAPEST_EFFECTIVE_PRICE", "MIN_DISTANCE"})
 
 
+class StrategyVersionConflict(Exception):
+    """La interfaz editó una versión que dejó de ser la más reciente."""
+
+    def __init__(self, *, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"Version obsoleta: se esperaba {expected}, actual {actual}")
+
+
 def _latest(session: Session, status: Optional[str] = None) -> Optional[StrategyConfig]:
     query = select(StrategyConfig)
     if status is not None:
@@ -56,6 +65,7 @@ def create_pending_strategy(
     offer_selection_policy: str,
     span_seconds: int,
     created_by: Optional[str] = None,
+    expected_version: Optional[int] = None,
 ) -> StrategyConfig:
     """Crea una versión PENDING; no altera ciclos abiertos ni versiones previas.
 
@@ -79,6 +89,8 @@ def create_pending_strategy(
     lock_city_ledger(session)
     _ensure_initial_strategy(session)
     current = _latest(session)
+    if expected_version is not None and current.version != expected_version:
+        raise StrategyVersionConflict(expected=expected_version, actual=current.version)
     config = StrategyConfig(
         version=current.version + 1,
         status="PENDING",

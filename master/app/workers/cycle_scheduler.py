@@ -29,6 +29,8 @@ from ..services.negotiation_timeouts import (
 from ..services.negotiation_proposals import (
     enqueue_timed_out_negotiation_retries,
 )
+from ..services.swap_accept import accept_pending_swaps
+from ..services.wallet_reconciliation import reconcile_wallet_tick
 
 
 logging.basicConfig(level=logging.INFO)
@@ -154,6 +156,27 @@ def run() -> None:
                         "No se pudo crear oferta para %s",
                         cycle_id,
                     )
+
+            # E2-041 / E2-044: aceptar swaps pendientes y conciliar saldos.
+            # Cada tick abre su propia sesión y nunca tumba al scheduler.
+            try:
+                with Session(engine) as wallet_session:
+                    acceptance_stats = asyncio.run(
+                        accept_pending_swaps(wallet_session)
+                    )
+                if (
+                    acceptance_stats["accepted"]
+                    or acceptance_stats["retry"]
+                    or acceptance_stats["rejected"]
+                ):
+                    logger.info(
+                        "Aceptaciones de swap: %s", acceptance_stats,
+                    )
+                asyncio.run(reconcile_wallet_tick())
+            except Exception:
+                logger.exception(
+                    "Error procesando aceptaciones/conciliación wallet"
+                )
 
 
         except Exception:

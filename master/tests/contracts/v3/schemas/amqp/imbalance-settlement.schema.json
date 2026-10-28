@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/imbalance-settlement.schema.json",
+  "title": "ImbalanceSettlement",
+  "description": "Liquidación al cierre del mercado (`closesAt`) de la ciudad que lo recibe. La central lee sus kWh en la wallet, calcula `coverage = kwhHeld - deficit`, quema todos sus kWh y mueve créditos según el signo de `coverage`: si es positivo, le paga `coverage × buybackPrice` y `total` es positivo; si es negativo, le cobra `|coverage| × imbalancePrice` y `total` es negativo (puede dejar saldo negativo); si es cero, quema sus kWh sin movimiento de créditos. Toda cuenta queda en 0 kWh. Los precios y el déficit son los del `status-statement` del ciclo. A una ciudad que la central no alcanzó en el ciclo (no recibió su `status-statement`) no se le envía `imbalance-settlement`: sus kWh se queman sin movimiento de créditos. Es un hecho consumado, sin confirmación.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{CODE}"],
+    "userId": "none"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": { "type": { "const": "imbalance-settlement" }, "data": { "$ref": "#/$defs/Data" } },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "ImbalanceSettlementData",
+      "description": "Contenido del `imbalance-settlement`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kwhHeld",
+        "deficit",
+        "coverage",
+        "pricePerEnergy",
+        "total",
+        "balanceAfter",
+        "settlementId"
+      ],
+      "properties": {
+        "kwhHeld": {
+          "$ref": "../common/kwh.schema.json",
+          "type": "integer",
+          "minimum": 0,
+          "description": "kWh que su cuenta tenía en la wallet al cierre."
+        },
+        "deficit": {
+          "$ref": "../common/kwh.schema.json",
+          "type": "integer",
+          "minimum": 0,
+          "description": "Consumo del ciclo que su generación no cubre, en kWh: `ceil(max(0, consumption - generationCapacity))`, redondeado hacia arriba porque `KWH` es entero."
+        },
+        "coverage": {
+          "type": "integer",
+          "description": "`kwhHeld - deficit`, con signo. Positivo: kWh que no necesitaba; negativo: consumo no cubierto."
+        },
+        "pricePerEnergy": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos por kWh aplicados: `buybackPrice` del ciclo si `coverage >= 0` (con `coverage = 0`, `total` es 0), `imbalancePrice` si `coverage < 0`."
+        },
+        "total": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos movidos, con signo desde la perspectiva de su ciudad: `coverage × pricePerEnergy`. Positivo si se le pagó, negativo si se le cobró, 0 si no hubo movimiento."
+        },
+        "balanceAfter": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Saldo disponible en créditos de su cuenta después de esta liquidación. Puede ser negativo."
+        },
+        "settlementId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Identificador único de esta liquidación."
+        }
+      }
+    }
+  }
+}

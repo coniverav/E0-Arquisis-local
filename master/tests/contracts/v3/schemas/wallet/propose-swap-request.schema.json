@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/propose-swap-request.schema.json",
+  "title": "ProposeSwapRequest",
+  "description": "Cuerpo de `POST /swaps`: propone un swap al portador. El swap no nombra contraparte: lo liquida quien primero lo acepte teniendo el `take`, y es el proponente quien decide a quién le entrega el `swapId`. Es cerrado: un campo extra (por ejemplo `counterparty`) es `422 MALFORMED_REQUEST`. `give` y `take` del mismo activo es válido en su forma: la wallet responde `202` y lo resuelve después con un `swap-rejected` `SAME_ASSET`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["give", "take", "expiresAt", "memo"],
+  "properties": {
+    "give": {
+      "$ref": "../common/asset-amount.schema.json",
+      "description": "Lo que entrega el proponente. La wallet lo retiene de su cuenta al procesar la propuesta."
+    },
+    "take": {
+      "$ref": "../common/asset-amount.schema.json",
+      "description": "Lo que el proponente pide a cambio; lo entrega quien acepta."
+    },
+    "expiresAt": {
+      "$ref": "../common/instant.schema.json",
+      "description": "Instante en que la propuesta vence si nadie la acepta: a lo sumo 60 segundos después de la petición. Ese tope lo revisa la wallet, no este schema."
+    },
+    "memo": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Texto opaco del proponente (por convención, el `offerId` de la oferta); puede ser vacío. El límite es de 128 bytes en UTF-8; `maxLength` cuenta caracteres, así que es una cota inferior de la regla en bytes que aplica la wallet: un texto con tildes puede pasar este schema y exceder los 128 bytes."
+    }
+  }
+}

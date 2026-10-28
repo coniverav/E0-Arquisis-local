@@ -1,0 +1,12 @@
+{
+  "keys": [
+    {
+      "kty": "EC",
+      "crv": "P-256",
+      "alg": "ES256",
+      "kid": "wallet-2026-10",
+      "x": "mubPo5NAxU_N3aRgmwL9X9pmfDBMdJZ4LXU6GmyX8JA",
+      "y": "FZ5ScgCHiK4EGu2xYEd94v7NjVKSH-mKL3JeRMdea6U"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "idpk": "ded770cd-47aa-59be-8aaf-d65536f22010",
+  "msgId": "d1eb00f2-eb74-5c35-ac1f-4a01e641e901",
+  "type": "trade-recorded",
+  "timestamp": "2026-10-26T14:00:00Z",
+  "sender": "central",
+  "cycleId": "cycle-9431",
+  "data": {
+    "swapId": "swp-77",
+    "offerId": "KLD-9431",
+    "seller": "KLD",
+    "buyer": "COR",
+    "quantity": 7300,
+    "pricePerEnergy": 330,
+    "energyTotal": 2409000.0,
+    "transportPerEnergy": 73.44,
+    "transportTotal": 536112.0,
+    "routeEnabled": true
+  }
+}

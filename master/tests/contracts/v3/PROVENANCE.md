@@ -1,4 +1,4 @@
-# Contratos v3 vendorizados para pruebas (E2-022 / E2-028)
+# Contratos v3 vendorizados para pruebas (E2-022 / E2-028 / E2-040–044)
 
 Estos archivos son copias locales que permiten ejecutar la suite sin clonar
 otro repositorio y sin depender de la red.
@@ -10,7 +10,9 @@ otro repositorio y sin depender de la red.
 - Son copias sin modificaciones. `SOURCE_SHA256.json` guarda el SHA-256 de
   cada archivo y `test_contracts_v3.py` lo verifica.
 - Se incluye sólo el cierre de `$ref` necesario para `status-statement`,
-  `offer`, `swap-settled` y `wallet/balance` (14 schemas).
+  `offer`, `swap-settled`, `wallet/balance`, `swap-token-claims`,
+  `trade-recorded`, `imbalance-settlement`, `statement-page` y las
+  peticiones/respuestas de escritura de la wallet (21 schemas).
 
 ## Ejemplos
 
@@ -25,12 +27,20 @@ otro repositorio y sin depender de la red.
   `creditLine`.
 - `offer.json` usa `offerId: KLD-9431`; el schema sólo exige un string no
   vacío, así que `KLD-cycle-9431` también es válido.
+- `swap-token-claims.json` describe los claims ES256 que la wallet firma para
+  cada swap; la firma y el `kid` se validan en tests, no en JSON Schema.
+- `trade-recorded.json` e `imbalance-settlement.json` cubren los hechos que la
+  central publica después del swap y al cierre del mercado.
+- `wallet-statement-response.json` es una página de `GET /statement` con
+  `entries` y `nextCursor`; `wallet-jwks.json` es el JWKS de la wallet.
+- `wallet-propose-swap-request.json` y `wallet-write-accepted-response.json`
+  fijan la forma cerrada de `POST /swaps` y de su `202`.
 
 ## Actualización
 
 Al cambiar el tag oficial:
 
-1. Copiar los mismos 14 schemas desde el tag nuevo.
+1. Copiar los mismos 21 schemas desde el tag nuevo.
 2. Regenerar `SOURCE_SHA256.json`.
 3. Ejecutar `python -m pytest tests/test_contracts_v3.py`.
 4. Revisar si cambió algún `required` o `additionalProperties` y ajustar los

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/write-accepted.schema.json",
+  "title": "WriteAccepted",
+  "description": "Cuerpo del `202` de una escritura (`POST /swaps`, `/accept`, `/cancel`). `202` significa aceptado, nunca hecho: la petición es válida en su forma y el resultado llega después como evento a `city.{CODE}` de las ciudades involucradas.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["swapId", "status"],
+  "properties": {
+    "swapId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identificador del swap: el que se creó al proponer, o el de la ruta al aceptar o cancelar."
+    },
+    "status": {
+      "const": "accepted",
+      "description": "Siempre `accepted` en un `202`."
+    }
+  }
+}

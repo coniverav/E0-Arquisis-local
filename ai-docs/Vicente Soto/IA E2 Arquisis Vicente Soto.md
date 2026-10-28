@@ -289,3 +289,73 @@ git diff --check con CRLF reconocido: sin errores
 ```
 
 Se compartieron comandos para repetir las pruebas con una base PostgreSQL desechable y se explicó cómo observar, después de un despliegue, los logs y las tablas en EC2. No se conectó esta implementación al broker de producción, no se publicaron mensajes reales y no se verificó AWS. Se distinguió que E2-017 prepara el libro de ofertas para RF02 y aporta al consumo de G02, pero RF02 completo aún exige vista, transporte, precio efectivo y rutas deshabilitadas; G02 operativo requiere comprobación en el entorno desplegado.
+
+---
+
+# E2-045 - Ensayo integrado v3 con MET y ciclo de prueba
+
+## 1. Ensayo local del rol seller
+
+### Prompt relevante
+
+> "Por ahora quiero implementar **la primera prueba integrada del flujo seller**, sin incorporar funcionalidades pendientes de esas tarjetas."
+
+### Resumen de la respuesta y utilidad
+
+Se creó `master/tests/test_e2045_seller_cycle.py` para recorrer los componentes reales desde `status-statement` hasta la liquidación seller, con PostgreSQL temporal, reloj controlado, broker simulado y Wallet simulada. La prueba comprueba la oferta, recepción del bid, reserva, propuesta de swap, `swap-proposed`, `bid-accepted` y `swap-settled`, además de persistencia, outbox y correlación. La respuesta HTTP `202` deja el swap pendiente: el evento `swap-settled` es el que confirma la liquidación.
+
+---
+
+## 2. Ampliación al rol buyer y límites del ensayo
+
+### Prompt relevante
+
+> "Completes la cobertura integrada del rol buyer, reutilizando la infraestructura de pruebas."
+
+### Resumen de la respuesta y utilidad
+
+Se añadió `master/tests/test_e2045_buyer_cycle.py` con una oferta **sintética** de MET. El recorrido recibe el feed, selecciona una candidata y publica un bid mediante una llamada **manual** a `POST /internal/market/bids`; después procesa `bid-accepted`, aceptación HTTP de Wallet, `swap-settled`, `trade-recorded`, `market-closed`, `imbalance-settlement` y la publicación simulada de `negotiation-report`. Esto permitió probar la integración del rol comprador, pero no la generación autónoma del bid ni la aceptación del reporte por la central.
+
+La prueba dejó visible una brecha económica: los hechos Wallet y de cierre quedaron persistidos, pero `LedgerEntry` no recibió nuevos efectos, `Cycle.budget_balance` permaneció en 0 CR y `Cycle.energy_balance` en −1000 KWH; el reporte publicado por el broker simulado reflejó esos saldos locales. El fixture no incluye financiamiento v3, por lo que sus cifras no representan un saldo productivo esperado. No se modificó lógica de negocio para ocultar el hallazgo.
+
+---
+
+## 3. Evidencia y alcance de la validación
+
+### Prompt relevante
+
+> "Registres evidencia de los escenarios ejecutados, resultados, logs y errores detectados."
+
+### Resumen de la respuesta y utilidad
+
+La evidencia quedó en `docs/documentacion/E2-045-evidencia-ensayo-integrado-local.md`. Allí se registraron las corridas seller y buyer (`2 passed`), regresiones relacionadas de master (`132 passed, 1 warning`) y la suite del connector (`142 passed, 8 subtests passed`). Durante la preparación se corrigieron dos errores del arnés de pruebas; las corridas finales pasaron. La advertencia corresponde a una API deprecada del entorno de tests.
+
+La validación fue local y aislada; no se ejecutó un ciclo contra MET, RabbitMQ o Wallet reales. La ventana de sandbox indicada en el enunciado terminó el 21 de octubre y no se verificó si el servicio podía reabrirse. Por ello, esta evidencia no cumple por sí sola el criterio original de ensayo en el sandbox de MET.
+
+---
+
+# E2-046 - Pruebas de deduplicación feed/bid y replay wallet
+
+## 1. Alcance de la tarjeta
+
+### Prompt relevante
+
+> "Una misma `idpk` no debe alterar nuevamente el ledger ni crear un segundo swap, incluso si el mensaje repetido contiene un `msgId` diferente."
+
+### Resumen de la respuesta y utilidad
+
+Se reutilizó el arnés seller/buyer de E2-045 y se creó `master/tests/test_e2046_dedup_replay.py`. Los casos reenvían ofertas de mercado, bids y eventos Wallet con igual `idpk` y distinto `msgId`; también prueban envelopes nuevos para el mismo `swapId` o `settlementId` y contenido conflictivo. Los mensajes pasan por los consumidores y endpoints reales, con servicios externos simulados y PostgreSQL temporal.
+
+---
+
+## 2. Resultados y limitaciones
+
+### Prompt relevante
+
+> "Verifiques que no se duplican swaps, reservas, liquidaciones ni efectos económicos persistidos."
+
+### Resumen de la respuesta y utilidad
+
+En los escenarios probados permanecieron un solo snapshot y claim del feed, una reserva y un swap seller, una aceptación buyer y un registro por hecho de transporte o liquidación de cierre. El replay se conservó en la auditoría de recepciones sin repetir el efecto; el contenido conflictivo no sobrescribió el snapshot. Un HTTP `202` tampoco se interpretó como settlement. La prueba verifica ausencia de duplicación sobre los efectos **actualmente implementados**; no acredita que el ledger E1 incorpore correctamente los importes Wallet.
+
+`docs/documentacion/E2-046-evidencia-deduplicacion-local.md` registra las corridas finales: `2 passed` para los casos nuevos, `4 passed` junto a los ensayos E2-045 y `110 passed, 1 warning` en regresiones relacionadas. No se cambió lógica de negocio. Quedaron fuera la concurrencia de varias réplicas, fallas durante el commit y la interacción con broker o Wallet reales. La generación automática del bid buyer y la consistencia Wallet–ledger–reporte siguieron como asuntos separados.

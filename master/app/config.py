@@ -46,3 +46,18 @@ WALLET_BASE_URL = os.getenv("WALLET_BASE_URL", "http://wallet-mock:8080").rstrip
 WALLET_API_KEY = os.getenv("WALLET_API_KEY", "")
 WALLET_TIMEOUT_SECONDS = float(os.getenv("WALLET_TIMEOUT_SECONDS", "10.0"))
 
+# E2-040: la wallet firma cada swap propuesto con ES256. El comprador verifica
+# la firma y los claims antes de aceptar.
+WALLET_JWKS_URL = os.getenv(
+    "WALLET_JWKS_URL",
+    f"{WALLET_BASE_URL}/.well-known/jwks.json",
+)
+WALLET_ISSUER = os.getenv("WALLET_ISSUER", "wallet.energyshark")
+
+# E2-044: intervalo mínimo entre conciliaciones automáticas con /balance y
+# /statement. El scheduler puede llamar al tick en cada vuelta sin saturar la
+# wallet.
+WALLET_RECONCILE_INTERVAL_SECONDS = float(
+    os.getenv("WALLET_RECONCILE_INTERVAL_SECONDS", "60")
+)
+

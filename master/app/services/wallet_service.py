@@ -11,7 +11,7 @@ Implementa:
   autoridad económica (E2-022, AD5).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
@@ -56,6 +56,7 @@ class WalletService:
         take_amount: Decimal,
         memo: Optional[str] = None,
         swap_id: Optional[str] = None,
+        source_bid_idpk: Optional[str] = None,
     ) -> SwapRecord:
         """
         Obtiene un SwapRecord existente o crea uno nuevo con Idempotency-Key durable.
@@ -82,6 +83,7 @@ class WalletService:
             memo=memo,
             status="SUBMITTED",
             idempotency_key=str(uuid.uuid4()),
+            source_bid_idpk=source_bid_idpk,
             created_at=now,
         )
         session.add(record)
@@ -108,8 +110,10 @@ class WalletService:
                 give_amount=record.give_amount,
                 take_asset=record.take_asset,
                 take_amount=record.take_amount,
-                counterpart_city_id=record.counterpart_city_id,
-                memo=record.memo,
+                memo=record.memo or "",
+                expires_at=record.expires_at or (
+                    datetime.now(timezone.utc) + timedelta(seconds=60)
+                ),
             )
             # Si la wallet responde con swapId en el cuerpo HTTP 202, lo asociamos preliminarmente
             swap_id_in_resp = resp.data.get("swapId") or resp.data.get("id")
@@ -171,27 +175,45 @@ class WalletService:
         - swap-expired
         - swap-cancelled
 
-        Correlaciona por data.idpk y data.swapId, aplicando transiciones de estado
-        y liberando o confirmando reservas de energía según AD4 / AD5.
+        Correlaciona por data.swapId, data.idpk y llaves de idempotencia
+        (proposición y aceptación), aplicando transiciones de estado y
+        liberando o confirmando reservas de energía según AD4 / AD5.
+
+        El `swapId` manda: el `idpk` de un `swap-settled` es la llave de la
+        operación que lo causó (normalmente la aceptación), que no tiene por
+        qué coincidir con el `idpk` local del proponente.
         """
         idpk = data.get("idpk")
         swap_id = data.get("swapId") or data.get("id")
 
-        query = select(SwapRecord)
-        if idpk:
-            query = query.where(SwapRecord.idpk == idpk)
-        elif swap_id:
-            query = query.where(SwapRecord.swap_id == swap_id)
-        else:
-            logger.warning("Evento %s sin idpk ni swapId en payload", event_type)
-            return None
+        record: Optional[SwapRecord] = None
+        if swap_id:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.swap_id == swap_id)
+            ).first()
+        if record is None and idpk:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == idpk)
+            ).first()
+        if record is None and idpk:
+            record = session.exec(
+                select(SwapRecord).where(
+                    SwapRecord.accept_idempotency_key == idpk
+                )
+            ).first()
+        if record is None and idpk:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idempotency_key == idpk)
+            ).first()
 
-        record = session.exec(query).first()
-        if not record:
-            logger.warning(
-                "SwapRecord no encontrado para evento %s (idpk=%s, swap_id=%s)",
-                event_type, idpk, swap_id
-            )
+        if record is None:
+            if not idpk and not swap_id:
+                logger.warning("Evento %s sin idpk ni swapId en payload", event_type)
+            else:
+                logger.warning(
+                    "SwapRecord no encontrado para evento %s (idpk=%s, swap_id=%s)",
+                    event_type, idpk, swap_id
+                )
             return None
 
         # E2-029: un mismo swap terminal no debe descontar la oferta dos veces

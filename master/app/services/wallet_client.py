@@ -10,6 +10,7 @@ Implementa:
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
@@ -66,6 +67,12 @@ class WalletSwapWriteResponse:
     data: dict[str, Any]
     idempotency_key: str
     accepted_for_processing: bool  # True si es HTTP 202
+
+
+@dataclass
+class WalletStatementPage:
+    entries: list[dict[str, Any]]
+    next_cursor: Optional[str] = None
 
 
 class WalletClient:
@@ -175,22 +182,27 @@ class WalletClient:
         give_amount: Decimal,
         take_asset: str,
         take_amount: Decimal,
-        counterpart_city_id: str,
-        memo: Optional[str] = None,
+        memo: str,
+        expires_at: datetime,
     ) -> WalletSwapWriteResponse:
         """
         Propone un swap a la wallet (POST /swaps). Requiere Idempotency-Key.
-        Típicamente retorna HTTP 202 Accepted.
+
+        El contrato v3.0.1 es cerrado: no se envía `counterparty` y `memo`
+        más `expiresAt` son obligatorios. La wallet elige al aceptante.
         """
         endpoint = f"{self.base_url}/swaps"
         headers = self._get_headers(idempotency_key=idempotency_key)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
         payload = {
             "give": {"asset": give_asset, "amount": float(give_amount)},
             "take": {"asset": take_asset, "amount": float(take_amount)},
-            "counterpart": counterpart_city_id,
+            "memo": memo,
+            "expiresAt": expires_at.astimezone(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
         }
-        if memo:
-            payload["memo"] = memo
 
         try:
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
@@ -273,12 +285,18 @@ class WalletClient:
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise WalletTimeoutError("GET /swaps failed") from exc
 
-    async def get_statement(self, cycle_id: Optional[str] = None) -> list[dict[str, Any]]:
-        """
-        Consulta el estado de cuenta y movimientos (GET /statement).
-        """
+    async def get_statement(
+        self,
+        cycle_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+    ) -> WalletStatementPage:
+        """Consulta una página de `GET /statement` (`{entries, nextCursor}`)."""
         endpoint = f"{self.base_url}/statement"
-        params = {"cycleId": cycle_id} if cycle_id else {}
+        params: dict[str, str] = {}
+        if cycle_id:
+            params["cycleId"] = cycle_id
+        if cursor:
+            params["cursor"] = cursor
         headers = self._get_headers()
 
         try:
@@ -286,6 +304,17 @@ class WalletClient:
                 res = await client.get(endpoint, params=params, headers=headers)
                 self._handle_response_error(res)
                 data = res.json()
-                return data if isinstance(data, list) else data.get("transactions", [])
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise WalletTimeoutError("GET /statement failed") from exc
+
+        if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+            raise WalletError("GET /statement no respetó el contrato {entries,nextCursor}")
+
+        next_cursor = data.get("nextCursor")
+        if next_cursor is not None and not isinstance(next_cursor, str):
+            raise WalletError("GET /statement devolvió nextCursor inválido")
+
+        return WalletStatementPage(
+            entries=data["entries"],
+            next_cursor=next_cursor,
+        )

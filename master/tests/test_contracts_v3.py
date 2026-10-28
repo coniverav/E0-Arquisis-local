@@ -62,3 +62,67 @@ def test_balance_response_requires_close_fields():
 
     assert payload["lastSettledCycle"] == "cycle-9430"
     assert payload["balanceAtLastClose"]["CR"] == 1150000.0
+
+
+def test_swap_token_claims_example_is_valid():
+    payload = example("swap-token-claims.json")
+    validate("token/swap-token-claims", payload)
+
+    assert payload["iss"] == "wallet.energyshark"
+    assert set(payload) == {
+        "iss", "sub", "iat", "exp", "proposer", "give", "take", "memo",
+    }
+    assert payload["give"]["asset"] in {"CR", "KWH"}
+    assert payload["take"]["asset"] in {"CR", "KWH"}
+
+
+def test_trade_recorded_example_is_valid():
+    payload = example("trade-recorded.json")
+    validate("amqp/trade-recorded", payload)
+
+    assert payload["type"] == "trade-recorded"
+    assert payload["data"]["swapId"]
+    assert payload["data"]["quantity"] > 0
+    assert payload["data"]["transportTotal"] >= 0
+
+
+def test_imbalance_settlement_example_is_valid():
+    payload = example("imbalance-settlement.json")
+    validate("amqp/imbalance-settlement", payload)
+
+    assert payload["type"] == "imbalance-settlement"
+    assert payload["data"]["coverage"] == (
+        payload["data"]["kwhHeld"] - payload["data"]["deficit"]
+    )
+
+
+def test_statement_page_example_is_valid():
+    payload = example("wallet-statement-response.json")
+    validate("wallet/statement-page", payload)
+
+    assert "entries" in payload and "nextCursor" in payload
+    for entry in payload["entries"]:
+        assert set(entry) >= {
+            "entryId", "cycleId", "asset", "kind",
+            "amount", "counterparty", "reference", "createdAt",
+        }
+
+
+def test_wallet_write_contracts_examples_are_valid():
+    validate("wallet/propose-swap-request", example("wallet-propose-swap-request.json"))
+    validate("wallet/write-accepted", example("wallet-write-accepted-response.json"))
+    validate("wallet/jwks", example("wallet-jwks.json"))
+
+
+def test_propose_swap_request_is_closed_and_requires_expiry():
+    payload = json.loads(json.dumps(example("wallet-propose-swap-request.json")))
+    payload["counterpart"] = "HGW"
+
+    with pytest.raises(ValidationError):
+        validate("wallet/propose-swap-request", payload)
+
+    payload.pop("counterpart")
+    payload.pop("expiresAt")
+
+    with pytest.raises(ValidationError):
+        validate("wallet/propose-swap-request", payload)

@@ -292,3 +292,115 @@ class SwapEventIngressTests(unittest.TestCase):
                 )
             ).one()
             self.assertEqual(reservation.status, "HOLD")
+
+    def _post_with_new_envelope(self, *, event_type: str | None = None, data_updates=None):
+        event = deepcopy(self.envelope)
+        event["idpk"] = str(uuid4())
+        event["msgId"] = str(uuid4())
+        event["timestamp"] = datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z"
+        )
+        if event_type is not None:
+            event["type"] = event_type
+        event["data"].update(data_updates or {})
+        self.extra_envelope_idpks.append(event["idpk"])
+        return self._post(event)
+
+    def test_settle_correlates_by_swap_id_when_idpk_differs(self):
+        """El idpk del settle es la llave de la aceptación, no la local."""
+
+        self._seed()
+
+        response = self._post_with_new_envelope(
+            data_updates={"idpk": str(uuid4())},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).one()
+            self.assertEqual(record.status, "SETTLED")
+        self.assertEqual(len(self._snapshots()), 1)
+
+    def test_settle_correlates_by_accept_idempotency_key(self):
+        """Sin swapId en el payload, la llave de aceptación aún correlaciona."""
+
+        self._seed()
+        accept_key = str(uuid4())
+        with Session(engine) as session:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).one()
+            record.accept_idempotency_key = accept_key
+            session.add(record)
+            session.commit()
+
+        response = self._post_with_new_envelope(data_updates={
+            "idpk": accept_key,
+            "swapId": None,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).one()
+            self.assertEqual(record.status, "SETTLED")
+
+    def test_settle_before_proposed_stays_settled(self):
+        """Un swap-settled adelantado no se degrada con el proposed tardío."""
+
+        self._seed()
+
+        self.assertEqual(
+            self._post_with_new_envelope().json()["status"], "ok",
+        )
+        late_proposed = self._post_with_new_envelope(
+            event_type="swap-proposed",
+            data_updates={"swapToken": "late-token"},
+        )
+
+        self.assertEqual(late_proposed.status_code, 200)
+        self.assertEqual(late_proposed.json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).one()
+            self.assertEqual(record.status, "SETTLED")
+            self.assertEqual(record.swap_token, None)
+        self.assertEqual(len(self._snapshots()), 1)
+
+    def test_rejection_after_settle_does_not_release_reservation(self):
+        """Reordenar reject tras settle no libera ni descuenta dos veces."""
+
+        self._seed()
+
+        self._post_with_new_envelope()
+        rejection = self._post_with_new_envelope(
+            event_type="swap-rejected",
+            data_updates={"reason": "EXPIRED_ACCEPTANCE"},
+        )
+
+        self.assertEqual(rejection.status_code, 200)
+        self.assertEqual(rejection.json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(
+                select(SwapRecord).where(SwapRecord.idpk == self.swap_idpk)
+            ).one()
+            self.assertEqual(record.status, "SETTLED")
+
+            reservation = session.exec(
+                select(OfferReservation).where(
+                    OfferReservation.offer_id == self.offer_id
+                )
+            ).one()
+            self.assertEqual(reservation.status, "COMMITTED")
+
+            offer = session.exec(
+                select(MarketOffer).where(MarketOffer.offer_id == self.offer_id)
+            ).one()
+            self.assertEqual(offer.remaining_quantity, 12700)
+        self.assertEqual(len(self._snapshots()), 1)

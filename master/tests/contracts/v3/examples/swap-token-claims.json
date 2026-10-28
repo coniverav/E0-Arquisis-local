@@ -1,0 +1,16 @@
+{
+  "iss": "wallet.energyshark",
+  "sub": "swp-77",
+  "iat": 1792507572,
+  "exp": 1792507602,
+  "proposer": "HGW",
+  "give": {
+    "asset": "KWH",
+    "amount": 7300
+  },
+  "take": {
+    "asset": "CR",
+    "amount": 2409000
+  },
+  "memo": "HGW-9431"
+}

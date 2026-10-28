@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/trade-recorded.schema.json",
+  "title": "TradeRecorded",
+  "description": "Registro de un intercambio de energía. La central lo envía al comprador y al vendedor después de cada `swap-settled` entre dos ciudades con una pata en `KWH` y la otra en `CR`, y en ese momento cobra al comprador el transporte (débito en `CR`, que puede dejarle saldo negativo). Es un hecho consumado: la central no valida precios ni cantidades. `cycleId` es el del ciclo cuyo mercado (de `opensAt` a `closesAt`) contiene el `settledAt` del swap, o el más cercano si un desfase de reloj lo deja justo fuera; un `swap-settled` que llega a la central después del cierre igual se registra y se le cobra transporte, en ese ciclo. El transporte sale de la última `distance-table` que la central publicó al comprador antes del `settledAt`.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{comprador}", "city.{vendedor}"],
+    "userId": "none"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": { "type": { "const": "trade-recorded" }, "data": { "$ref": "#/$defs/Data" } },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "TradeRecordedData",
+      "description": "Contenido del `trade-recorded`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "swapId",
+        "offerId",
+        "seller",
+        "buyer",
+        "quantity",
+        "pricePerEnergy",
+        "energyTotal",
+        "transportPerEnergy",
+        "transportTotal",
+        "routeEnabled"
+      ],
+      "properties": {
+        "swapId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El `swapId` del swap liquidado."
+        },
+        "offerId": {
+          "type": "string",
+          "description": "El `memo` del swap, que por convención es el `offerId` de la oferta. Informativo."
+        },
+        "seller": {
+          "$ref": "../common/city-code.schema.json",
+          "description": "Ciudad que entregó los `KWH`."
+        },
+        "buyer": {
+          "$ref": "../common/city-code.schema.json",
+          "description": "Ciudad que entregó los `CR`."
+        },
+        "quantity": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "kWh intercambiados (la pata `KWH` del swap)."
+        },
+        "pricePerEnergy": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Precio por kWh: `round2(CR / KWH)` de las dos patas del swap."
+        },
+        "energyTotal": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos que el comprador pagó al vendedor por la energía (la pata `CR` del swap)."
+        },
+        "transportPerEnergy": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Transporte por kWh: `round2(distancia en km × transportCost)`, según la entrada del vendedor en la `distance-table` del comprador vigente a la liquidación (la última versión que la central le publicó antes del `settledAt`). Si la ruta está deshabilitada, con `disabledRouteTransportCost` en vez de `transportCost`."
+        },
+        "transportTotal": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Transporte total cobrado al comprador: `round2(quantity × transportPerEnergy)`."
+        },
+        "routeEnabled": {
+          "type": "boolean",
+          "description": "Si la ruta del vendedor estaba habilitada en la `distance-table` del comprador. Si no, el transporte se cobró a `disabledRouteTransportCost`; comprar por una ruta deshabilitada no se rechaza."
+        }
+      }
+    }
+  }
+}

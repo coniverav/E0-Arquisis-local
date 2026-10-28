@@ -47,6 +47,7 @@ class ProposalAttempt:
     take_amount: Decimal
     counterpart_city_id: str
     memo: str
+    expires_at: datetime
     attempt_count: int
 
 
@@ -70,6 +71,9 @@ def _claim_one(session: Session, *, now: datetime) -> ProposalAttempt | None:
             SwapRecord.take_asset == 'CR',
             SwapRecord.proposal_http_accepted_at.is_(None),
             SwapRecord.proposal_blocked_at.is_(None),
+            # No enviar propuestas cuya caducidad durable ya pasó.
+            or_(SwapRecord.proposal_expires_at.is_(None),
+                SwapRecord.proposal_expires_at > now + timedelta(seconds=3)),
             or_(SwapRecord.proposal_retry_at.is_(None), SwapRecord.proposal_retry_at <= now),
             or_(SwapRecord.proposal_lease_until.is_(None), SwapRecord.proposal_lease_until <= now),
             MarketBid.direction == 'INCOMING',
@@ -99,6 +103,9 @@ def _claim_one(session: Session, *, now: datetime) -> ProposalAttempt | None:
     if record.take_amount < 0 or record.take_amount != record.take_amount.quantize(Decimal('0.01')):
         raise ValueError('SWAP_INTENT_INVALID_CR')
 
+    # Se congela el expiresAt antes del primer POST, también ante timeouts.
+    if record.proposal_expires_at is None:
+        record.proposal_expires_at = now + timedelta(seconds=55)
     token = str(uuid4())
     record.proposal_claim_token = token
     record.proposal_lease_until = now + timedelta(seconds=LEASE_SECONDS)
@@ -113,6 +120,7 @@ def _claim_one(session: Session, *, now: datetime) -> ProposalAttempt | None:
         take_amount=record.take_amount,
         counterpart_city_id=record.counterpart_city_id,
         memo=record.memo,
+        expires_at=record.proposal_expires_at,
         attempt_count=record.proposal_attempt_count,
     )
 
@@ -181,6 +189,7 @@ async def dispatch_swap_proposals(
         try:
             response: WalletSwapWriteResponse = await wallet.propose_swap(
                 idempotency_key=attempt.idempotency_key,
+                expires_at=attempt.expires_at,
                 give_asset='KWH',
                 give_amount=attempt.give_amount,
                 take_asset='CR',

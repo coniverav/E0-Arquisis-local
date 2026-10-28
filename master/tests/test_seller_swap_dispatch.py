@@ -140,7 +140,7 @@ def test_post_swaps_real_http_client_has_exact_body_headers_and_rounding(scenari
         assert kwargs['json'] == {
             'give': {'asset': 'KWH', 'amount': 3.0},
             'take': {'asset': 'CR', 'amount': 3.71},
-            'counterpart': scenario['buyer'],
+            'expiresAt': _record(bid['idpk']).proposal_expires_at.isoformat().replace('+00:00', 'Z'),
             'memo': scenario['offer'],
         }
     after = _record(bid['idpk'])

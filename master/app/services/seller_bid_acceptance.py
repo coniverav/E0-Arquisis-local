@@ -169,6 +169,7 @@ def reserve_incoming_bid(
         status="SUBMITTED",  # intención durable; NO significa HTTP 202 ni swap-proposed
         created_at=now,
     ))
+    bid.accepted_price_per_energy = offer.price_per_energy
     bid.status = "RESERVED"  # pendiente del evento wallet: NO es bid-accepted
     session.add(bid)
     session.flush()

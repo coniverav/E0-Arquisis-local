@@ -802,6 +802,10 @@ class MarketBid(SQLModel, table=True):
     available_on_rejection: Optional[int] = Field(default=None)
 
     swap_id: Optional[str] = Field(default=None, index=True)
+    # E2-033: precio de aceptación, no el precio actual de la oferta.
+    accepted_price_per_energy: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
 
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
@@ -879,6 +883,9 @@ class SwapRecord(SQLModel, table=True):
     )
     # E2-032: despacho durable HTTP (NO equivale a swap-proposed).
     proposal_attempt_count: int = Field(default=0, nullable=False)
+    proposal_expires_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     proposal_claim_token: Optional[str] = Field(default=None)
     proposal_lease_until: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

@@ -56,6 +56,7 @@ from ..services.negotiation_payments import (
     process_give_payment,
 )
 from ..services.wallet_service import WalletService
+from ..services.seller_bid_accepted import enqueue_bid_accepted_after_swap_proposed
 from ..services.trade_events import process_wallet_fact
 
 
@@ -656,6 +657,14 @@ def ingest_protocol_message(
                 audit_status = INBOUND_NOT_PROCESSED
                 audit_reason = "SWAP_UNKNOWN"
                 response_status = "not_processed"
+            elif payload.type == "swap-proposed":
+                # E2-033: registrar respuesta comercial solo DESPUÉS del evento
+                # Wallet y con swapId + JWT válido/consistente presentes.
+                # El outbox y el evento se confirman en la misma transacción.
+                enqueue_bid_accepted_after_swap_proposed(
+                    session, record=record, event_data=payload.data,
+                    sender=payload.sender, now=now,
+                )
 
         elif payload.type in WALLET_FACT_TYPES:
             # E2-043: hecho consumado. La deduplicación real es por swapId /

@@ -15,6 +15,7 @@ from ..models import Cycle
 
 from ..services.seller_offer import enqueue_seller_offer
 from ..services.seller_offer_events import close_expired_local_offers
+from ..services.seller_swap_dispatch import dispatch_swap_proposals
 
 from ..services.cycle_scheduler import (
     process_cycle_windows,
@@ -125,6 +126,15 @@ def run() -> None:
                         negotiation_retries,
                     )
 
+
+            # E2-032: despachar intenciones SUBMITTED sin bloquear las ofertas
+            # durante el HTTP. HTTP 202 no publica bid-accepted (E2-033).
+            try:
+                dispatched = asyncio.run(dispatch_swap_proposals(limit=10))
+                if dispatched["claimed"]:
+                    logger.info("Propuestas wallet procesadas: %s", dispatched)
+            except Exception:
+                logger.exception("Error despachando propuestas de swaps")
 
             # Crear oferta automática para cada ciclo elegible.
             # El worker revisa periódicamente los ciclos abiertos con excedente.

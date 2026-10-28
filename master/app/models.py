@@ -863,6 +863,23 @@ class SwapRecord(SQLModel, table=True):
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
     )
+    # E2-032: despacho durable HTTP (NO equivale a swap-proposed).
+    proposal_attempt_count: int = Field(default=0, nullable=False)
+    proposal_claim_token: Optional[str] = Field(default=None)
+    proposal_lease_until: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    proposal_retry_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    proposal_http_accepted_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    proposal_blocked_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    proposal_last_error: Optional[str] = Field(default=None)
+
     settled_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),

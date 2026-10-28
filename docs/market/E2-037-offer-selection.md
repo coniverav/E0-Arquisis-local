@@ -16,6 +16,6 @@ Al generar bids, E2-038 debe **revalidar** la ventana y disponibilidad y conserv
 
 ## Validación
 
-`pytest -q tests/test_offer_selection_e2037.py tests/test_market_book_e2035.py tests/test_transport_pricing_e2036.py`
+`pytest -q tests/test_offer_selection.py tests/test_market_book.py tests/test_transport_pricing.py`
 
 Las pruebas usan PostgreSQL local aislado, no RabbitMQ ni wallet productivos.

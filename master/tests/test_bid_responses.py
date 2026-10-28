@@ -9,7 +9,7 @@ from app.database import engine, run_migrations
 from app.main import app
 from app.models import Cycle, InboundMessage, MarketBid, OutboundMessage, ProcessedIdpk
 from app.services.buy_bids import enqueue_buy_bid, renew_failed_bid_dispatches
-from .test_buy_bids_e2038 import seed
+from .test_buy_bids import seed
 
 
 def setup_module():
@@ -114,15 +114,28 @@ def test_unknown_bid_target_is_not_processed():
 def test_duplicate_idpk_with_new_msgid_is_business_idempotent():
     cycle, offer, bid = _bid()
     key = uuid4()
+
     first = _response(cycle, offer, bid['msgId'], idpk=key)
-    assert TestClient(app).post('/internal/messages', json=first).status_code == 200
-    second = _response(cycle, offer, bid['msgId'], idpk=key)
+    assert TestClient(app).post(
+        '/internal/messages', json=first
+    ).status_code == 200
+
+    # Reintento de la misma operación:
+    # solo cambian msgId y timestamp, no los datos de negocio.
+    second = dict(first)
+    second['msgId'] = str(uuid4())
+    second['timestamp'] = datetime.now(timezone.utc).isoformat()
+
     res = TestClient(app).post('/internal/messages', json=second)
-    assert res.status_code == 200 and res.json()['status'] == 'duplicate'
+
+    assert res.status_code == 200
+    assert res.json()['status'] == 'duplicate'
     assert _stored(bid['idpk']).status == 'ACCEPTED'
+
     with Session(engine) as session:
         assert len(session.exec(select(ProcessedIdpk).where(
-            ProcessedIdpk.idpk == str(key))).all()) == 1
+            ProcessedIdpk.idpk == str(key)
+        )).all()) == 1
 
 
 def test_late_conflicting_terminal_response_cannot_reverse_acceptance():

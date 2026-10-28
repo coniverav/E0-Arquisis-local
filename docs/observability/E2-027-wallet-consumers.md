@@ -49,10 +49,10 @@ a AD4, la conciliación wallet-ledger a AD5 y la estrategia efectiva a AD6.
 
 ```bash
 # En imagen master (sin llamadas externas)
-pytest -q tests/test_wallet_observability_e2027.py
+pytest -q tests/test_wallet_observability.py
 
 # En imagen connector (sin broker real)
-pytest -q tests/test_observability_e2027.py
+pytest -q tests/test_observability.py
 ```
 
 **Nota:** la publicación de eventos en New Relic se verifica en producción

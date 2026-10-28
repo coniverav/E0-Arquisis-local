@@ -1,0 +1,28 @@
+## Declaración de uso de IA — E2-030: Recibir bid y validar oferta, cantidad, minBid y tiempo
+
+Para el desarrollo de la tarjeta **E2-030 — Recibir bid y validar oferta, cantidad, minBid y tiempo** se utilizó ChatGPT como herramienta de apoyo mediante consultas por chat.
+
+La herramienta se utilizó principalmente para:
+
+- Comprender cómo recibir y procesar los bids enviados por otras ciudades.
+- Validar que la oferta exista, esté activa y corresponda al ciclo correcto.
+- Verificar la cantidad solicitada, el `minBid` y los horarios del mercado.
+- Evitar compras de nuestra propia ciudad mediante la validación de `self-trade`.
+- Calcular la energía disponible considerando las reservas existentes.
+- Integrar la recepción de bids con los modelos y servicios existentes.
+- Manejar bids inválidos mediante mensajes `bid-rejected`.
+- Reutilizar los mecanismos de idempotencia para evitar procesar duplicados.
+- Diseñar y ejecutar pruebas para validar los distintos casos.
+- Identificar y corregir errores encontrados durante la ejecución de los tests.
+
+ChatGPT proporcionó propuestas de código, tests y comandos para implementar la tarjeta. Estas fueron revisadas y ejecutadas manualmente antes de incorporarlas al proyecto.
+
+## Prompts relevantes utilizados
+
+1. "¿Me explicas qué tengo que hacer en la E2-030 y cómo funciona la recepción de bids?"
+
+2. "¿Cómo puedo validar que un bid sea correcto antes de procesarlo?"
+
+3. "¿Lo que implementamos cumple con el AD4 que definimos?"
+
+4. "¿Me ayudas a corregir los tests que fallan y a ejecutar todas las pruebas del proyecto?"

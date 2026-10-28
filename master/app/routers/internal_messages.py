@@ -36,6 +36,7 @@ from ..services.cycle_scheduler import (
 )
 from ..services.strategy_config import bind_strategy_to_cycle
 from ..services.bid_responses import process_bid_reply
+from ..services.incoming_bids import process_incoming_bid
 from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
@@ -75,6 +76,7 @@ IDEMPOTENT_MESSAGE_TYPES = {
     "give",
     "take",
     "negotiation-report",
+    "bid",
     "bid-accepted",
     "bid-rejected",
 }
@@ -163,6 +165,9 @@ def ingest_protocol_message(
         payload=payload.model_dump(mode="json"),
         cycle_id=payload.cycleId,
         sender=getattr(payload, "sender", None),
+        offer_id=(payload.data.get("offerId") if payload.type == "bid"
+                  and isinstance(payload.data, dict)
+                  and isinstance(payload.data.get("offerId"), str) else None),
     )
 
     audit_status = INBOUND_PROCESSED
@@ -184,7 +189,7 @@ def ingest_protocol_message(
                 # Un reintento v3 puede cambiar msgId/timestamp, pero no la
                 # operación. No clasificar payloads distintos como duplicados.
                 is_same_operation = True
-                if payload.type in ({"bid-accepted", "bid-rejected"} | SWAP_EVENT_TYPES):
+                if payload.type in ({"bid", "bid-accepted", "bid-rejected"} | SWAP_EVENT_TYPES):
                     from ..models import InboundMessage
                     earlier = session.exec(select(InboundMessage).where(
                         InboundMessage.idpk == str(payload.idpk),
@@ -497,6 +502,18 @@ def ingest_protocol_message(
 
             else:
                 audit_status = INBOUND_DUPLICATE
+
+        elif payload.type == "bid":
+            # E2-030: sólo recepción/validación; E2-031 decidirá la aceptación.
+            audit_status, audit_reason = process_incoming_bid(
+                session, payload=payload, now=now,
+            )
+            if audit_status == INBOUND_NOT_PROCESSED:
+                # Un evento malformado no puede bloquear su idpk para siempre.
+                session.exec(delete(ProcessedIdpk).where(
+                    ProcessedIdpk.idpk == str(payload.idpk)
+                ))
+                response_status = "not_processed"
 
         elif payload.type in {"bid-accepted", "bid-rejected"}:
             # E2-039: target puede corresponder a cualquier intento en la

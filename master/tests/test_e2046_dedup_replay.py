@@ -276,8 +276,14 @@ def test_seller_bid_and_wallet_replays_do_not_repeat_economic_effects(
             assert len(_rows(session, OutboundMessage,
                              OutboundMessage.cycle_id == cycle_id,
                              OutboundMessage.message_type == "offer-updated")) == 1
-            assert len(_rows(session, LedgerEntry,
-                             LedgerEntry.cycle_id == cycle_id)) == initial_ledger_count
+            # E2-051: un solo asiento por swapId, sin importar los replays.
+            ledger = _rows(session, LedgerEntry,
+                           LedgerEntry.cycle_id == cycle_id)
+            assert len(ledger) == initial_ledger_count + 1
+            assert ledger[0].operation_type == "SWAP_SETTLED"
+            assert ledger[0].idpk == swap_id
+            assert ledger[0].energy_delta == -market["minBid"]
+            assert ledger[0].budget_delta == amount
             assert [row.status for row in _rows(session, InboundMessage,
                                                 InboundMessage.idpk == settled["idpk"])] == [
                 "PROCESSED", "DUPLICATE",

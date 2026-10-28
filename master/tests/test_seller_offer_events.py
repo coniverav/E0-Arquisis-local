@@ -15,7 +15,7 @@ from app.config import CITY_ID
 from app.database import engine, run_migrations
 from app.main import app
 from app.models import (
-    Cycle, MarketOffer, OfferReservation, OutboundMessage,
+    Cycle, LedgerEntry, MarketOffer, OfferReservation, OutboundMessage,
     SwapRecord,
 )
 from app.services.seller_offer_events import (
@@ -58,6 +58,7 @@ def scenario():
             OfferReservation.offer_id == offer_id
         ))
         session.exec(delete(SwapRecord).where(SwapRecord.cycle_id == cycle_id))
+        session.exec(delete(LedgerEntry).where(LedgerEntry.cycle_id == cycle_id))
         session.exec(delete(MarketOffer).where(MarketOffer.offer_id == offer_id))
         session.exec(delete(Cycle).where(Cycle.cycle_id == cycle_id))
         session.commit()

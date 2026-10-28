@@ -62,3 +62,15 @@ WALLET_RECONCILE_INTERVAL_SECONDS = float(
     os.getenv("WALLET_RECONCILE_INTERVAL_SECONDS", "60")
 )
 
+# E2-055: margen de gracia tras `market.lastBidAt` antes de expirar un bid
+# saliente que nunca recibió respuesta.
+SWAP_TIMEOUT_GRACE_SECONDS = float(
+    os.getenv("SWAP_TIMEOUT_GRACE_SECONDS", "15")
+)
+
+# E2-054: cadencia mínima del disparador autónomo de compra. La consulta a
+# wallet se amortiza entre vueltas del scheduler.
+AUTONOMOUS_BUY_INTERVAL_SECONDS = float(
+    os.getenv("AUTONOMOUS_BUY_INTERVAL_SECONDS", "45")
+)
+

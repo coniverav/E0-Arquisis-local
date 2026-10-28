@@ -1,7 +1,7 @@
 """E2-045: ensayo buyer v3 local; MET, broker y wallet son simulados.
 
-El bid se dispara por el endpoint interno existente. La compra autónoma, el
-financiamiento v3 y la actualización económica del ledger siguen pendientes.
+El bid se dispara por el endpoint interno existente. E2-051 aplica swap,
+transporte y settlement al ledger E1; el cierre deja KWH local en 0.
 Ejecutar solo contra una PostgreSQL temporal energyshark_test_*.
 """
 
@@ -336,11 +336,13 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                 cycle = session.get(Cycle, cycle_id)
                 final_ledger = session.exec(select(LedgerEntry).where(
                     LedgerEntry.cycle_id == cycle_id)).all()
-                # Hallazgo E2-050–052: los hechos wallet/trade/imbalance quedan
-                # persistidos, pero todavía no actualizan el ledger E1 del ciclo.
-                assert len(final_ledger) == len(initial_ledger)
-                assert cycle.budget_balance == initial_budget
-                assert cycle.energy_balance == initial_energy == Decimal("-1000")
+                # E2-051: swap, transporte y settlement sí actualizan el E1.
+                assert len(final_ledger) == len(initial_ledger) + 3
+                assert {entry.operation_type for entry in final_ledger} == {
+                    "SWAP_SETTLED", "SWAP_TRANSPORT", "IMBALANCE_SETTLEMENT",
+                }
+                assert cycle.budget_balance == -amount - transport_total
+                assert cycle.energy_balance == Decimal("0")
                 assert cycle.budget_balance != closed.balance_after
 
             with Session(engine) as session:
@@ -352,11 +354,11 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                 session.commit()
                 report = _one(session, NegotiationReport,
                               NegotiationReport.cycle_id == cycle_id)
-                # Se observa el reporte E1 generado hoy; el test no lo trata
-                # como saldo wallet correcto ni como aceptado por la central.
+                # E2-052: el reporte sale después del cierre y refleja el
+                # ledger final (no el saldo wallet de la central).
                 assert report.payload["data"] == {
-                    "budgetBalance": float(initial_budget),
-                    "energyBalance": float(initial_energy),
+                    "budgetBalance": float(-amount - transport_total),
+                    "energyBalance": 0.0,
                 }
                 assert Decimal(str(report.payload["data"]["budgetBalance"])) != after_transport_cr
             published = await broker.publish_outbox(backend, cycle_id=cycle_id)

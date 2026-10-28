@@ -117,6 +117,8 @@ class IdempotencyTests(unittest.TestCase):
             "sender": "central",
             "data": {
                 "quantity": 120.50,
+                "balanceAfter": 120.50,
+                "creditLine": 0,
             },
         }
 

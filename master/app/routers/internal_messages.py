@@ -57,6 +57,7 @@ from ..services.negotiation_payments import (
 )
 from ..services.wallet_service import WalletService
 from ..services.seller_bid_accepted import enqueue_bid_accepted_after_swap_proposed
+from ..services.trade_events import process_wallet_fact
 
 
 SWAP_EVENT_TYPES = {
@@ -65,6 +66,13 @@ SWAP_EVENT_TYPES = {
     "swap-rejected",
     "swap-cancelled",
     "swap-expired",
+}
+
+# E2-043: hechos consumados de la central; se deduplican por swapId /
+# settlementId dentro del servicio, no por envelope.
+WALLET_FACT_TYPES = {
+    "trade-recorded",
+    "imbalance-settlement",
 }
 
 IDEMPOTENT_MESSAGE_TYPES = {
@@ -85,6 +93,7 @@ IDEMPOTENT_MESSAGE_TYPES = {
 
 # E2-021/E2-029: deduplicar tambien eventos de Wallet por envelope.idpk.
 IDEMPOTENT_MESSAGE_TYPES.update(SWAP_EVENT_TYPES)
+IDEMPOTENT_MESSAGE_TYPES.update(WALLET_FACT_TYPES)
 
 router = APIRouter(
     prefix="/internal",
@@ -192,7 +201,7 @@ def ingest_protocol_message(
                 # Un reintento v3 puede cambiar msgId/timestamp, pero no la
                 # operación. No clasificar payloads distintos como duplicados.
                 is_same_operation = True
-                if payload.type in ({"bid", "bid-accepted", "bid-rejected"} | SWAP_EVENT_TYPES):
+                if payload.type in ({"bid", "bid-accepted", "bid-rejected"} | SWAP_EVENT_TYPES | WALLET_FACT_TYPES):
                     from ..models import InboundMessage
                     earlier = session.exec(select(InboundMessage).where(
                         InboundMessage.idpk == str(payload.idpk),
@@ -656,6 +665,22 @@ def ingest_protocol_message(
                     session, record=record, event_data=payload.data,
                     sender=payload.sender, now=now,
                 )
+
+        elif payload.type in WALLET_FACT_TYPES:
+            # E2-043: hecho consumado. La deduplicación real es por swapId /
+            # settlementId; un reenvío con envelope nuevo no duplica efectos.
+            audit_status, audit_reason = process_wallet_fact(
+                session, payload=payload, now=now,
+            )
+            if audit_status == INBOUND_NOT_PROCESSED:
+                session.exec(
+                    delete(ProcessedIdpk).where(
+                        ProcessedIdpk.idpk == str(payload.idpk)
+                    )
+                )
+                response_status = "not_processed"
+            elif audit_status == INBOUND_DUPLICATE:
+                response_status = "duplicate"
 
         else:
 

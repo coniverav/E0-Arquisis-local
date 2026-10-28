@@ -1,0 +1,12 @@
+{
+  "give": {
+    "asset": "KWH",
+    "amount": 7300
+  },
+  "take": {
+    "asset": "CR",
+    "amount": 2409000.0
+  },
+  "expiresAt": "2026-10-26T14:15:00Z",
+  "memo": "KLD-9431"
+}

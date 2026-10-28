@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/jwks.schema.json",
+  "title": "Jwks",
+  "description": "Claves públicas de la wallet (JSON Web Key Set, RFC 7517), con las que cualquier ciudad verifica la firma del token de un swap sin llamar a la wallet. Sólo trae claves públicas.",
+  "type": "object",
+  "required": ["keys"],
+  "properties": {
+    "keys": {
+      "description": "Claves públicas vigentes. Elijan la que corresponda al `kid` del encabezado del token.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/Jwk" }
+    }
+  },
+  "$defs": {
+    "Jwk": {
+      "title": "Jwk",
+      "description": "Una clave pública en formato JWK. Queda abierta: RFC 7517 define más campos según el tipo de clave.",
+      "type": "object",
+      "required": ["kty"],
+      "properties": {
+        "kty": { "type": "string", "description": "Tipo de clave (por ejemplo `EC`)." },
+        "kid": { "type": "string", "description": "Identificador de la clave; coincide con el `kid` del encabezado del token." },
+        "alg": { "type": "string", "description": "Algoritmo de firma (por ejemplo `ES256`)." },
+        "crv": { "type": "string", "description": "Curva, para claves `EC` (por ejemplo `P-256`)." },
+        "x": { "type": "string", "description": "Coordenada x de la clave pública `EC`, en base64url." },
+        "y": { "type": "string", "description": "Coordenada y de la clave pública `EC`, en base64url." }
+      }
+    }
+  }
+}

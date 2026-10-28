@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/token/swap-token-claims.schema.json",
+  "title": "SwapTokenClaims",
+  "description": "Claims del JWT (ES256) que firma la wallet para cada swap propuesto. El mismo token viaja en `swap-proposed.data.token` (de la wallet al vendedor) y en `bid-accepted.data.swapToken` (del vendedor al comprador). El swap es al portador: el token no nombra contraparte, y ningún claim dice para quién es. Antes de aceptar, el comprador verifica: la firma contra `/.well-known/jwks.json`; `sub` igual al `swapId` recibido; `proposer` igual al vendedor al que le envió el bid; `give` y `take` iguales, exactamente, a lo pedido al precio de la oferta; `memo` igual a la oferta; `exp` en el futuro. Este schema describe sólo la forma de los claims; la firma, el algoritmo y el `kid` del encabezado se verifican con el JWKS, fuera de JSON Schema. Un token válido no garantiza disponibilidad: si otro acepta primero, `SWAP_NOT_PROPOSED`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "iss",
+    "sub",
+    "iat",
+    "exp",
+    "proposer",
+    "give",
+    "take",
+    "memo"
+  ],
+  "properties": {
+    "iss": {
+      "const": "wallet.energyshark",
+      "description": "Emisor: siempre `wallet.energyshark`."
+    },
+    "sub": {
+      "type": "string",
+      "minLength": 1,
+      "description": "El `swapId` del swap."
+    },
+    "iat": {
+      "type": "integer",
+      "description": "Instante de emisión, en segundos desde la época Unix."
+    },
+    "exp": {
+      "type": "integer",
+      "description": "Instante de vencimiento, en segundos desde la época Unix. Debe estar en el futuro cuando el comprador acepta."
+    },
+    "proposer": {
+      "$ref": "../common/city-code.schema.json",
+      "description": "Ciudad que propuso el swap: el vendedor."
+    },
+    "give": {
+      "$ref": "../common/asset-amount.schema.json",
+      "description": "Lo que entrega el proponente; la wallet ya lo retiene."
+    },
+    "take": {
+      "$ref": "../common/asset-amount.schema.json",
+      "description": "Lo que el proponente pide a cambio; lo entrega quien acepta."
+    },
+    "memo": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Texto opaco del proponente (por convención, el `offerId` de la oferta), de a lo sumo 128 bytes UTF-8. `maxLength` cuenta caracteres, así que el schema acota por abajo la regla en bytes que aplica la wallet."
+    }
+  }
+}

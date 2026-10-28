@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/statement-page.schema.json",
+  "title": "StatementPage",
+  "description": "Cuerpo de `GET /statement`: una página de los asientos propios, del más nuevo al más antiguo. `nextCursor` pide la página siguiente y es `null` en la última. La referencia no especifica el orden entre asientos con el mismo `createdAt`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["entries", "nextCursor"],
+  "properties": {
+    "entries": {
+      "type": "array",
+      "description": "Asientos de esta página, del más nuevo al más antiguo.",
+      "items": { "$ref": "#/$defs/StatementEntry" }
+    },
+    "nextCursor": {
+      "description": "Cursor opaco para pedir la página siguiente (`?cursor=`); `null` en la última página.",
+      "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+    }
+  },
+  "$defs": {
+    "StatementEntry": {
+      "title": "StatementEntry",
+      "description": "Un asiento de la cuenta. `amount` lleva signo desde la perspectiva de la ciudad (negativo sale, positivo entra) y es entero cuando el activo es `KWH`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entryId", "cycleId", "asset", "kind", "amount", "counterparty", "reference", "createdAt"],
+      "properties": {
+        "entryId": { "type": "string", "format": "uuid", "description": "Identificador del asiento." },
+        "cycleId": {
+          "description": "Ciclo al que corresponde el asiento (por ejemplo `cycle-9431`); `null` si el asiento no corresponde a un ciclo (por ejemplo, un ajuste).",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "asset": { "enum": ["CR", "KWH"], "description": "Activo del asiento." },
+        "kind": {
+          "enum": ["funding", "mint", "swap", "transport", "buyback", "imbalance", "burn", "penalty", "adjustment"],
+          "description": "Qué originó el asiento."
+        },
+        "amount": {
+          "type": "number",
+          "description": "Monto con signo desde la perspectiva de la ciudad: créditos con dos decimales en `CR`, kWh enteros en `KWH`."
+        },
+        "counterparty": {
+          "description": "Código de la otra ciudad del asiento (por ejemplo, en un `swap`); `null` si no hay otra ciudad (por ejemplo, en un `funding`).",
+          "anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+        },
+        "reference": { "type": "string", "description": "Referencia del origen del asiento (por ejemplo, el `swapId` de un `swap`)." },
+        "createdAt": { "$ref": "../common/instant.schema.json", "description": "Instante en que se registró el asiento." }
+      },
+      "if": { "required": ["asset"], "properties": { "asset": { "const": "KWH" } } },
+      "then": { "properties": { "amount": { "type": "integer" } } }
+    }
+  }
+}

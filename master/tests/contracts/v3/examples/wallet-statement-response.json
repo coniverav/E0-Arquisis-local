@@ -1,0 +1,15 @@
+{
+  "entries": [
+    {
+      "entryId": "9b8ca52f-36d1-5347-8a4c-d6780cc243d8",
+      "cycleId": "cycle-9431",
+      "asset": "CR",
+      "kind": "swap",
+      "amount": -2409000.0,
+      "counterparty": "HGW",
+      "reference": "swp-77",
+      "createdAt": "2026-10-26T14:00:00Z"
+    }
+  ],
+  "nextCursor": null
+}

@@ -828,6 +828,7 @@ class SwapRecord(SQLModel, table=True):
 
     __table_args__ = (
         UniqueConstraint("idpk", name="uq_swap_records_idpk"),
+        UniqueConstraint("source_bid_idpk", name="uq_swap_records_source_bid_idpk"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -862,6 +863,19 @@ class SwapRecord(SQLModel, table=True):
     expires_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    # E2-041: vínculo durable con el bid-accepted que originó esta aceptación.
+    # La unicidad evita crear un segundo SwapRecord si el worker se reintenta.
+    source_bid_idpk: Optional[str] = Field(default=None, index=True)
+    accept_attempts: int = Field(default=0, nullable=False)
+    accept_attempted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    accept_error: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
     )
 
     created_at: datetime = Field(
@@ -932,6 +946,179 @@ class WalletBalanceSnapshot(SQLModel, table=True):
     )
 
     recorded_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class TradeRecord(SQLModel, table=True):
+    """Hecho `trade-recorded` de la central (E2-043).
+
+    La central lo publica al comprador y al vendedor después de cada swap.
+    Es un hecho consumado: no se pide confirmación. La unicidad es por
+    `swap_id`, no por envelope, para que un reenvío con otro `idpk`/`msgId`
+    no registre dos veces el mismo transporte.
+    """
+
+    __tablename__ = "trade_records"
+
+    __table_args__ = (
+        UniqueConstraint("swap_id", name="uq_trade_records_swap_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    msg_id: str = Field(index=True, nullable=False)
+    cycle_id: str = Field(index=True, nullable=False)
+
+    swap_id: str = Field(index=True, nullable=False)
+    offer_id: Optional[str] = Field(default=None, index=True)
+
+    seller: str = Field(index=True, nullable=False)
+    buyer: str = Field(index=True, nullable=False)
+    # BUYER / SELLER desde la perspectiva de nuestra ciudad.
+    role: str = Field(index=True, nullable=False)
+    counterpart_city_id: str = Field(index=True, nullable=False)
+
+    quantity: int = Field(nullable=False)
+    price_per_energy: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    energy_total: Decimal = Field(
+        sa_column=Column(Numeric(20, 2), nullable=False)
+    )
+    transport_per_energy: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    transport_total: Decimal = Field(
+        sa_column=Column(Numeric(20, 2), nullable=False)
+    )
+    route_enabled: bool = Field(nullable=False)
+
+    recorded_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class ImbalanceSettlement(SQLModel, table=True):
+    """Hecho `imbalance-settlement` del cierre de mercado (E2-043).
+
+    La unicidad es por `settlementId`: el cargo o pago de desbalance ocurre
+    una sola vez, aunque el evento se repita o llegue antes que `swap-settled`.
+    """
+
+    __tablename__ = "imbalance_settlements"
+
+    __table_args__ = (
+        UniqueConstraint("settlement_id", name="uq_imbalance_settlements_settlement_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    idpk: str = Field(index=True, nullable=False)
+    msg_id: str = Field(index=True, nullable=False)
+    cycle_id: str = Field(index=True, nullable=False)
+    settlement_id: str = Field(index=True, nullable=False)
+
+    kwh_held: int = Field(nullable=False)
+    deficit: int = Field(nullable=False)
+    coverage: int = Field(nullable=False)
+
+    price_per_energy: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    total: Decimal = Field(
+        sa_column=Column(Numeric(20, 2), nullable=False)
+    )
+    balance_after: Decimal = Field(
+        sa_column=Column(Numeric(20, 2), nullable=False)
+    )
+
+    recorded_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class WalletStatementEntry(SQLModel, table=True):
+    """Asiento de `GET /statement` persistido para conciliación (E2-044)."""
+
+    __tablename__ = "wallet_statement_entries"
+
+    __table_args__ = (
+        UniqueConstraint("entry_id", name="uq_wallet_statement_entries_entry_id"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    entry_id: str = Field(index=True, nullable=False)
+    cycle_id: Optional[str] = Field(default=None, index=True)
+    asset: str = Field(index=True, nullable=False)
+    kind: str = Field(index=True, nullable=False)
+    amount: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    counterpart: Optional[str] = Field(default=None, index=True)
+    reference: str = Field(index=True, nullable=False)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    fetched_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class WalletReconciliation(SQLModel, table=True):
+    """Resultado durable de comparar el ledger local con la wallet (E2-044).
+
+    `authority` siempre es `wallet`: el snapshot local sirve para explicar la
+    diferencia, nunca para corregir a la wallet.
+    """
+
+    __tablename__ = "wallet_reconciliations"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    cycle_id: Optional[str] = Field(default=None, index=True)
+    status: str = Field(index=True, nullable=False)
+    authority: str = Field(default="wallet", nullable=False)
+
+    cr_available_local: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    cr_available_wallet: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    cr_difference: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    cr_explained: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    cr_unexplained: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+
+    kwh_available_local: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    kwh_available_wallet: Decimal = Field(
+        sa_column=Column(Numeric(20, 4), nullable=False)
+    )
+    kwh_difference: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    kwh_explained: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+    kwh_unexplained: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True)
+    )
+
+    explanation: dict[str, Any] = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False),
+    )
+    created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
     )
 

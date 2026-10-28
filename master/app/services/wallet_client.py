@@ -10,6 +10,7 @@ Implementa:
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
@@ -177,6 +178,7 @@ class WalletClient:
         take_amount: Decimal,
         counterpart_city_id: str,
         memo: Optional[str] = None,
+        expires_at: datetime | None = None,
     ) -> WalletSwapWriteResponse:
         """
         Propone un swap a la wallet (POST /swaps). Requiere Idempotency-Key.
@@ -184,10 +186,14 @@ class WalletClient:
         """
         endpoint = f"{self.base_url}/swaps"
         headers = self._get_headers(idempotency_key=idempotency_key)
+        # Wallet v3.0.1 propone swaps AL PORTADOR: NO acepta counterpart.
+        # expiresAt forma parte del cuerpo idempotente; debe ser persistente.
+        if expires_at is None or expires_at.tzinfo is None:
+            raise ValueError("expires_at válido es obligatorio para POST /swaps")
         payload = {
             "give": {"asset": give_asset, "amount": float(give_amount)},
             "take": {"asset": take_asset, "amount": float(take_amount)},
-            "counterpart": counterpart_city_id,
+            "expiresAt": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         if memo:
             payload["memo"] = memo

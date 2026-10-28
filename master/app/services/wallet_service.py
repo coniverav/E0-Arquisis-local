@@ -11,7 +11,7 @@ Implementa:
   autoridad económica (E2-022, AD5).
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
@@ -101,8 +101,13 @@ class WalletService:
             "Enviando propuesta de swap a la wallet: idpk=%s key=%s",
             record.idpk, record.idempotency_key
         )
+        if record.proposal_expires_at is None:
+            record.proposal_expires_at = datetime.now(timezone.utc) + timedelta(seconds=55)
+            session.add(record)
+            session.commit()  # mismo expiresAt en cada reintento
         try:
             resp = await self.client.propose_swap(
+                expires_at=record.proposal_expires_at,
                 idempotency_key=record.idempotency_key,
                 give_asset=record.give_asset,
                 give_amount=record.give_amount,
@@ -204,7 +209,12 @@ class WalletService:
             record.swap_id = swap_id
 
         # Actualización de token o expiración si viene en el evento
-        if "swapToken" in data:
+        # El evento oficial de Wallet v3 usa data.token; el mensaje entre
+        # ciudades usa data.swapToken. Nunca inventar/reemplazar el JWT.
+        if event_type == "swap-proposed":
+            if isinstance(data.get("token"), str) and data["token"]:
+                record.swap_token = data["token"]
+        elif isinstance(data.get("swapToken"), str) and data["swapToken"]:
             record.swap_token = data["swapToken"]
         if "expiresAt" in data and isinstance(data["expiresAt"], str):
             try:

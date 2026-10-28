@@ -56,6 +56,7 @@ from ..services.negotiation_payments import (
     process_give_payment,
 )
 from ..services.wallet_service import WalletService
+from ..services.seller_bid_accepted import enqueue_bid_accepted_after_swap_proposed
 
 
 SWAP_EVENT_TYPES = {
@@ -647,6 +648,14 @@ def ingest_protocol_message(
                 audit_status = INBOUND_NOT_PROCESSED
                 audit_reason = "SWAP_UNKNOWN"
                 response_status = "not_processed"
+            elif payload.type == "swap-proposed":
+                # E2-033: registrar respuesta comercial solo DESPUÉS del evento
+                # Wallet y con swapId + JWT válido/consistente presentes.
+                # El outbox y el evento se confirman en la misma transacción.
+                enqueue_bid_accepted_after_swap_proposed(
+                    session, record=record, event_data=payload.data,
+                    sender=payload.sender, now=now,
+                )
 
         else:
 

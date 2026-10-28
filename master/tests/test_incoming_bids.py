@@ -103,7 +103,7 @@ def assert_rejection(body, reason, *, available=None):
     return event
 
 
-def test_valid_bid_is_pending_and_does_not_reserve_or_start_swap(scenario):
+def test_valid_bid_creates_hold_and_swap_intent_without_wallet_http(scenario):
     body = message(scenario)
     res = post(body)
     assert res.json()["status"] == "ok"
@@ -112,15 +112,22 @@ def test_valid_bid_is_pending_and_does_not_reserve_or_start_swap(scenario):
     assert bid.cycle_id == scenario["cycle"]
     assert bid.offer_id == scenario["offer"]
     assert bid.counterpart_city_id == "COR"
-    assert bid.quantity == 6 and bid.status == "PENDING"
+    assert bid.quantity == 6 and bid.status == "RESERVED"
     with Session(engine) as session:
         offer = session.exec(select(MarketOffer).where(
             MarketOffer.offer_id == scenario["offer"])).one()
         assert offer.remaining_quantity == 20
-        assert session.exec(select(OfferReservation).where(
-            OfferReservation.offer_id == scenario["offer"])).all() == []
-        assert session.exec(select(SwapRecord).where(
-            SwapRecord.cycle_id == scenario["cycle"])).all() == []
+        reservations = session.exec(select(OfferReservation).where(
+            OfferReservation.offer_id == scenario["offer"])).all()
+        swaps = session.exec(select(SwapRecord).where(
+            SwapRecord.cycle_id == scenario["cycle"])).all()
+        assert len(reservations) == 1
+        assert reservations[0].status == "HOLD" and reservations[0].quantity == 6
+        assert len(swaps) == 1
+        assert swaps[0].status == "SUBMITTED"
+        assert swaps[0].idpk == reservations[0].bid_idpk == str(body["idpk"])
+        assert swaps[0].give_amount == 6
+        assert swaps[0].take_amount == Decimal("60.00")
     assert outbox(body["msgId"]) == []
 
 

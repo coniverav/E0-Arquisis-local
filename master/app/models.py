@@ -796,7 +796,7 @@ class MarketBid(SQLModel, table=True):
     counterpart_city_id: str = Field(index=True, nullable=False)
     quantity: int = Field(nullable=False)
 
-    # PENDING / ACCEPTED / REJECTED
+    # PENDING / RESERVED / ACCEPTED / REJECTED
     status: str = Field(default="PENDING", index=True, nullable=False)
     rejection_reason: Optional[str] = Field(default=None, index=True)
     available_on_rejection: Optional[int] = Field(default=None)

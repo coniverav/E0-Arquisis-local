@@ -130,7 +130,15 @@ def test_dos_bids_40ms_por_ingress_sin_sobreventa(scenario):
     assert rejected[0].payload["reason"] == "QUANTITY_UNAVAILABLE"
     assert rejected[0].payload["data"]["available"] == 20
     assert rejected[0].payload["data"]["requested"] == 80
-    assert rejected[0].routing_key == "city.HGW"
+    # El orden de aceptación entre hilos no está garantizado.
+    # El rechazo debe dirigirse a la ciudad cuyo bid fue rechazado.
+    bid_rechazado = next(
+        bid for bid in bids
+        if bid.status == "REJECTED"
+    )
+
+    assert rejected[0].routing_key == f"city.{bid_rechazado.counterpart_city_id}"
+    assert rejected[0].payload["data"]["target"] == bid_rechazado.msg_id
 
 
 def test_dos_sesiones_independientes_bloqueo_fila(scenario):

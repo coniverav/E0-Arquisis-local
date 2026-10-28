@@ -37,6 +37,7 @@ from ..services.cycle_scheduler import (
 from ..services.strategy_config import bind_strategy_to_cycle
 from ..services.bid_responses import process_bid_reply
 from ..services.incoming_bids import process_incoming_bid
+from ..services.seller_bid_acceptance import reserve_incoming_bid
 from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
@@ -175,7 +176,8 @@ def ingest_protocol_message(
     response_status = "ok"
 
     try:
-        lock_city_ledger(session)
+        if payload.type != "bid":
+            lock_city_ledger(session)
         if payload.type in IDEMPOTENT_MESSAGE_TYPES:
             claimed = claim_idpk(
                 session,
@@ -508,6 +510,14 @@ def ingest_protocol_message(
             audit_status, audit_reason = process_incoming_bid(
                 session, payload=payload, now=now,
             )
+            # E2-031 / AD4: reserva HOLD y SwapRecord atómicos bajo el
+            # bloqueo de la oferta. No llamar HTTP Wallet en esta transacción.
+            if audit_status == INBOUND_PROCESSED and audit_reason is None:
+                result = reserve_incoming_bid(
+                    session, bid_idpk=str(payload.idpk), now=now,
+                )
+                if result["status"] == "REJECTED":
+                    audit_reason = result.get("reason")
             if audit_status == INBOUND_NOT_PROCESSED:
                 # Un evento malformado no puede bloquear su idpk para siempre.
                 session.exec(delete(ProcessedIdpk).where(

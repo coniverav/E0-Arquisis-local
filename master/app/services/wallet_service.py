@@ -116,9 +116,6 @@ class WalletService:
                 take_asset=record.take_asset,
                 take_amount=record.take_amount,
                 memo=record.memo or "",
-                expires_at=record.expires_at or (
-                    datetime.now(timezone.utc) + timedelta(seconds=60)
-                ),
             )
             # Si la wallet responde con swapId en el cuerpo HTTP 202, lo asociamos preliminarmente
             swap_id_in_resp = resp.data.get("swapId") or resp.data.get("id")

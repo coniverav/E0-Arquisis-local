@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from ..config import CITY_ID
 from ..models import Cycle, MarketBid, MarketCycle, MarketOffer, OfferReservation, SwapRecord
 from .incoming_bids import _send_rejection
+from .seller_bid_rejections import available_kwh
 
 CENT = Decimal("0.01")
 
@@ -27,13 +28,8 @@ def _now_utc(now: datetime) -> datetime:
 
 
 def _available(session: Session, offer: MarketOffer) -> int:
-    # IMPORTANTE: llamar únicamente tras SELECT FOR UPDATE de la oferta.
-    # remaining_quantity ya descuenta COMMITTED; NO descontarlas otra vez.
-    holds = session.exec(select(OfferReservation.quantity).where(
-        OfferReservation.offer_id == offer.offer_id,
-        OfferReservation.status == "HOLD",
-    )).all()
-    return max(0, offer.remaining_quantity - sum(holds))
+    """Wrapper E2-031: contar solo HOLD, usando la oferta bloqueada."""
+    return available_kwh(session, offer)
 
 
 def _reject(session: Session, bid: MarketBid, reason: str, now: datetime,
@@ -110,8 +106,10 @@ def reserve_incoming_bid(
     cycle = session.get(Cycle, bid.cycle_id)
     market = session.get(MarketCycle, bid.cycle_id)
     if (cycle is None or cycle.market_opens_at is None
+            or cycle.market_last_bid_at is None
             or cycle.market_closes_at is None
             or now < _now_utc(cycle.market_opens_at)
+            or now >= _now_utc(cycle.market_last_bid_at)
             or now >= _now_utc(cycle.market_closes_at)
             or (market is not None and market.closed_at is not None)):
         return _reject(session, bid, "MARKET_CLOSED", now)

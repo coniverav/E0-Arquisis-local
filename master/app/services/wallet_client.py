@@ -202,6 +202,7 @@ class WalletClient:
             "give": {"asset": give_asset, "amount": float(give_amount)},
             "take": {"asset": take_asset, "amount": float(take_amount)},
             "expiresAt": expires_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "memo": memo,
         }
 
         try:

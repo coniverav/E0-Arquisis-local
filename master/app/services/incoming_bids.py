@@ -5,24 +5,17 @@ serializa aceptación, inmoviliza energía y solicita la operación Wallet.
 """
 from datetime import datetime, timezone
 import re
-from uuid import uuid4
 
 from sqlmodel import Session, select
 
 from ..config import CITY_ID
 from ..models import (
-    Cycle, MarketBid, MarketCycle, MarketOffer, OfferReservation, OutboundMessage,
+    Cycle, MarketBid, MarketCycle, MarketOffer,
 )
 from .message_audit import INBOUND_NOT_PROCESSED, INBOUND_PROCESSED
-
-REJECTION_CODES = {
-    "QUANTITY_UNAVAILABLE": 409,
-    "OFFER_WITHDRAWN": 410,
-    "BID_TOO_SMALL": 422,
-    "MARKET_CLOSED": 410,
-    "SELF_TRADE": 422,
-}
-
+from .seller_bid_rejections import (
+    REJECTION_CODES, available_kwh, enqueue_bid_rejected,
+)
 
 def _utc(instant: datetime) -> datetime:
     if instant.tzinfo is None:
@@ -34,32 +27,11 @@ def _send_rejection(
     session: Session, *, payload, buyer: str, reason: str, now: datetime,
     available: int | None = None,
 ) -> None:
-    """La respuesta comercial se almacena en la misma transacción que el bid."""
-    msg_id = str(uuid4())
-    idpk = str(uuid4())
-    while msg_id == idpk:
-        msg_id = str(uuid4())
-    data = {
-        "target": str(payload.msgId),
-        "offerId": payload.data["offerId"],
-        "requested": payload.data["quantity"],
-    }
-    if reason == "QUANTITY_UNAVAILABLE":
-        data["available"] = max(0, available if available is not None else 0)
-
-    outbound = {
-        "msgId": msg_id, "idpk": idpk, "type": "bid-rejected",
-        "timestamp": now.isoformat().replace("+00:00", "Z"),
-        "cityId": CITY_ID, "cycleId": payload.cycleId,
-        "reason": reason, "code": REJECTION_CODES[reason], "data": data,
-    }
-    session.add(OutboundMessage(
-        msg_id=msg_id, idpk=idpk, message_type="bid-rejected",
-        cycle_id=payload.cycleId, target_msg_id=str(payload.msgId),
-        payload=outbound, routing_key=f"city.{buyer}",
-        exchange_name="energy.x", dispatch_required=True,
-        status="PENDING", attempt_count=0, created_at=now,
-    ))
+    """Compatibilidad E2-030/E2-031: delega en el contrato E2-034."""
+    enqueue_bid_rejected(
+        session, payload=payload, buyer=buyer, reason=reason,
+        now=now, available=available,
+    )
 
 
 def process_incoming_bid(session: Session, *, payload, now: datetime) -> tuple[str, str | None]:
@@ -121,11 +93,7 @@ def process_incoming_bid(session: Session, *, payload, now: datetime) -> tuple[s
     if reason is None and offer is not None:
         # La aceptación posterior debe repetir esta comprobación dentro del
         # bloqueo y crear HOLD de forma atómica para cumplir AD4.
-        holds = session.exec(select(OfferReservation).where(
-            OfferReservation.offer_id == offer_id,
-            OfferReservation.status == "HOLD",
-        )).all()
-        available = max(0, offer.remaining_quantity - sum(r.quantity for r in holds))
+        available = available_kwh(session, offer)
 
         raw_market = (cycle.status_payload or {}).get("market", {})
         raw_min_bid = raw_market.get("minBid") if isinstance(raw_market, dict) else None
@@ -164,7 +132,7 @@ def process_incoming_bid(session: Session, *, payload, now: datetime) -> tuple[s
     if reason:
         _send_rejection(
             session, payload=payload, buyer=buyer, reason=reason,
-            now=now, available=available,
+            now=now, available=(available if reason == "QUANTITY_UNAVAILABLE" else None),
         )
     session.flush()
     return INBOUND_PROCESSED, reason

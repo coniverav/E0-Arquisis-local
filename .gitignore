@@ -22,3 +22,5 @@ Thumbs.db
 postgres_data/
 certbot/www/
 certbot/conf/
+
+probar_tests.sh

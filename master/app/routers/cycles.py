@@ -11,12 +11,14 @@ from ..models import (
 )
 from ..schemas import (
     CycleDetailOut,
+    CycleHistoryOut,
     CycleSummaryOut,
     CyclesOut,
     LedgerEntryOut,
     NegotiationOut,
     NegotiationReportOut,
 )
+from ..services.cycle_history import get_cycle_history
 from ..services.ledger import rebuild_cycle_balances
 
 
@@ -226,3 +228,14 @@ def cycle_detail(
 
         ledger=ledger_out,
     )
+
+@router.get("/{cycle_id}/history", response_model=CycleHistoryOut)
+def cycle_history(
+    cycle_id: str,
+    session: Session = Depends(get_session),
+) -> CycleHistoryOut:
+    """RF01/E2-056: estado e historial E2, sin efectos ni secretos de wallet."""
+    history = get_cycle_history(session, cycle_id)
+    if history is None:
+        raise HTTPException(status_code=404, detail="Cycle not found")
+    return history

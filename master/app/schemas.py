@@ -149,6 +149,126 @@ class CycleDetailOut(BaseModel):
 
     ledger: list[LedgerEntryOut]
 
+# E2-056: historial E2. No incluir tokens de swap ni secretos wallet.
+class CycleHistoryEffectOut(LedgerEntryOut):
+    idpk: str
+    sourceMsgId: str | None = None
+
+
+class CycleHistoryOfferOut(BaseModel):
+    offerId: str
+    cityId: str
+    isLocal: bool
+    initialQuantity: int
+    remaining: int
+    pricePerEnergy: Decimal
+    status: str
+    publishedAt: datetime
+    lastUpdatedAt: datetime
+    withdrawnAt: datetime | None = None
+
+
+class CycleHistoryOfferRevisionOut(BaseModel):
+    type: str
+    msgId: str
+    idpk: str
+    offerId: str | None = None
+    remaining: int | None = None
+    pricePerEnergy: Decimal | None = None
+    publicationStatus: str
+    createdAt: datetime
+    publishedAt: datetime | None = None
+
+
+class CycleHistoryBidOut(BaseModel):
+    idpk: str
+    msgId: str
+    direction: str
+    offerId: str
+    counterpartCityId: str
+    quantity: int
+    status: str
+    rejectionReason: str | None = None
+    availableOnRejection: int | None = None
+    acceptedPricePerEnergy: Decimal | None = None
+    swapId: str | None = None
+    createdAt: datetime
+    respondedAt: datetime | None = None
+
+
+class CycleHistorySwapOut(BaseModel):
+    idpk: str
+    swapId: str | None = None
+    role: str
+    counterpartCityId: str
+    giveAsset: str
+    giveAmount: Decimal
+    takeAsset: str
+    takeAmount: Decimal
+    memo: str | None = None
+    status: str
+    rejectionReason: str | None = None
+    sourceBidIdpk: str | None = None
+    proposalHttpAcceptedAt: datetime | None = None
+    expiresAt: datetime | None = None
+    createdAt: datetime
+    settledAt: datetime | None = None
+
+
+class CycleHistoryTradeOut(BaseModel):
+    swapId: str
+    offerId: str | None = None
+    role: str
+    seller: str
+    buyer: str
+    quantity: int
+    pricePerEnergy: Decimal
+    energyTotal: Decimal
+    transportPerEnergy: Decimal
+    transportTotal: Decimal
+    routeEnabled: bool
+    recordedAt: datetime
+
+
+class CycleHistorySettlementOut(BaseModel):
+    settlementId: str
+    coverage: int
+    kwhHeld: int
+    deficit: int
+    pricePerEnergy: Decimal
+    total: Decimal
+    balanceAfter: Decimal
+    recordedAt: datetime
+
+
+class CycleHistoryOut(BaseModel):
+    cycleId: str
+    createdAt: datetime
+    validUntil: datetime | None = None
+    schedulerState: str
+    closedAt: datetime | None = None
+    strategyVersion: int | None = None
+    marketOpensAt: datetime | None = None
+    marketLastOfferAt: datetime | None = None
+    marketLastBidAt: datetime | None = None
+    marketClosesAt: datetime | None = None
+    statusMsgId: str | None = None
+    statusIdpk: str | None = None
+    statusStatement: dict[str, Any] = Field(default_factory=dict)
+    funding: list[CycleHistoryEffectOut] = Field(default_factory=list)
+    offers: list[CycleHistoryOfferOut] = Field(default_factory=list)
+    offerRevisions: list[CycleHistoryOfferRevisionOut] = Field(default_factory=list)
+    bids: list[CycleHistoryBidOut] = Field(default_factory=list)
+    swaps: list[CycleHistorySwapOut] = Field(default_factory=list)
+    trades: list[CycleHistoryTradeOut] = Field(default_factory=list)
+    settlements: list[CycleHistorySettlementOut] = Field(default_factory=list)
+    negotiationReports: list[NegotiationReportOut] = Field(default_factory=list)
+    lastOperation: CycleHistoryEffectOut | None = None
+    ledger: list[CycleHistoryEffectOut] = Field(default_factory=list)
+    budgetBalance: Decimal
+    energyBalance: Decimal
+
+
 class DistanceTableOut(BaseModel):
     id: int
     msgId: str

@@ -25,6 +25,7 @@ from app.models import (
     OfferReservation,
     MarketOffer,
 )
+from app.services.cycle_accounting import apply_swap_settled
 from app.services.wallet_client import (
     WalletClient,
     WalletError,
@@ -218,12 +219,28 @@ class WalletService:
                 )
             return None
 
+        now = datetime.now(timezone.utc)
+
         # E2-029: un mismo swap terminal no debe descontar la oferta dos veces
         # aunque el evento llegue con otro envelope (o se reprocese).
         if record.status in {"SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}:
+            # E2-055: un `swap-settled` tardío es un hecho económico real.
+            # Se registra en el ledger, pero NO se recompromete una reserva
+            # ya liberada: la diferencia queda para conciliación.
+            if event_type == "swap-settled" and record.status != "SETTLED":
+                logger.warning(
+                    "swap-settled tardío para SwapRecord %s (estado previo=%s): "
+                    "se aplica ledger sin recomprometer reserva",
+                    record.idpk,
+                    record.status,
+                )
+                apply_swap_settled(session, record=record)
+                record.status = "SETTLED"
+                record.settled_at = now
+                session.add(record)
+                session.flush()
             return record
 
-        now = datetime.now(timezone.utc)
         if swap_id and not record.swap_id:
             record.swap_id = swap_id
 
@@ -247,6 +264,8 @@ class WalletService:
         elif event_type == "swap-settled":
             record.status = "SETTLED"
             record.settled_at = now
+            # E2-051: el swap confirmado actualiza el ledger E1 una sola vez.
+            apply_swap_settled(session, record=record)
             # Confirmar reserva asociada si somos vendedores (AD4)
             if record.memo:
                 self._update_offer_and_reservation(

@@ -324,6 +324,8 @@ class InformationRequestTests(unittest.TestCase):
             "sender": "central",
             "data": {
                 "quantity": 100,
+                "balanceAfter": 100,
+                "creditLine": 0,
             },
         }
 

@@ -5,9 +5,9 @@ persisten con identidad de negocio (`swapId` / `settlementId`), no con la
 identidad del envelope, para que un reenvío con otro `idpk`/`msgId` no
 duplique transporte ni el cargo de desbalance.
 
-No se toca `Cycle.budget_balance` (ledger E1): estas tablas explican el
-efecto económico y alimentan la conciliación de E2-044, mientras la wallet
-sigue siendo la autoridad de los saldos.
+No se inventan saldos: el transporte y el desbalance se aplican al ledger E1
+como efectos explicados (E2-051) y la wallet sigue siendo la autoridad de los
+saldos. Las diferencias contra `balanceAfter` quedan registradas para E2-044.
 """
 
 from __future__ import annotations
@@ -20,6 +20,10 @@ from sqlmodel import Session, select
 
 from app.config import CITY_ID
 from app.models import ImbalanceSettlement, TradeRecord
+from app.services.cycle_accounting import (
+    apply_imbalance_settlement,
+    apply_trade_transport,
+)
 from app.services.message_audit import (
     INBOUND_DUPLICATE,
     INBOUND_NOT_PROCESSED,
@@ -102,7 +106,7 @@ def process_trade_recorded(
             return INBOUND_DUPLICATE, None
         return INBOUND_NOT_PROCESSED, "TRADE_CONFLICT"
 
-    session.add(TradeRecord(
+    trade = TradeRecord(
         idpk=str(payload.idpk),
         msg_id=str(payload.msgId),
         cycle_id=payload.cycleId,
@@ -119,8 +123,13 @@ def process_trade_recorded(
         transport_total=transport_total,
         route_enabled=route_enabled,
         recorded_at=now,
-    ))
+    )
+    session.add(trade)
     session.flush()
+
+    # E2-051: el comprador paga el transporte. El vendedor no mueve CR.
+    apply_trade_transport(session, record=trade)
+
     return INBOUND_PROCESSED, None
 
 
@@ -168,7 +177,7 @@ def process_imbalance_settlement(
             return INBOUND_DUPLICATE, None
         return INBOUND_NOT_PROCESSED, "IMBALANCE_CONFLICT"
 
-    session.add(ImbalanceSettlement(
+    settlement = ImbalanceSettlement(
         idpk=str(payload.idpk),
         msg_id=str(payload.msgId),
         cycle_id=payload.cycleId,
@@ -180,8 +189,13 @@ def process_imbalance_settlement(
         total=total,
         balance_after=balance_after,
         recorded_at=now,
-    ))
+    )
+    session.add(settlement)
     session.flush()
+
+    # E2-051: aplica el cargo/pago una vez y deja KWH local en 0.
+    apply_imbalance_settlement(session, settlement=settlement)
+
     return INBOUND_PROCESSED, None
 
 

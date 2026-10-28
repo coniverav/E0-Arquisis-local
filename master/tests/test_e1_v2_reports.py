@@ -186,7 +186,8 @@ def test_inbound_report_corrections_and_missing_cycle(context):
 def test_penalty_is_preserved_without_double_deduction(context, penalty):
     session, cycle, now = context
     payload = ProtocolMessageIn.model_validate(dict(idpk=str(uuid4()), msgId=str(uuid4()), type="transfer",
-        sender="central", timestamp=now, cycleId=cycle.cycle_id, data={"quantity": 70000, "penalty": penalty}))
+        sender="central", timestamp=now, cycleId=cycle.cycle_id,
+        data={"quantity": 70000, "balanceAfter": 70000, "creditLine": 0, "penalty": penalty}))
     ingest_protocol_message(payload, session)
     ingest_protocol_message(payload, session)
     session.refresh(cycle)
@@ -198,7 +199,9 @@ def test_penalty_is_preserved_without_double_deduction(context, penalty):
 def test_transfer_preserves_unmodeled_envelope_penalty(context):
     session, cycle, now = context
     payload = ProtocolMessageIn.model_validate(dict(idpk=str(uuid4()), msgId=str(uuid4()), type="transfer",
-        sender="central", timestamp=now, cycleId=cycle.cycle_id, data={"quantity": 70000}, penalty={"opaque": 50000}))
+        sender="central", timestamp=now, cycleId=cycle.cycle_id,
+        data={"quantity": 70000, "balanceAfter": 70000, "creditLine": 0},
+        penalty={"opaque": 50000}))
     ingest_protocol_message(payload, session)
     entry = session.exec(select(LedgerEntry).where(LedgerEntry.cycle_id == cycle.cycle_id)).one()
     assert entry.details["penalty"] == {"opaque": 50000}

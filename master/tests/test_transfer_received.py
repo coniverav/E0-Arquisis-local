@@ -62,7 +62,20 @@ class TransferReceivedTests(unittest.TestCase):
         *,
         msg_id: str,
         quantity: float,
+        balance_after: float | None = None,
+        credit_line: float = 0,
+        penalty: dict | None = None,
     ):
+        data = {
+            "quantity": quantity,
+            "balanceAfter": (
+                quantity if balance_after is None else balance_after
+            ),
+            "creditLine": credit_line,
+        }
+        if penalty is not None:
+            data["penalty"] = penalty
+
         return {
             "idpk": self.idpk,
             "msgId": msg_id,
@@ -72,9 +85,7 @@ class TransferReceivedTests(unittest.TestCase):
             ).isoformat(),
             "cycleId": self.cycle_id,
             "sender": "central",
-            "data": {
-                "quantity": quantity,
-            },
+            "data": data,
         }
 
     def test_received_transfer_changes_budget_once_and_is_audited(self):
@@ -176,6 +187,27 @@ class TransferReceivedTests(unittest.TestCase):
             self.assertEqual(
                 entry.budget_after,
                 Decimal("120.50"),
+            )
+
+            # E2-050: auditoría de funding v3 sin doble débito por penalty.
+            self.assertEqual(
+                entry.details["funding"]["quantity"],
+                "120.5",
+            )
+            self.assertEqual(
+                entry.details["funding"]["balanceAfter"],
+                "120.5",
+            )
+            self.assertEqual(
+                entry.details["funding"]["creditLine"],
+                "0",
+            )
+            self.assertIsNone(
+                entry.details["funding"]["penalty"],
+            )
+            self.assertEqual(
+                Decimal(entry.details["funding"]["balanceDifference"]),
+                Decimal("0"),
             )
 
         # ---------------------------------------------------------

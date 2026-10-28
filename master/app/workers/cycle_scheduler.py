@@ -20,6 +20,9 @@ from ..services.seller_swap_dispatch import dispatch_swap_proposals
 from ..services.cycle_scheduler import (
     process_cycle_windows,
 )
+from ..services.market_close import (
+    finalize_closed_markets,
+)
 from ..services.negotiation_report_dispatch import (
     enqueue_due_negotiation_reports,
 )
@@ -30,6 +33,8 @@ from ..services.negotiation_proposals import (
     enqueue_timed_out_negotiation_retries,
 )
 from ..services.swap_accept import accept_pending_swaps
+from ..services.swap_timeouts import expire_stale_swaps
+from ..services.autonomous_buy import run_autonomous_buy_tick
 from ..services.wallet_reconciliation import reconcile_wallet_tick
 
 
@@ -52,6 +57,18 @@ def run() -> None:
                 result = process_cycle_windows(
                     session
                 )
+
+                # E2-051/E2-052: cerrar y liquidar localmente ANTES de emitir
+                # el reporte, para que éste refleje el ledger final del ciclo.
+                market_finalization = finalize_closed_markets(
+                    session,
+                    now=datetime.now(timezone.utc),
+                )
+                if market_finalization["burns_applied"]:
+                    logger.info(
+                        "Cierres de mercado aplicados: %s",
+                        market_finalization,
+                    )
 
                 reports_enqueued = (
                     enqueue_due_negotiation_reports(
@@ -172,6 +189,26 @@ def run() -> None:
                     logger.info(
                         "Aceptaciones de swap: %s", acceptance_stats,
                     )
+
+                # E2-055: expirar swaps/bids vencidos y liberar holds solo
+                # cuando la wallet confirma que el swap terminó.
+                with Session(engine) as timeout_session:
+                    timeout_stats = asyncio.run(
+                        expire_stale_swaps(timeout_session)
+                    )
+                    timeout_session.commit()
+                if (
+                    timeout_stats["expired_swaps"]
+                    or timeout_stats["expired_bids"]
+                ):
+                    logger.info("Timeouts de swaps: %s", timeout_stats)
+
+                # E2-054: comprar autónomamente el déficit del ciclo con la
+                # estrategia y los límites de wallet vigentes.
+                buy_stats = asyncio.run(run_autonomous_buy_tick())
+                if buy_stats.get("bids_created"):
+                    logger.info("Compra autónoma: %s", buy_stats)
+
                 asyncio.run(reconcile_wallet_tick())
             except Exception:
                 logger.exception(

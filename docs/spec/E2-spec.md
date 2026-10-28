@@ -66,6 +66,16 @@ La posición energética se expresa como `coverage = KWH en cuenta − max(0, co
 
 El **ledger local deja de ser fuente de verdad**. Los eventos de wallet se almacenarán y aplicarán idempotentemente, distinguiendo liquidación de swap y transporte. Se contrastarán los saldos con `GET /balance` y, cuando corresponda, `GET /statement`, preservando el historial y explicando discrepancias sin sobreescrituras silenciosas.
 
+### Financiamiento v3 (E2-050)
+
+El `transfer` v3 es **solo financiamiento** de la central. El flujo comercial E1 que usaba `transfer` como pago (`becauseOf`) queda fuera de v3.
+
+* `quantity` es el monto **neto**: si hubo multa, ya viene descontada. La multa no se vuelve a debitar.
+* `balanceAfter` y `creditLine` son **obligatorios**. Un `transfer` sin ellos se audita como `INBOUND_NOT_PROCESSED` con motivo `INVALID_FUNDING_V3` y no acredita presupuesto.
+* `penalty` es informativo. Se conserva en `details.funding` para trazabilidad, junto con `balanceAfter`, `creditLine`, el saldo local posterior y la diferencia contra la wallet.
+* Una diferencia entre `balanceAfter` y el saldo local **se registra, no se corrige en silencio**. La explicación y conciliación corresponden a E2-044.
+* El ledger local nunca reemplaza a la wallet como autoridad económica.
+
 El `negotiation-report` conserva el formato y reglas de E1: envío durante el cierre, correcciones con un `idpk` nuevo, reintentos con el mismo `idpk`, manejo de `REPORT_TOO_EARLY`/`CYCLE_EXPIRED` y multa de 50.000 CR cuando corresponda. El ciclo debe reportarse autónomamente si la central efectivamente lo abrió/contactó, siguiendo las condiciones de E1.
 
 # Mercado autónomo, estrategias y recuperación

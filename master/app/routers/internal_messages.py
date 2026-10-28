@@ -34,6 +34,10 @@ from ..services.idempotency import claim_idpk
 from ..services.cycle_scheduler import (
     configure_cycle_schedule,
 )
+from ..services.funding import (
+    record_funding_audit,
+    validate_funding_v3,
+)
 from ..services.strategy_config import bind_strategy_to_cycle
 from ..services.bid_responses import process_bid_reply
 from ..services.incoming_bids import process_incoming_bid
@@ -380,21 +384,43 @@ def ingest_protocol_message(
                     cycle_id,
                 )
 
-                _, applied = apply_ledger_effect(
-                    session,
-                    cycle_id=cycle_id,
-                    idpk=str(payload.idpk),
-                    source_msg_id=str(payload.msgId),
-                    operation_type="TRANSFER_IN",
-                    budget_delta=quantity,
-                    energy_delta=Decimal("0"),
-                    details=payload.model_dump(mode="json"),
-                )
-
-                if not applied:
-                    audit_status = (
-                        INBOUND_DUPLICATE
+                # E2-050: el transfer v3 es solo financiamiento y exige los
+                # datos oficiales de wallet. Un mensaje incompleto no debe
+                # acreditar presupuesto a ciegas.
+                funding_error = validate_funding_v3(payload.data)
+                if funding_error is not None:
+                    session.exec(
+                        delete(ProcessedIdpk).where(
+                            ProcessedIdpk.idpk == str(payload.idpk)
+                        )
                     )
+                    audit_status = INBOUND_NOT_PROCESSED
+                    audit_reason = funding_error
+                    response_status = "not_processed"
+                else:
+                    entry, applied = apply_ledger_effect(
+                        session,
+                        cycle_id=cycle_id,
+                        idpk=str(payload.idpk),
+                        source_msg_id=str(payload.msgId),
+                        operation_type="TRANSFER_IN",
+                        budget_delta=quantity,
+                        energy_delta=Decimal("0"),
+                        details=payload.model_dump(mode="json"),
+                    )
+
+                    if not applied:
+                        audit_status = (
+                            INBOUND_DUPLICATE
+                        )
+                    else:
+                        # La multa ya viene descontada de `quantity`; solo se
+                        # audita junto con `balanceAfter` y `creditLine`.
+                        record_funding_audit(
+                            session,
+                            entry=entry,
+                            payload=payload,
+                        )
 
         # Convención:
         # energy_delta = quantity

@@ -549,7 +549,7 @@ class MarketFeedOffer(SQLModel, table=True):
     """Snapshot conservador de la única oferta de una ciudad en un ciclo."""
 
     __tablename__ = "market_feed_offers"
-    __table_args__ = (UniqueConstraint("cycle_id", "city_id", name="uq_market_offer_cycle_city"),)
+    __table_args__ = (UniqueConstraint("cycle_id", "city_id", name="uq_market_feed_offer_cycle_city"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     cycle_id: str = Field(foreign_key="market_cycles.cycle_id", index=True, nullable=False)
@@ -888,10 +888,10 @@ class SwapRecord(SQLModel, table=True):
     )
     proposal_claim_token: Optional[str] = Field(default=None)
     proposal_lease_until: Optional[datetime] = Field(
-        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True)
     )
     proposal_retry_at: Optional[datetime] = Field(
-        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True)
     )
     proposal_http_accepted_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

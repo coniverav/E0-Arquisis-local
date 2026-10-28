@@ -46,6 +46,7 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}
       WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_JWKS_URL: ${WALLET_JWKS_URL:-}
       WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:
@@ -73,6 +74,7 @@ services:
       AUTH_AUDIENCE: ${AUTH_AUDIENCE:-}
       AUTH_ISSUER: ${AUTH_ISSUER:-}
       WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_JWKS_URL: ${WALLET_JWKS_URL:-}
       WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:
@@ -100,6 +102,7 @@ services:
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
       WALLET_BASE_URL: ${WALLET_BASE_URL}
+      WALLET_JWKS_URL: ${WALLET_JWKS_URL:-}
       WALLET_API_KEY: ${WALLET_API_KEY}
     depends_on:
       db:

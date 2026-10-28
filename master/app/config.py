@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit
 
 # No usamos python-dotenv dentro del container: Docker Compose inyecta las variables.
 DATABASE_URL = os.environ["DATABASE_URL"]
@@ -46,11 +47,11 @@ WALLET_BASE_URL = os.getenv("WALLET_BASE_URL", "http://wallet-mock:8080").rstrip
 WALLET_API_KEY = os.getenv("WALLET_API_KEY", "")
 WALLET_TIMEOUT_SECONDS = float(os.getenv("WALLET_TIMEOUT_SECONDS", "10.0"))
 
-# E2-040: la wallet firma cada swap propuesto con ES256. El comprador verifica
-# la firma y los claims antes de aceptar.
-WALLET_JWKS_URL = os.getenv(
-    "WALLET_JWKS_URL",
-    f"{WALLET_BASE_URL}/.well-known/jwks.json",
+# E2-040: los endpoints REST pueden vivir bajo /v1, pero JWKS se publica en
+# la raíz del origen. Si Compose transmite una variable vacía, usar el fallback.
+_wallet_origin = urlsplit(WALLET_BASE_URL)
+WALLET_JWKS_URL = os.getenv("WALLET_JWKS_URL") or (
+    f"{_wallet_origin.scheme}://{_wallet_origin.netloc}/.well-known/jwks.json"
 )
 WALLET_ISSUER = os.getenv("WALLET_ISSUER", "wallet.energyshark")
 

@@ -14,7 +14,10 @@ from sqlmodel import Session, select
 from ..auth import verify_jwt
 from ..database import get_session
 from ..models import Cycle, MarketOffer, StrategyConfig, SwapRecord
-from ..services.strategy_config import create_pending_strategy, get_cycle_strategy
+from ..services.strategy_config import (
+    BID_POLICIES, SELECTION_POLICIES, StrategyVersionConflict,
+    create_pending_strategy, get_cycle_strategy,
+)
 
 router = APIRouter(prefix="/market", tags=["market-admin"])
 
@@ -40,11 +43,44 @@ class StrategyViewOut(BaseModel):
 
 class StrategyUpdateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    offerPriceMarkup: Decimal = Field(gt=0)
-    offerQuantityFraction: Decimal = Field(ge=0, le=1)
+    # PostgreSQL usa Numeric(10, 4): rechazar precisión que se redondearía
+    # silenciosamente y no coincidiría con el valor auditado de la edición.
+    offerPriceMarkup: Decimal = Field(gt=0, max_digits=10, decimal_places=4)
+    offerQuantityFraction: Decimal = Field(ge=0, le=1, max_digits=10, decimal_places=4)
     bidAcceptancePolicy: str
     offerSelectionPolicy: str
     spanSeconds: int = Field(ge=0, strict=True)
+    # Opcional para clientes anteriores. Evita ediciones sobre valores obsoletos.
+    expectedVersion: int | None = Field(default=None, ge=1, strict=True)
+
+
+class StrategyChangeOut(BaseModel):
+    before: str | int | None
+    after: str | int
+
+
+class StrategyAuditItemOut(BaseModel):
+    version: int
+    previousVersion: int | None
+    status: str
+    createdAt: datetime
+    createdBy: str | None
+    effectiveFromCycleId: str | None
+    changes: dict[str, StrategyChangeOut]
+
+
+class StrategyAuditOut(BaseModel):
+    total: int
+    offset: int
+    limit: int
+    items: list[StrategyAuditItemOut]
+
+
+class StrategyOptionsOut(BaseModel):
+    bidAcceptancePolicies: list[str]
+    offerSelectionPolicies: list[str]
+    minSpanSeconds: int
+    decimalPlaces: int
 
 
 class LocalOfferOut(BaseModel):
@@ -173,6 +209,79 @@ def read_strategy_versions(
     return [_strategy(version) for version in versions]
 
 
+@router.get("/strategy/options", response_model=StrategyOptionsOut)
+def read_strategy_options() -> StrategyOptionsOut:
+    """Valores oficiales soportados por la API para un editor frontend."""
+    return StrategyOptionsOut(
+        bidAcceptancePolicies=sorted(BID_POLICIES),
+        offerSelectionPolicies=sorted(SELECTION_POLICIES),
+        minSpanSeconds=0, decimalPlaces=4,
+    )
+
+
+_STRATEGY_FIELDS = {
+    "offerPriceMarkup": "offer_price_markup",
+    "offerQuantityFraction": "offer_quantity_fraction",
+    "bidAcceptancePolicy": "bid_acceptance_policy",
+    "offerSelectionPolicy": "offer_selection_policy",
+    "spanSeconds": "span_seconds",
+}
+
+
+def _strategy_audit_changes(
+    current: StrategyConfig, previous: StrategyConfig | None,
+) -> dict[str, StrategyChangeOut]:
+    """Reconstruir cambios de versiones persistidas, sin actualizar ninguna fila."""
+    changes = {}
+    for public_name, column_name in _STRATEGY_FIELDS.items():
+        after = getattr(current, column_name)
+        before = getattr(previous, column_name) if previous is not None else None
+        if before == after and previous is not None:
+            continue
+        # Conservar exactitud de los números de precisión fija.
+        if isinstance(after, Decimal):
+            after = str(after)
+        if isinstance(before, Decimal):
+            before = str(before)
+        changes[public_name] = StrategyChangeOut(before=before, after=after)
+    return changes
+
+
+@router.get("/strategy/audit", response_model=StrategyAuditOut)
+def read_strategy_audit(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    session: Session = Depends(get_session),
+    _claims: dict = Depends(verify_jwt),
+) -> StrategyAuditOut:
+    """AD6: actor, versión, diferencias y primer ciclo efectivo. Solo lectura.
+
+    strategy_configs es un historial versionado: los parámetros nunca se
+    sobrescriben; únicamente evolucionan status y effective_from_cycle_id.
+    """
+    total = session.exec(select(func.count()).select_from(StrategyConfig)).one()
+    versions = session.exec(
+        select(StrategyConfig).order_by(StrategyConfig.version.desc())
+        .offset(offset).limit(limit)
+    ).all()
+    previous_versions = [version.version - 1 for version in versions if version.version > 1]
+    predecessors = (session.exec(
+        select(StrategyConfig).where(StrategyConfig.version.in_(previous_versions))
+    ).all() if previous_versions else [])
+    preceding = {config.version: config for config in predecessors}
+    return StrategyAuditOut(
+        total=total, offset=offset, limit=limit,
+        items=[StrategyAuditItemOut(
+            version=current.version,
+            previousVersion=(current.version - 1) if current.version > 1 else None,
+            status=current.status, createdAt=current.created_at,
+            createdBy=current.created_by,
+            effectiveFromCycleId=current.effective_from_cycle_id,
+            changes=_strategy_audit_changes(current, preceding.get(current.version - 1)),
+        ) for current in versions],
+    )
+
+
 @router.post("/strategy", response_model=StrategyOut, status_code=201)
 def update_strategy(
     payload: StrategyUpdateIn,
@@ -180,6 +289,9 @@ def update_strategy(
     claims: dict = Depends(verify_jwt),
 ) -> StrategyOut:
     """Crea una versión pendiente. El ciclo activo mantiene su versión fija."""
+    subject = claims.get("sub") if isinstance(claims, dict) else None
+    if not isinstance(subject, str) or not subject.strip():
+        raise HTTPException(status_code=403, detail="JWT sin identidad auditable")
     try:
         config = create_pending_strategy(
             session,
@@ -188,11 +300,18 @@ def update_strategy(
             bid_acceptance_policy=payload.bidAcceptancePolicy,
             offer_selection_policy=payload.offerSelectionPolicy,
             span_seconds=payload.spanSeconds,
-            created_by=claims.get("sub") if isinstance(claims.get("sub"), str) else None,
+            created_by=subject,
+            expected_version=payload.expectedVersion,
         )
         session.commit()
         session.refresh(config)
         return _strategy(config)
+    except StrategyVersionConflict as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail={
+            "code": "STALE_STRATEGY_VERSION", "expectedVersion": exc.expected,
+            "currentVersion": exc.actual,
+        }) from exc
     except ValueError as exc:
         session.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc

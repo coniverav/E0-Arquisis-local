@@ -101,6 +101,7 @@ RABBITMQ_MARKET_QUEUE
 RABBITMQ_MARKET_EXCHANGE
 CITY_ID
 WALLET_BASE_URL
+WALLET_JWKS_URL
 WALLET_API_KEY
 AUTH_JWKS_URL
 AUTH_AUDIENCE
@@ -126,7 +127,7 @@ NEW_RELIC_INFRA_DISPLAY_NAME
 | Mensajes dirigidos | Exchange `energy.x`, `RABBITMQ_OUTBOUND_EXCHANGE`; routing propio `city.KLD`, routing a central `central` (`RABBITMQ_CENTRAL_ROUTING_KEY`) y a otra ciudad `city.{CODE}`. |
 | Ofertas | Exchange `market`, `RABBITMQ_MARKET_EXCHANGE`; única routing key de publicación permitida `market.offer.KLD`. La implementación futura deberá derivarla de `CITY_ID`; no hay variable adicional en el ejemplo. |
 | Identidad de publicación | La propiedad **AMQP** `user_id` debe ser `city.KLD`, igual al usuario autenticado y coherente con `cityId: "KLD"` del cuerpo. No es nombre de cola ni campo JSON. |
-| Wallet REST | `WALLET_BASE_URL` y `WALLET_API_KEY` son nuevas referencias para URL/API key privadas; la futura integración backend enviará la key como `X-Api-Key`. No deben pasar al frontend ni a variables `VITE_*`. |
+| Wallet REST y JWKS | En AWS, `WALLET_BASE_URL=https://wallet.iic2173.org/v1` apunta a los endpoints REST y `WALLET_JWKS_URL=https://wallet.iic2173.org/.well-known/jwks.json` a las llaves de firma fuera de `/v1`. `.env.example` conserva un host de mock para desarrollo. `WALLET_API_KEY` es privada y solo llega al backend como `X-Api-Key`; nunca al frontend ni a `VITE_*`. |
 
 ## Ejecución local
 

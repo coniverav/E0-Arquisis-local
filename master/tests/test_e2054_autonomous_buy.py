@@ -78,7 +78,7 @@ def _context(session, *, cycle_id, now, candidates):
     return result
 
 
-def test_autonomous_buy_covers_deficit_and_skips_expensive_offers(monkeypatch):
+def test_autonomous_buy_covers_deficit_without_e1_price_cap(monkeypatch):
     now = datetime.now(timezone.utc)
     cycle_id = f"e2054-{uuid4()}"
     with Session(engine) as session:
@@ -87,9 +87,10 @@ def test_autonomous_buy_covers_deficit_and_skips_expensive_offers(monkeypatch):
             cycle_id=cycle_id,
             now=now,
             candidates=[
-                _candidate(cycle_id, "O3", 400, "150", now),
+                # E2-037 entrega las candidatas ya ordenadas por precio efectivo.
                 _candidate(cycle_id, "O1", 300, "50", now),
                 _candidate(cycle_id, "O2", 400, "60", now),
+                _candidate(cycle_id, "O3", 400, "150", now),
             ],
         )
         monkeypatch.setattr(
@@ -109,7 +110,7 @@ def test_autonomous_buy_covers_deficit_and_skips_expensive_offers(monkeypatch):
         assert stats["deficit"] == 500
         assert stats["bids_created"] == 2
         assert stats["quantity_bid"] == 500
-        assert stats["skipped_price"] == 1
+        assert stats["skipped_price"] == 0
 
         bids = session.exec(
             select(MarketBid).where(MarketBid.cycle_id == cycle_id)

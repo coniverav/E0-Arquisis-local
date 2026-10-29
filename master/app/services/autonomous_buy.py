@@ -5,7 +5,7 @@ El déficit se calcula con el status-statement del ciclo
 
 - la estrategia y ventana del ciclo (`get_buy_candidates`);
 - `minBid` y el `remaining` de cada oferta;
-- un máximo de precio efectivo igual a `market.imbalancePrice`;
+- el precio efectivo (oferta + transporte oficial, sin cap de E1);
 - la capacidad de wallet (`CR available + creditLine`);
 - un solo bid activo por oferta/ciclo;
 - un tope de bids por tick.
@@ -29,6 +29,7 @@ from sqlmodel import Session, select
 from app.config import AUTONOMOUS_BUY_INTERVAL_SECONDS
 from app.database import engine
 from app.models import Cycle, MarketBid
+from app.services.budget_carryover import lock_city_ledger  # E2-064
 from app.services.buy_bids import enqueue_buy_bid
 from app.services.offer_selection import get_buy_candidates
 from app.services.wallet_client import WalletClient, WalletError
@@ -36,7 +37,7 @@ from app.services.wallet_client import WalletClient, WalletError
 logger = logging.getLogger(__name__)
 
 ACTIVE_BID_STATUSES = ("PENDING", "ACCEPTED", "RESERVED")
-BUDGET_CONSUMING_STATUSES = ("PENDING",)
+# E2-064: no inferir el precio de bids PENDING desde un feed mutable.
 MAX_BIDS_PER_TICK = 5
 
 _last_tick_at: float | None = None
@@ -73,13 +74,15 @@ def _deficit(cycle: Cycle) -> int:
     ))
 
 
-def _imbalance_price(cycle: Cycle) -> Decimal | None:
-    payload = cycle.status_payload or {}
-    market = payload.get("market") if isinstance(payload, dict) else None
-    if not isinstance(market, dict) or market.get("imbalancePrice") is None:
+def _effective_price(raw: Any) -> Decimal | None:
+    """Precio verificable desde E2-036: nunca inventar CR/kWh faltantes."""
+    if raw is None:
         return None
-    price = _decimal(market.get("imbalancePrice"))
-    return price if price >= 0 else None
+    try:
+        value = Decimal(str(raw))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return value if value.is_finite() and value >= 0 else None
 
 
 async def autonomous_buy_tick(
@@ -108,7 +111,8 @@ async def autonomous_buy_tick(
         "deficit": 0,
         "bids_created": 0,
         "quantity_bid": 0,
-        "skipped_price": 0,
+        "skipped_price": 0,  # compatibilidad: solo precio inválido, NO cap E1
+        "skipped_pending": 0,
         "skipped_capacity": 0,
         "skipped_race": 0,
     }
@@ -126,11 +130,6 @@ async def autonomous_buy_tick(
     if not candidates.canBid or candidates.minBid is None:
         return stats
 
-    price_cap = _imbalance_price(cycle)
-    if price_cap is None:
-        logger.warning("Ciclo %s sin imbalancePrice; no se compra", cycle_id)
-        return stats
-
     client = client or WalletClient()
     try:
         balance = await client.get_balance()
@@ -145,6 +144,9 @@ async def autonomous_buy_tick(
     if capacity < 0:
         capacity = Decimal("0")
 
+    # Serializar decisiones simultáneas de master/master2 después del HTTP.
+    # E2-038 confirma cada bid y toma el mismo lock, sin llamadas HTTP bajo lock.
+    lock_city_ledger(session)
     active_bids = session.exec(
         select(MarketBid).where(
             MarketBid.cycle_id == cycle_id,
@@ -153,24 +155,17 @@ async def autonomous_buy_tick(
         )
     ).all()
 
+    # La cotización efectiva de un bid anterior NO está persistida en MarketBid.
+    # El feed actual puede haber cambiado o desaparecido. Para no subestimar CR,
+    # evitar nuevos bids mientras exista alguno pendiente de respuesta.
+    # Se pueden crear varios bids en ESTE mismo tick, contabilizando sus costos.
+    pending = [bid for bid in active_bids if bid.status == "PENDING"]
+    if pending:
+        stats["skipped_pending"] = len(pending)
+        return stats
+
     remaining_deficit = deficit - sum(bid.quantity for bid in active_bids)
     active_offers = {bid.offer_id for bid in active_bids}
-
-    candidate_by_offer = {
-        item.offerId: item for item in candidates.candidates
-    }
-    for bid in active_bids:
-        if bid.status not in BUDGET_CONSUMING_STATUSES:
-            continue
-        candidate = candidate_by_offer.get(bid.offer_id)
-        price = (
-            _decimal(candidate.effectivePricePerEnergy)
-            if candidate is not None
-            and candidate.effectivePricePerEnergy is not None
-            else price_cap
-        )
-        capacity -= Decimal(bid.quantity) * price
-
     if remaining_deficit <= 0:
         return stats
 
@@ -179,11 +174,11 @@ async def autonomous_buy_tick(
             break
         if candidate.offerId in active_offers:
             continue
-        if candidate.effectivePricePerEnergy is None:
-            continue
-
-        price = _decimal(candidate.effectivePricePerEnergy)
-        if price > price_cap:
+        # E2-036 calcula precio nominal + costo oficial de transporte,
+        # incluyendo penalización de la ruta disabled. No comparar con
+        # imbalancePrice ni con ningún límite E1 inventado.
+        price = _effective_price(candidate.effectivePricePerEnergy)
+        if price is None:
             stats["skipped_price"] += 1
             continue
         if candidate.remaining is None or candidate.remaining < candidates.minBid:

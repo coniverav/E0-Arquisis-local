@@ -280,7 +280,7 @@ def test_seller_cycle_from_status_to_wallet_settlement(clock, connector_module, 
 
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as backend:
-            await broker.deliver_city(status, user_id=None)
+            await broker.deliver_city(status, user_id="central")
             with Session(engine) as session:
                 cycle = session.get(Cycle, cycle_id)
                 assert cycle.status_idpk == status["idpk"]
@@ -355,8 +355,8 @@ def test_seller_cycle_from_status_to_wallet_settlement(clock, connector_module, 
                          "memo": offer_id, "expiresAt": _iso(expires),
                          "token": token},
             }
-            await broker.deliver_city(proposed, user_id=None)
-            await broker.deliver_city(proposed, user_id=None)
+            await broker.deliver_city(proposed, user_id="central")
+            await broker.deliver_city(proposed, user_id="central")
             with Session(engine) as session:
                 accepted = session.exec(select(OutboundMessage).where(
                     OutboundMessage.cycle_id == cycle_id,
@@ -387,8 +387,8 @@ def test_seller_cycle_from_status_to_wallet_settlement(clock, connector_module, 
                 },
             )
             validate("amqp/swap-settled", settled)
-            await broker.deliver_city(settled, user_id=None)
-            await broker.deliver_city(settled, user_id=None)
+            await broker.deliver_city(settled, user_id="central")
+            await broker.deliver_city(settled, user_id="central")
             with Session(engine) as session:
                 assert _one(session, SwapRecord, SwapRecord.idpk == bid["idpk"]).status == "SETTLED"
                 assert _one(session, OfferReservation,

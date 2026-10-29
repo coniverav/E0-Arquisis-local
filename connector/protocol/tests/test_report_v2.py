@@ -16,7 +16,7 @@ def early_error(code=425):
 def test_early_report_error_is_business_error_not_nack(code):
     payload = early_error(code)
     assert validate_payload(payload)[1].valid
-    assert plan_protocol_response(payload, city_id="KLD").action == "ignore"
+    assert plan_protocol_response(payload, city_id="KLD", amqp_user_id="central").action == "ignore"
 
 
 @pytest.mark.parametrize("opens_at", [None, "2026-10-07T10:05:00", "invalid", 123])

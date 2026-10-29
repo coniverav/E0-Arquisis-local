@@ -97,7 +97,8 @@ def test_central_messages_and_responses_keep_directed_exchange():
     nack["payload"].pop("cycleId")
     assert select(nack) == ("energy.x", "city.COR")
     assert routing_key_for_directed_response(amqp_user_id="city.COR", central_routing_key="central") == "city.COR"
-    assert routing_key_for_directed_response(amqp_user_id=None, central_routing_key="central") == "central"
+    assert routing_key_for_directed_response(amqp_user_id="central", central_routing_key="central") == "central"
+    assert routing_key_for_directed_response(amqp_user_id=None, central_routing_key="central") is None
 
 
 def test_invalid_contract_fields_identity_and_outbox_metadata_are_not_published():

@@ -53,6 +53,21 @@ def wallet_payload():
     }
 
 
+def status_payload():
+    payload = bid_payload()
+    payload.pop("cityId")
+    payload.update(
+        type="status-statement",
+        sender="central",
+        data={
+            "energy": {"generationCapacity": 1000, "consumption": 700,
+                       "generationCost": 200},
+            "validUntil": "2026-10-24T12:15:00Z",
+        },
+    )
+    return payload
+
+
 class IdentityPlanningTests(unittest.TestCase):
     def test_matching_city_bid_is_acknowledged(self):
         payload = bid_payload()
@@ -88,13 +103,23 @@ class IdentityPlanningTests(unittest.TestCase):
         self.assertEqual(plan_protocol_response(payload, "KLD", amqp_user_id="city.COR").action,
                          "discard")
 
-    def test_central_and_wallet_event_do_not_require_city_user_id(self):
+    def test_central_and_wallet_event_accept_central_user_id(self):
         central = bid_payload()
         central.update(type="distance-table", sender="central", data={"distances": {}})
         central.pop("cityId")
-        for payload in (central, wallet_payload()):
-            result = plan_protocol_response(payload, "KLD", amqp_user_id=None)
+        for payload in (status_payload(), central, wallet_payload()):
+            result = plan_protocol_response(payload, "KLD", amqp_user_id="central")
             self.assertEqual(result.action, "ack")
+
+    def test_directed_central_message_without_user_id_is_not_authenticated(self):
+        result = plan_protocol_response(status_payload(), "KLD", amqp_user_id=None)
+        self.assertEqual(result.action, "nack")
+        self.assertIsNone(connector.authenticated_inbound_route(None))
+
+    def test_central_user_id_cannot_claim_a_city_identity(self):
+        result = plan_protocol_response(bid_payload(), "KLD", amqp_user_id="central")
+        self.assertEqual(result.action, "nack")
+        self.assertEqual(result.response["reason"], "IDENTITY_MISMATCH")
 
     def test_city_cannot_claim_central_sender(self):
         payload = bid_payload()
@@ -233,10 +258,60 @@ class CityDeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(dispatch.await_args.kwargs["result"].response["type"], "ack")
         delivery.ack.assert_awaited_once()
 
+    async def test_central_status_and_distance_reach_backend_and_ack_central(self):
+        distance = bid_payload()
+        distance.pop("cityId")
+        distance.update(type="distance-table", sender="central", data={"distances": {}})
+        for payload in (status_payload(), distance):
+            with self.subTest(message_type=payload["type"]):
+                delivery, forwarded, pending, dispatch = await self.deliver(
+                    json.dumps(payload).encode(), "central",
+                )
+                self.assertEqual([url for url, _ in forwarded], [connector.MASTER_URL])
+                self.assertEqual(dispatch.await_args.kwargs["routing_key"], "central")
+                self.assertEqual(dispatch.await_args.kwargs["result"].response["data"]["target"],
+                                 payload["msgId"])
+                pending.assert_awaited_once()
+                delivery.ack.assert_awaited_once()
+                delivery.reject.assert_not_awaited()
+
+    async def test_central_without_user_id_is_discarded_without_business_or_reply(self):
+        delivery, forwarded, pending, dispatch = await self.deliver(
+            json.dumps(status_payload()).encode(), None,
+        )
+        self.assertEqual([url for url, _ in forwarded], [connector.MASTER_AUDIT_URL])
+        self.assertEqual(forwarded[0][1]["status"], "DISCARDED")
+        pending.assert_not_awaited()
+        dispatch.assert_not_awaited()
+        delivery.reject.assert_awaited_once_with(requeue=False)
+
+    async def test_city_claiming_central_is_nacked_to_authenticated_city(self):
+        payload = status_payload()
+        delivery, forwarded, pending, dispatch = await self.deliver(
+            json.dumps(payload).encode(), "city.COR",
+        )
+        self.assertEqual([url for url, _ in forwarded], [connector.MASTER_AUDIT_URL])
+        self.assertEqual(forwarded[0][1]["reasonCode"], "MALFORMED_MESSAGE")
+        self.assertEqual(dispatch.await_args.kwargs["routing_key"], "city.COR")
+        self.assertEqual(dispatch.await_args.kwargs["result"].response["type"], "nack")
+        pending.assert_awaited_once()
+        delivery.ack.assert_awaited_once()
+
+    async def test_central_identity_cannot_claim_city_id(self):
+        payload = bid_payload()
+        delivery, forwarded, pending, dispatch = await self.deliver(
+            json.dumps(payload).encode(), "central",
+        )
+        self.assertEqual([url for url, _ in forwarded], [connector.MASTER_AUDIT_URL])
+        self.assertEqual(forwarded[0][1]["reasonCode"], "IDENTITY_MISMATCH")
+        self.assertEqual(dispatch.await_args.kwargs["routing_key"], "central")
+        pending.assert_awaited_once()
+        delivery.ack.assert_awaited_once()
+
     async def test_wallet_event_uses_central_route(self):
         payload = wallet_payload()
         _delivery, forwarded, _pending, dispatch = await self.deliver(
-            json.dumps(payload).encode(), None,
+            json.dumps(payload).encode(), "central",
         )
         self.assertEqual([url for url, _ in forwarded], [connector.MASTER_URL])
         self.assertEqual(dispatch.await_args.kwargs["routing_key"], "central")

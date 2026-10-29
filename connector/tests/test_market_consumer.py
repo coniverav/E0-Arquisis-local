@@ -41,6 +41,8 @@ class MarketValidationTests(unittest.TestCase):
     def test_offer_and_central_close_are_accepted(self):
         validate_market_feed(offer_payload(), amqp_user_id="city.HGW")
         validate_market_feed(market_closed_payload(), amqp_user_id=None)
+        with self.assertRaises(DiscardMessage):
+            validate_market_feed(market_closed_payload(), amqp_user_id="central")
 
     def test_bad_identity_and_non_market_type_are_discarded_without_e1_validation(self):
         with self.assertRaises(DiscardMessage):
@@ -68,6 +70,20 @@ class MarketValidationTests(unittest.TestCase):
 
 
 class MarketDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_market_closed_without_user_id_has_no_protocol_reply(self):
+        message = AsyncMock()
+        message.body = json.dumps(market_closed_payload()).encode()
+        message.user_id = None
+        client = AsyncMock()
+        with patch.object(connector, "forward_to_master", new_callable=AsyncMock) as post, \
+             patch.object(connector, "dispatch_protocol_response", new_callable=AsyncMock) as reply:
+            post.return_value = "ack"
+            await connector.process_market_message(message, client)
+        self.assertEqual(post.await_args.kwargs["url"], connector.MASTER_MARKET_URL)
+        reply.assert_not_awaited()
+        message.ack.assert_awaited_once()
+        message.reject.assert_not_awaited()
+
     async def test_broker_ack_follows_durable_http_receipt_without_protocol_reply(self):
         payload = offer_payload()
         message = AsyncMock()

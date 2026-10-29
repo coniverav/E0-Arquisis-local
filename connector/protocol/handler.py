@@ -60,13 +60,16 @@ def plan_protocol_response(
                 cycle_id=message.cycle_id, timestamp=timestamp,
             ))
 
-    if message.sender == "central" and message.city_id is None and amqp_user_id is not None:
+    # C23: la central publica mensajes dirigidos con user_id="central".
+    # Un sender declarado en JSON no autentica una entrega sin user_id.
+    if (message.idpk != message.msg_id and message.sender == "central"
+            and message.city_id is None and amqp_user_id != "central"):
         if message.type in {"ack", "nack", "error"}:
             return ProtocolHandlingResult(action="discard", message=message,
-                                          discard_reason="Respuesta que declara sender central con AMQP user_id")
+                                          discard_reason="Respuesta que declara sender central sin identidad AMQP central")
         return ProtocolHandlingResult(action="nack", message=message, response=build_nack(
             target_msg_id=str(message.msg_id), reason="MALFORMED_MESSAGE", code=422,
-            message="Un mensaje de ciudad no puede declarar sender central", city_id=city_id,
+            message="sender central requiere AMQP user_id central", city_id=city_id,
             cycle_id=message.cycle_id, timestamp=timestamp,
         ))
 

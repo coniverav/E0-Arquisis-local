@@ -151,7 +151,7 @@ def test_seller_bid_and_wallet_replays_do_not_repeat_economic_effects(
     }
 
     async def scenario():
-        await broker.deliver_city(status, user_id=None)
+        await broker.deliver_city(status, user_id="central")
         assert await enqueue_seller_offer(cycle_id, wallet_client=wallet)
         with Session(engine) as session:
             offer = _one(session, MarketOffer, MarketOffer.offer_id == offer_id)
@@ -215,8 +215,8 @@ def test_seller_bid_and_wallet_replays_do_not_repeat_economic_effects(
                      "memo": offer_id, "expiresAt": _iso(expires),
                      "token": token},
         }
-        await broker.deliver_city(proposed, user_id=None)
-        await broker.deliver_city(_retry(proposed), user_id=None)
+        await broker.deliver_city(proposed, user_id="central")
+        await broker.deliver_city(_retry(proposed), user_id="central")
         with Session(engine) as session:
             assert _one(session, SwapRecord, SwapRecord.idpk == bid["idpk"]).status == "PROPOSED"
             assert len(_rows(session, OutboundMessage,
@@ -240,7 +240,7 @@ def test_seller_bid_and_wallet_replays_do_not_repeat_economic_effects(
             },
         )
         validate("amqp/swap-settled", settled)
-        await broker.deliver_city(settled, user_id=None)
+        await broker.deliver_city(settled, user_id="central")
         with Session(engine) as session:
             committed = _one(session, MarketOffer, MarketOffer.offer_id == offer_id)
             assert committed.remaining_quantity == initial_remaining - market["minBid"]
@@ -255,8 +255,8 @@ def test_seller_bid_and_wallet_replays_do_not_repeat_economic_effects(
 
         # Replay después del commit: mismo idpk con otro msgId y luego envelope
         # completamente nuevo para el mismo swapId (clave de negocio).
-        await broker.deliver_city(_retry(settled), user_id=None)
-        await broker.deliver_city(_retry(settled, change_idpk=True), user_id=None)
+        await broker.deliver_city(_retry(settled), user_id="central")
+        await broker.deliver_city(_retry(settled, change_idpk=True), user_id="central")
         await broker.deliver_city(_retry(bid), user_id=f"city.{buyer}")
         with Session(engine) as session:
             offer = _one(session, MarketOffer, MarketOffer.offer_id == offer_id)

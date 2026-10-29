@@ -27,6 +27,7 @@ def test_valid_message_plans_ack():
         payload,
         city_id="COR",
         timestamp=TEST_TIME,
+        amqp_user_id="central",
     )
 
     assert result.action == "ack"
@@ -49,6 +50,7 @@ def test_unknown_type_plans_nack():
         payload,
         city_id="COR",
         timestamp=TEST_TIME,
+        amqp_user_id="central",
     )
 
     assert result.action == "nack"
@@ -70,6 +72,7 @@ def test_missing_required_field_plans_malformed_nack():
         payload,
         city_id="COR",
         timestamp=TEST_TIME,
+        amqp_user_id="central",
     )
 
     assert result.action == "nack"
@@ -96,6 +99,7 @@ def test_same_idpk_and_msgid_plans_nack():
         payload,
         city_id="COR",
         timestamp=TEST_TIME,
+        amqp_user_id="city.COR",
     )
 
     assert result.action == "nack"
@@ -118,6 +122,7 @@ def test_nack_keeps_cycle_id():
         payload,
         city_id="COR",
         timestamp=TEST_TIME,
+        amqp_user_id="central",
     )
 
     assert result.action == "nack"
@@ -136,7 +141,7 @@ def test_ack_message_is_ignored():
         },
     }
 
-    result = plan_protocol_response(payload, city_id="COR")
+    result = plan_protocol_response(payload, city_id="COR", amqp_user_id="central")
 
     assert result.action == "ignore"
     assert result.response is None

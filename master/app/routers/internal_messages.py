@@ -42,6 +42,7 @@ from ..services.strategy_config import bind_strategy_to_cycle
 from ..services.bid_responses import process_bid_reply
 from ..services.incoming_bids import process_incoming_bid
 from ..services.seller_bid_acceptance import reserve_incoming_bid
+from ..services.seller_bid_policy import should_reserve_on_ingress  # E2-063
 from ..services.information_requests import (
     enqueue_information_request,
     resolve_information_request,
@@ -549,11 +550,14 @@ def ingest_protocol_message(
             # E2-031 / AD4: reserva HOLD y SwapRecord atómicos bajo el
             # bloqueo de la oferta. No llamar HTTP Wallet en esta transacción.
             if audit_status == INBOUND_PROCESSED and audit_reason is None:
-                result = reserve_incoming_bid(
-                    session, bid_idpk=str(payload.idpk), now=now,
-                )
-                if result["status"] == "REJECTED":
-                    audit_reason = result.get("reason")
+                # E2-063: AD6 fija la política al abrir el ciclo. FIFO toma
+                # HOLD inmediatamente; BATCH/MAX_REMAINING esperan al worker.
+                if should_reserve_on_ingress(session, payload.cycleId):
+                    result = reserve_incoming_bid(
+                        session, bid_idpk=str(payload.idpk), now=now,
+                    )
+                    if result["status"] == "REJECTED":
+                        audit_reason = result.get("reason")
             if audit_status == INBOUND_NOT_PROCESSED:
                 # Un evento malformado no puede bloquear su idpk para siempre.
                 session.exec(delete(ProcessedIdpk).where(

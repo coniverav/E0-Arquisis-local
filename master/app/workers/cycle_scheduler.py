@@ -16,6 +16,7 @@ from ..models import Cycle
 from ..services.seller_offer import enqueue_seller_offer
 from ..services.seller_offer_events import close_expired_local_offers
 from ..services.seller_swap_dispatch import dispatch_swap_proposals
+from ..services.seller_bid_policy import process_due_seller_bids  # E2-063
 
 from ..services.cycle_scheduler import (
     process_cycle_windows,
@@ -145,6 +146,17 @@ def run() -> None:
                         negotiation_retries,
                     )
 
+
+            # E2-063: cerrar lotes pendientes en una transacción corta.
+            # El servicio reusa reserve_incoming_bid / SELECT FOR UPDATE (AD4).
+            try:
+                with Session(engine) as policy_session:
+                    policy_stats = process_due_seller_bids(policy_session)
+                    policy_session.commit()
+                if policy_stats["offers_processed"]:
+                    logger.info("Política seller aplicada: %s", policy_stats)
+            except Exception:
+                logger.exception("Error procesando políticas de bids seller")
 
             # E2-032: despachar intenciones SUBMITTED sin bloquear las ofertas
             # durante el HTTP. HTTP 202 no publica bid-accepted (E2-033).

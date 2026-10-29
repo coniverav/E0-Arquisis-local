@@ -120,8 +120,8 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
 
     async def scenario():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as backend:
-            await broker.deliver_city(status, user_id=None)
-            await broker.deliver_city(distance, user_id=None)
+            await broker.deliver_city(status, user_id="central")
+            await broker.deliver_city(distance, user_id="central")
             await broker.deliver_market(offer, user_id="city.MET")
             with Session(engine) as session:
                 cycle = session.get(Cycle, cycle_id)
@@ -245,14 +245,14 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                 },
             )
             validate("amqp/swap-settled", settled)
-            await broker.deliver_city(settled, user_id=None)
+            await broker.deliver_city(settled, user_id="central")
             settled_retry = deepcopy(settled)
             settled_retry["msgId"] = str(uuid4())
-            await broker.deliver_city(settled_retry, user_id=None)
+            await broker.deliver_city(settled_retry, user_id="central")
             new_envelope = deepcopy(settled)
             new_envelope["idpk"] = str(uuid4())
             new_envelope["msgId"] = str(uuid4())
-            await broker.deliver_city(new_envelope, user_id=None)
+            await broker.deliver_city(new_envelope, user_id="central")
             with Session(engine) as session:
                 record = _one(session, SwapRecord,
                               SwapRecord.source_bid_idpk == bid_idpk)
@@ -285,13 +285,13 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                 routeEnabled=True,
             )
             validate("amqp/trade-recorded", trade)
-            await broker.deliver_city(trade, user_id=None)
+            await broker.deliver_city(trade, user_id="central")
             trade_retry = deepcopy(trade)
             trade_retry["msgId"] = str(uuid4())
-            await broker.deliver_city(trade_retry, user_id=None)
+            await broker.deliver_city(trade_retry, user_id="central")
             trade_new_envelope = deepcopy(trade)
             trade_new_envelope.update(idpk=str(uuid4()), msgId=str(uuid4()))
-            await broker.deliver_city(trade_new_envelope, user_id=None)
+            await broker.deliver_city(trade_new_envelope, user_id="central")
             with Session(engine) as session:
                 recorded = _one(session, TradeRecord, TradeRecord.swap_id == swap_id)
                 assert recorded.role == "BUYER"
@@ -317,13 +317,13 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                 balanceAfter=float(after_transport_cr), settlementId=str(uuid4()),
             )
             validate("amqp/imbalance-settlement", imbalance)
-            await broker.deliver_city(imbalance, user_id=None)
+            await broker.deliver_city(imbalance, user_id="central")
             imbalance_retry = deepcopy(imbalance)
             imbalance_retry["msgId"] = str(uuid4())
-            await broker.deliver_city(imbalance_retry, user_id=None)
+            await broker.deliver_city(imbalance_retry, user_id="central")
             imbalance_new_envelope = deepcopy(imbalance)
             imbalance_new_envelope.update(idpk=str(uuid4()), msgId=str(uuid4()))
-            await broker.deliver_city(imbalance_new_envelope, user_id=None)
+            await broker.deliver_city(imbalance_new_envelope, user_id="central")
             with Session(engine) as session:
                 closed = _one(session, ImbalanceSettlement,
                               ImbalanceSettlement.cycle_id == cycle_id)

@@ -132,12 +132,28 @@ class DirectedDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_central_message_ack_is_correlated_and_routed_to_central(self):
         original = central_distance_table()
         delivery, exchange, _, events = await self.deliver(
-            json.dumps(original).encode(), None,
+            json.dumps(original).encode(), "central",
         )
         response = json.loads(exchange.publish.await_args.args[0].body)
         self.assertEqual(exchange.publish.await_args.kwargs["routing_key"], "central")
         self.assertEqual(response["data"]["target"], original["msgId"])
         self.assertEqual(events[-1], "broker_ack")
+        delivery.ack.assert_awaited_once()
+
+    async def test_malformed_central_message_nack_is_routed_to_central(self):
+        original = central_distance_table()
+        original["data"] = {}
+        delivery, exchange, forwarded, events = await self.deliver(
+            json.dumps(original).encode(), "central",
+        )
+        response = json.loads(exchange.publish.await_args.args[0].body)
+        self.assertEqual(exchange.publish.await_args.kwargs["routing_key"], "central")
+        self.assertEqual((response["type"], response["reason"], response["code"]),
+                         ("nack", "MALFORMED_MESSAGE", 422))
+        self.assertEqual(response["data"]["target"], original["msgId"])
+        self.assertEqual([url for url, _ in forwarded if url == connector.MASTER_URL], [])
+        self.assertEqual(forwarded[0][1]["status"], "NACKED")
+        self.assertLess(events.index("protocol_publish"), events.index("broker_ack"))
         delivery.ack.assert_awaited_once()
 
     async def test_invalid_city_message_nack_uses_official_reason_without_business(self):
@@ -176,10 +192,15 @@ class DirectedDeliveryTests(unittest.IsolatedAsyncioTestCase):
             (message("nack", cityId="COR", reason="MALFORMED_MESSAGE", code=422,
                      data={"target": target, "message": "invalid"}),
              "city.COR", connector.MASTER_URL),
+            (message("ack", sender="central", data={"target": target}),
+             "central", connector.MASTER_URL),
+            (message("nack", sender="central", reason="MALFORMED_MESSAGE", code=422,
+                     data={"target": target, "message": "invalid"}),
+             "central", connector.MASTER_URL),
             (message("error", sender="central", cycleId="cycle-1",
                      reason="CYCLE_UNKNOWN", code=404,
                      data={"target": target, "message": "unknown"}),
-             None, connector.MASTER_ERROR_URL),
+             "central", connector.MASTER_ERROR_URL),
         )
         for original, user_id, expected_url in cases:
             with self.subTest(message_type=original["type"]):

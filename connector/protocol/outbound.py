@@ -183,8 +183,10 @@ def select_outbound_destination(
 
 def routing_key_for_directed_response(
     *, amqp_user_id: str | None, central_routing_key: str
-) -> str:
+) -> str | None:
     """Responde a la ciudad autenticada por AMQP, o a la central."""
     if isinstance(amqp_user_id, str) and CITY_ROUTING_KEY.fullmatch(amqp_user_id):
         return amqp_user_id
-    return central_routing_key
+    if amqp_user_id == "central":
+        return central_routing_key
+    return None

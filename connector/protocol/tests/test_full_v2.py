@@ -94,7 +94,7 @@ def test_distance_table_observed_central_envelope(include_city, include_cycle):
     if include_cycle:
         raw['cycleId'] = 'cycle-248784'
     decoded = decode_incoming_payload(json.dumps(raw).encode())
-    result = plan_protocol_response(decoded, 'KLD')
+    result = plan_protocol_response(decoded, 'KLD', amqp_user_id='central')
     assert result.action == 'ack'
     assert result.message.sender == 'central'
     assert result.message.city_id is None

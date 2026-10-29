@@ -108,15 +108,15 @@ def audit_text(payload: dict | None, key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def authenticated_inbound_route(payload: dict, amqp_user_id: str | None) -> str | None:
-    """Obtiene el destino de respuesta del transporte, nunca del cityId declarado."""
-    if isinstance(amqp_user_id, str) and CITY_ROUTING_KEY.fullmatch(amqp_user_id):
+def authenticated_inbound_route(amqp_user_id: str | None) -> str | None:
+    """Obtiene el destino de respuesta del user_id validado por el broker."""
+    if amqp_user_id == "central" or (
+        isinstance(amqp_user_id, str) and CITY_ROUTING_KEY.fullmatch(amqp_user_id)
+    ):
         return routing_key_for_directed_response(
             amqp_user_id=amqp_user_id,
             central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
         )
-    if amqp_user_id is None and payload.get("sender") == "central" and payload.get("cityId") is None:
-        return RABBITMQ_CENTRAL_ROUTING_KEY
     return None
 
 
@@ -532,9 +532,7 @@ async def consume_forever() -> None:
                                 amqp_user_id=message.user_id,
                             )
 
-                            response_routing_key = authenticated_inbound_route(
-                                payload, message.user_id,
-                            )
+                            response_routing_key = authenticated_inbound_route(message.user_id)
 
                             if handling.action in {"ack", "nack"} and response_routing_key is None:
                                 audit = build_discard_audit_payload(message.body, DiscardMessage(

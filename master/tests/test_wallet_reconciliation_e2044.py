@@ -26,9 +26,12 @@ from app.models import (
 from app.services.wallet_client import (
     WalletBalanceResponse,
     WalletClient,
+    WalletError,
+    WalletRateLimitError,
     WalletStatementPage,
 )
 from app.services.wallet_reconciliation import (
+    fetch_statement_entries,
     reconcile_wallet,
     reconcile_wallet_tick,
 )
@@ -248,7 +251,8 @@ def test_reconcile_explanation_counts_local_wallet_facts():
 def test_reconcile_tick_throttles_between_runs(monkeypatch):
     _seed_baseline()
     monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", None)
-    monkeypatch.setattr(wallet_reconciliation, "time", SimpleNamespace(monotonic=lambda: 100.0))
+    clock = [100.0]
+    monkeypatch.setattr(wallet_reconciliation, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     client = FakeWallet(
         _balance(),
         [
@@ -267,3 +271,89 @@ def test_reconcile_tick_throttles_between_runs(monkeypatch):
     assert first is not None
     assert second is None
     assert len(client.calls) == 1
+
+    clock[0] = 3701.0
+    third = asyncio.run(
+        reconcile_wallet_tick(interval_seconds=3600, client=client, now=NOW)
+    )
+    assert third is not None
+    assert len(client.calls) == 2
+
+
+def test_statement_is_fetched_from_first_page_again_on_every_reconciliation():
+    _seed_baseline(cr="500", kwh="50")
+    entry = _entry("CR", "funding", 0)
+    first_page = WalletStatementPage(entries=[entry], next_cursor="older")
+    last_page = WalletStatementPage(entries=[], next_cursor=None)
+    client = FakeWallet(_balance(), [first_page, last_page, first_page, last_page])
+
+    first = _run_reconcile(client)
+    second = _run_reconcile(client)
+
+    assert client.calls == [None, "older", None, "older"]
+    assert first.explanation["statement_entries_new"] == 1
+    assert second.explanation["statement_entries_new"] == 0
+
+
+def test_statement_page_limit_and_repeated_cursor_are_reported():
+    client = FakeWallet(_balance(), [
+        WalletStatementPage(entries=[], next_cursor="page-2"),
+        WalletStatementPage(entries=[], next_cursor="page-3"),
+    ])
+    with pytest.raises(WalletError, match="máximo de páginas"):
+        asyncio.run(fetch_statement_entries(client, max_pages=2))
+    assert client.calls == [None, "page-2"]
+
+    repeated = FakeWallet(_balance(), [
+        WalletStatementPage(entries=[], next_cursor="same"),
+        WalletStatementPage(entries=[], next_cursor="same"),
+    ])
+    with pytest.raises(WalletError, match="repitió el mismo nextCursor"):
+        asyncio.run(fetch_statement_entries(repeated))
+
+
+def test_page_limit_does_not_persist_partial_reconciliation(monkeypatch):
+    monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", None)
+
+    class EndlessWallet:
+        def __init__(self):
+            self.pages = 0
+            self.balances = 0
+
+        async def get_balance(self):
+            self.balances += 1
+            return _balance()
+
+        async def get_statement(self, cycle_id=None, cursor=None):
+            self.pages += 1
+            return WalletStatementPage(entries=[], next_cursor=f"page-{self.pages}")
+
+    client = EndlessWallet()
+    result = asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW))
+
+    assert result is None
+    assert client.balances == 1
+    assert client.pages == 100
+    with Session(engine) as session:
+        assert session.exec(select(WalletReconciliation)).all() == []
+        assert session.exec(select(WalletBalanceSnapshot)).all() == []
+
+
+def test_reconcile_tick_currently_retries_before_wallet_retry_after(monkeypatch):
+    """Documenta el riesgo de 429; no cambia la política en una tarjeta de QA."""
+    clock = [100.0]
+    monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", None)
+    monkeypatch.setattr(wallet_reconciliation, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    class LimitedWallet:
+        calls = 0
+
+        async def get_balance(self):
+            self.calls += 1
+            raise WalletRateLimitError("rate limited", status_code=429, retry_after=120)
+
+    client = LimitedWallet()
+    assert asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW)) is None
+    clock[0] = 161.0
+    assert asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW)) is None
+    assert client.calls == 2  # El Retry-After de 120 s no se aplicó.

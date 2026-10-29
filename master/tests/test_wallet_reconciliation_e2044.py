@@ -7,6 +7,7 @@ No se declara al snapshot local como autoridad: el reporte siempre queda con
 import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -246,7 +247,8 @@ def test_reconcile_explanation_counts_local_wallet_facts():
 
 def test_reconcile_tick_throttles_between_runs(monkeypatch):
     _seed_baseline()
-    monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", 0.0)
+    monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", None)
+    monkeypatch.setattr(wallet_reconciliation, "time", SimpleNamespace(monotonic=lambda: 100.0))
     client = FakeWallet(
         _balance(),
         [

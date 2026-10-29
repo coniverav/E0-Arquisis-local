@@ -36,7 +36,7 @@ from app.services.wallet_client import WalletClient, WalletError, WalletStatemen
 
 logger = logging.getLogger(__name__)
 
-_last_tick_monotonic: float = 0.0
+_last_tick_monotonic: float | None = None
 
 
 def _parse_instant(value: Any) -> Optional[datetime]:
@@ -336,10 +336,12 @@ async def reconcile_wallet_tick(
         if interval_seconds is None
         else interval_seconds
     )
-    if interval > 0 and time.monotonic() - _last_tick_monotonic < interval:
+    current_tick = time.monotonic()
+    if (_last_tick_monotonic is not None and interval > 0
+            and current_tick - _last_tick_monotonic < interval):
         return None
 
-    _last_tick_monotonic = time.monotonic()
+    _last_tick_monotonic = current_tick
     try:
         with Session(engine) as session:
             return await reconcile_wallet(session, client=client, now=now)

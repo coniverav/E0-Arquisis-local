@@ -359,3 +359,37 @@ Se reutilizó el arnés seller/buyer de E2-045 y se creó `master/tests/test_e20
 En los escenarios probados permanecieron un solo snapshot y claim del feed, una reserva y un swap seller, una aceptación buyer y un registro por hecho de transporte o liquidación de cierre. El replay se conservó en la auditoría de recepciones sin repetir el efecto; el contenido conflictivo no sobrescribió el snapshot. Un HTTP `202` tampoco se interpretó como settlement. La prueba verifica ausencia de duplicación sobre los efectos **actualmente implementados**; no acredita que el ledger E1 incorpore correctamente los importes Wallet.
 
 `docs/documentacion/E2-046-evidencia-deduplicacion-local.md` registra las corridas finales: `2 passed` para los casos nuevos, `4 passed` junto a los ensayos E2-045 y `110 passed, 1 warning` en regresiones relacionadas. No se cambió lógica de negocio. Quedaron fuera la concurrencia de varias réplicas, fallas durante el commit y la interacción con broker o Wallet reales. La generación automática del bid buyer y la consistencia Wallet–ledger–reporte siguieron como asuntos separados.
+
+---
+
+# E2-048 - Release estable en producción
+
+## 1. Identidad AMQP de la Central
+
+### Prompt relevante
+
+> "El equipo docente confirmó que el contrato oficial fue actualizado a v3.0.2 [...] Los mensajes enviados por la Central a `city.{CODE}`, incluidos los eventos Wallet, llegan con AMQP `user_id=\"central\"."
+
+### Resumen de la respuesta y utilidad
+
+El diagnóstico del descarte observado en EC2 condujo a la corrección `3dddfbe`, integrada en `develop` mediante la PR #73. En `connector/connector.py`, `authenticated_inbound_route()` obtiene el destino de respuesta del `user_id` AMQP; en `connector/protocol/handler.py` se admite la identidad `central` para mensajes dirigidos de la Central, y en `connector/protocol/outbound.py` se evita usar `central` como destino por defecto cuando no existe identidad autenticada. Se mantuvo la comprobación de identidad de las ciudades y el rechazo de `cityId` incompatible. Los mensajes dirigidos que declaran `sender="central"` sin `user_id` quedan descartados o reciben NACK según la ruta disponible.
+
+Las pruebas añadidas o ajustadas cubren `status-statement`, `distance-table`, eventos Wallet, ACK/NACK hacia `central`, mensajes falsificados y respuestas que no deben generar otra respuesta. `market-closed` conserva `user_id=None` en el consumidor de mercado y no genera ACK/NACK de protocolo. También se adaptaron los fixtures integrados seller, buyer y replay al transporte v3.0.2. La evidencia proviene de pruebas locales con mocks; el resultado en EC2 después del merge no queda acreditado por estas pruebas.
+
+---
+
+## 2. Primer tick de conciliación Wallet
+
+### Prompt relevante
+
+> "El test que falló, cual fue? como se podría arreglar?"
+
+> "Hagamos eso, creemos una rama nueva con este fix mínimo, hagamos el comit cuando funcione [...] y abramos la PR."
+
+> "Duda, pero tocamos una funcionalidad. Entonces no sería razonable probar toda la suite de tests?"
+
+### Resumen de la respuesta y utilidad
+
+El test `test_reconcile_tick_throttles_between_runs` expuso que `_last_tick_monotonic=0.0` confundía «aún no ejecutado» con un instante real: si el reloj monotónico del host estaba bajo el intervalo configurado, se omitía la primera conciliación. El commit `0ad4b6c`, en la PR #74, cambió ese estado inicial a `None` en `master/app/services/wallet_reconciliation.py`. El intervalo limita los ticks posteriores, mientras que el primero se ejecuta. El test fija un reloj monotónico bajo para reproducir esa condición. No se modificó el cálculo de saldos, la aplicación de eventos ni el reporte.
+
+Tras advertir que se había cambiado comportamiento funcional, se ejecutaron las suites completas: Master, `423 passed, 3 subtests passed`, con PostgreSQL temporal aislado; Connector, `150 passed, 12 subtests passed`. Master emitió una advertencia de deprecación de Starlette/AnyIO, sin fallos. Se actualizó la descripción de la PR con esos resultados y se retiró el contenedor temporal. Al redactar esta entrada, `develop` contiene la corrección de identidad AMQP, pero aún no incluye el commit del primer tick. La validación en producción de la conciliación y del release E2-048 sigue pendiente.

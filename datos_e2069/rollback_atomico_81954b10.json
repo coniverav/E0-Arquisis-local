@@ -1,0 +1,15 @@
+{
+  "mode": "SIMULACION_LOCAL_SIN_CENTRAL",
+  "result": "PASS",
+  "case": "rollback_atomico",
+  "cycleId": "e2069-384e1595-b22b-4e22-8e68-6e7bae6ce3e0",
+  "offerId": "KLD-e2069-384e1595-b22b-4e22-8e68-6e7bae6ce3e0",
+  "capacity": 100,
+  "remaining": 100,
+  "total_holds": 0,
+  "reserved_bids": 0,
+  "rejected_bids": 0,
+  "available_rejections": [],
+  "attempts": [],
+  "details": {}
+}

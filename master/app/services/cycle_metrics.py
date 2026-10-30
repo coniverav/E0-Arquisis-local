@@ -8,7 +8,7 @@ No hace commit; la transacción pertenece al llamador.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP
 
 from sqlmodel import Session, select
 
@@ -33,7 +33,7 @@ def _utc(value: datetime) -> datetime:
 
 def _baseline_rate(cycle: Cycle, settlements: list[ImbalanceSettlement]) -> tuple[Decimal | None, str | None]:
     """Prioriza la tarifa de liquidación recibida; si falta, estima desde status."""
-    if settlements:
+    if settlements and Decimal(cycle.consumption or 0) > Decimal(cycle.generation_capacity or 0):
         return Decimal(settlements[-1].price_per_energy), "SETTLEMENT"
     market = (cycle.status_payload or {}).get("market")
     raw = market.get("imbalancePrice") if isinstance(market, dict) else None
@@ -46,6 +46,25 @@ def _baseline_rate(cycle: Cycle, settlements: list[ImbalanceSettlement]) -> tupl
     if not rate.is_finite() or rate < 0:
         return None, None
     return rate, "STATUS_ESTIMATE"
+
+
+def _sellable_and_buyback(cycle: Cycle) -> tuple[int, Decimal | None]:
+    """Usa los kWh acreditados y la tarifa oficial del status, sin inferirlos del feed."""
+    status = cycle.status_payload or {}
+    energy = status.get("energy") if isinstance(status, dict) else None
+    market = status.get("market") if isinstance(status, dict) else None
+    raw_sellable = energy.get("sellable") if isinstance(energy, dict) else None
+    fallback = max(ZERO, Decimal(cycle.generation_capacity or 0) - Decimal(cycle.consumption or 0))
+    sellable = (raw_sellable if type(raw_sellable) is int and raw_sellable >= 0
+                else int(fallback.to_integral_value(rounding=ROUND_FLOOR)))
+    raw_buyback = market.get("buybackPrice") if isinstance(market, dict) else None
+    try:
+        buyback = Decimal(str(raw_buyback)) if raw_buyback is not None and not isinstance(raw_buyback, bool) else None
+    except (InvalidOperation, TypeError, ValueError):
+        buyback = None
+    if buyback is not None and (not buyback.is_finite() or buyback < 0):
+        buyback = None
+    return sellable, buyback
 
 
 def _buyer_swap(entry: LedgerEntry) -> bool:
@@ -62,6 +81,17 @@ def _buyer_swap(entry: LedgerEntry) -> bool:
         and Decimal(entry.energy_delta) > 0
         and Decimal(entry.budget_delta) <= 0
     )
+
+
+def _seller_swap(entry: LedgerEntry) -> bool:
+    details = entry.details or {}
+    if not isinstance(details, dict):
+        return False
+    give, take = details.get("give"), details.get("take")
+    return (entry.operation_type == "SWAP_SETTLED"
+            and isinstance(give, dict) and give.get("asset") == "KWH"
+            and isinstance(take, dict) and take.get("asset") == "CR"
+            and Decimal(entry.budget_delta) >= 0)
 
 
 def refresh_cycle_metrics(
@@ -94,6 +124,7 @@ def refresh_cycle_metrics(
 
     ledger = session.exec(select(LedgerEntry).where(LedgerEntry.cycle_id == cycle_id)).all()
     purchases = [entry for entry in ledger if _buyer_swap(entry)]
+    sales = [entry for entry in ledger if _seller_swap(entry)]
     bought = sum((Decimal(e.energy_delta) for e in purchases), ZERO)
     if bought != bought.to_integral_value():
         raise ValueError("SWAP_SETTLED buyer energyDelta debe ser KWH entero")
@@ -103,6 +134,7 @@ def refresh_cycle_metrics(
     # Costos desde el ledger confirmado: no asumir que una propuesta HTTP 202
     # equivale a swap-settled, ni usar el precio de un feed mutable.
     buy_cost = _money(-sum((Decimal(e.budget_delta) for e in purchases), ZERO))
+    sale_revenue = _money(sum((Decimal(e.budget_delta) for e in sales), ZERO))
     transport_entries = [e for e in ledger if e.operation_type == "SWAP_TRANSPORT"
                          and (e.details or {}).get("role") == "BUYER"]
     transport_cost = _money(-sum((Decimal(e.budget_delta) for e in transport_entries), ZERO))
@@ -123,7 +155,9 @@ def refresh_cycle_metrics(
         ImbalanceSettlement.cycle_id == cycle_id,
     ).order_by(ImbalanceSettlement.recorded_at, ImbalanceSettlement.id)).all()
     rate, baseline_source = _baseline_rate(cycle, settlements)
-    baseline = _money(Decimal(deficit) * rate) if rate is not None else None
+    sellable, buyback = _sellable_and_buyback(cycle)
+    baseline = (_money(Decimal(deficit) * rate - Decimal(sellable) * (buyback or ZERO))
+                if rate is not None and (sellable == 0 or buyback is not None) else None)
 
     closed = cycle.market_closes_at is not None and now >= _utc(cycle.market_closes_at)
     if not closed:
@@ -135,7 +169,7 @@ def refresh_cycle_metrics(
     else:
         state = "FINAL"
 
-    real_cost = _money(buy_cost + transport_cost + settlement_cost) if state == "FINAL" else None
+    real_cost = _money(buy_cost + transport_cost + settlement_cost - sale_revenue) if state == "FINAL" else None
     savings = _money(baseline - real_cost) if real_cost is not None and baseline is not None else None
     coverage_rate = (Decimal(covered) / Decimal(deficit)).quantize(
         Decimal("0.0001"), rounding=ROUND_HALF_UP,

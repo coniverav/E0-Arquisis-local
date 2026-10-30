@@ -203,8 +203,12 @@ class MarketLifecycleTests(unittest.IsolatedAsyncioTestCase):
         connection = AsyncMock()
         connection.__aenter__.return_value = connection
         connection.channel.return_value = channel
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.post.return_value = SimpleNamespace(raise_for_status=lambda: None)
 
-        with patch.object(connector.aio_pika, "connect", new_callable=AsyncMock) as connect:
+        with (patch.object(connector.aio_pika, "connect", new_callable=AsyncMock) as connect,
+              patch.object(connector.httpx, "AsyncClient", return_value=client)):
             connect.side_effect = [OSError("disconnect"), connection]
             with patch.object(connector, "CONNECTOR_RETRY_SECONDS", 0):
                 task = asyncio.create_task(connector.consume_market_forever())
@@ -221,6 +225,9 @@ class MarketLifecycleTests(unittest.IsolatedAsyncioTestCase):
             ensure=False,
         )
         channel.set_qos.assert_awaited_once_with(prefetch_count=20)
+        client.post.assert_awaited_once_with(
+            connector.MASTER_MARKET_GAP_URL, json={"reason": "RECONNECTED"},
+        )
         self.assertTrue(iterator.closed)
         connection.__aexit__.assert_awaited_once()
         channel.declare_queue.assert_not_awaited()

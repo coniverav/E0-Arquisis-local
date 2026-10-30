@@ -543,6 +543,11 @@ class MarketCycle(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     closed_msg_id: Optional[str] = Field(default=None)
+    # Una reconexión puede haber perdido mensajes por TTL/capacidad del broker.
+    # Es una señal de riesgo, no una prueba de que faltó una oferta específica.
+    feed_gap_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
 
 class MarketFeedOffer(SQLModel, table=True):

@@ -6,6 +6,7 @@ from sqlalchemy.orm import aliased
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -51,7 +52,7 @@ from ..services.message_audit import (
     record_inbound_message,
     record_outbound_message,
 )
-from ..services.market_feed import persist_market_feed
+from ..services.market_feed import persist_market_feed, record_market_feed_gap
 from ..services.operational_rate_limits import reserve as reserve_rate_limit
 from ..services.buy_bids import renew_failed_bid_dispatches
 
@@ -451,6 +452,20 @@ def receive_market_feed(
     """Confirma la recepción solo después de persistir inbox, claim y snapshot."""
     message = persist_market_feed(session, payload)
     return _inbound_message_to_out(session, message)
+
+
+class MarketFeedGapIn(BaseModel):
+    reason: Literal["RECONNECTED"]
+
+
+@router.post("/inbound/market-gap")
+def note_market_feed_gap(
+    payload: MarketFeedGapIn,
+    session: Session = Depends(get_session),
+):
+    """Connector registra posible pérdida antes de reanudar la cola market."""
+    affected = record_market_feed_gap(session)
+    return {"reason": payload.reason, "affectedCycleIds": affected}
 
 
 #Persiste mensajes descartados o NACKeados por el connector antes de que lleguen al procesamiento normal del master.

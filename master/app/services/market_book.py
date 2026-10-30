@@ -47,9 +47,24 @@ def get_market_book(
     snapshots = session.exec(
         select(MarketFeedOffer).where(MarketFeedOffer.cycle_id == cycle_id)
     ).all()
+    gap_at = market.feed_gap_at if market else None
+    latest_event = max((snapshot.last_event_at for snapshot in snapshots), default=None)
+    if market_closed_at is not None:
+        freshness = "CLOSED_CONFIRMED"
+    elif closed:
+        freshness = "CLOSED_BY_DEADLINE"
+    elif gap_at is not None:
+        freshness = "GAP_OBSERVED"
+    elif cycle is None:
+        freshness = "NO_STATUS"
+    elif not snapshots:
+        freshness = "NO_FEED"
+    else:
+        freshness = "OBSERVED"
 
     items: list[MarketBookOfferOut] = []
     for snapshot in snapshots:
+        gap_risk = gap_at is not None and snapshot.last_event_at <= gap_at
         if not include_inactive:
             if (closed or snapshot.state != "ACTIVE"
                     or snapshot.remaining is None or snapshot.remaining <= 0
@@ -72,7 +87,7 @@ def get_market_book(
             lastEventMsgId=snapshot.last_event_msg_id,
             state=snapshot.state,
             uncertain=snapshot.uncertain,
-            stale=(snapshot.uncertain or snapshot.state == "UNRESOLVED" or closed),
+            stale=(snapshot.uncertain or snapshot.state == "UNRESOLVED" or closed or gap_risk),
         ))
 
     # Orden estable: menor precio nominal, ciudad, offerId.
@@ -86,6 +101,7 @@ def get_market_book(
     return MarketBookOut(
         cycleId=cycle_id, asOf=now, marketClosed=closed,
         marketClosedAt=market_closed_at, closesAt=closes_at,
+        feedGapAt=gap_at, lastFeedEventAt=latest_event, freshness=freshness,
         distanceTableTimestamp=(distance_table.source_timestamp if distance_table else None),
         disabledRouteTransportCost=(
             distance_table.disabled_route_transport_cost if distance_table else None

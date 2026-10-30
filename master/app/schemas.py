@@ -606,6 +606,9 @@ class MarketBookOut(BaseModel):
     asOf: datetime
     marketClosed: bool
     marketClosedAt: datetime | None = None
+    feedGapAt: datetime | None = None
+    lastFeedEventAt: datetime | None = None
+    freshness: str = "NO_FEED"
     closesAt: datetime | None = None
     distanceTableTimestamp: datetime | None = None
     disabledRouteTransportCost: Decimal | None = None

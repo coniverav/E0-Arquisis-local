@@ -272,7 +272,10 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
                     InboundMessage.idpk == settled["idpk"],
                     InboundMessage.message_type == "swap-settled",
                 )).all()
-                assert [row.status for row in settlements] == ["PROCESSED", "DUPLICATE"]
+                assert {row.msg_id: row.status for row in settlements} == {
+                    settled["msgId"]: "PROCESSED",
+                    settled_retry["msgId"]: "DUPLICATE",
+                }
 
             trade = deepcopy(example("trade-recorded.json"))
             trade.update(idpk=str(uuid4()), msgId=str(uuid4()),

@@ -1,0 +1,30 @@
+{
+  "mode": "SIMULACION_LOCAL_SIN_CENTRAL",
+  "result": "PASS",
+  "case": "dos_ofertas_independientes_A",
+  "cycleId": "e2069-cdda6dbe-c64c-4650-ac42-21a71b5721ea",
+  "offerId": "KLD-e2069-cdda6dbe-c64c-4650-ac42-21a71b5721ea",
+  "capacity": 100,
+  "remaining": 100,
+  "total_holds": 80,
+  "reserved_bids": 1,
+  "rejected_bids": 0,
+  "available_rejections": [],
+  "attempts": [
+    {
+      "idpk": "0df5ae78-4b43-42c7-bf0f-7ac27d72a64c",
+      "city": "COR",
+      "requested": 80,
+      "offset_ms": 1.15,
+      "result": "ok"
+    },
+    {
+      "idpk": "f7ec0158-8572-45d7-a129-bef27dc2f02f",
+      "city": "HGW",
+      "requested": 80,
+      "offset_ms": 2.92,
+      "result": "ok"
+    }
+  ],
+  "details": {}
+}

@@ -1,0 +1,24 @@
+{
+  "mode": "SIMULACION_LOCAL_SIN_CENTRAL",
+  "result": "PASS",
+  "case": "transacciones_superpuestas_40ms_120ms_lock",
+  "cycleId": "e2069-29bb53cc-c24a-4ce7-8880-4285592123d4",
+  "offerId": "KLD-e2069-29bb53cc-c24a-4ce7-8880-4285592123d4",
+  "capacity": 100,
+  "remaining": 100,
+  "total_holds": 80,
+  "reserved_bids": 1,
+  "rejected_bids": 1,
+  "available_rejections": [
+    20
+  ],
+  "attempts": [],
+  "details": {
+    "duraciones_ms": [
+      148.36,
+      133.42
+    ],
+    "lock_retained_ms": 120,
+    "second_nominal_delay_ms": 40
+  }
+}

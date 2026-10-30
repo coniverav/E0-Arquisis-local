@@ -1,0 +1,80 @@
+{
+  "mode": "SIMULACION_LOCAL_SIN_CENTRAL",
+  "result": "PASS",
+  "case": "rafaga_40ms_ronda_1",
+  "cycleId": "e2069-c8dcac3b-c412-47b9-9a9b-43625b9271e5",
+  "offerId": "KLD-e2069-c8dcac3b-c412-47b9-9a9b-43625b9271e5",
+  "capacity": 100,
+  "remaining": 100,
+  "total_holds": 60,
+  "reserved_bids": 1,
+  "rejected_bids": 7,
+  "available_rejections": [
+    40,
+    40,
+    40,
+    40,
+    40,
+    40,
+    40
+  ],
+  "attempts": [
+    {
+      "idpk": "8a26aa97-72fb-4a0f-b29c-6791772e0e9a",
+      "city": "COR",
+      "requested": 60,
+      "offset_ms": 4.67,
+      "result": "ok"
+    },
+    {
+      "idpk": "eb9572cc-36bb-49fb-b061-ff41935fefdb",
+      "city": "HGW",
+      "requested": 60,
+      "offset_ms": 44.47,
+      "result": "ok"
+    },
+    {
+      "idpk": "ba27a8f4-8fe4-451e-924c-f4e0e5faf9ac",
+      "city": "AAA",
+      "requested": 60,
+      "offset_ms": 84.65,
+      "result": "ok"
+    },
+    {
+      "idpk": "18d1fcf5-8597-4633-a359-73bc275ea80c",
+      "city": "BBB",
+      "requested": 60,
+      "offset_ms": 124.55,
+      "result": "ok"
+    },
+    {
+      "idpk": "75910bd3-7fae-4cb9-9a53-27ff61ad3df6",
+      "city": "CCC",
+      "requested": 60,
+      "offset_ms": 164.4,
+      "result": "ok"
+    },
+    {
+      "idpk": "34945098-aabf-4da2-b160-bae4337bd2a8",
+      "city": "DDD",
+      "requested": 60,
+      "offset_ms": 205.55,
+      "result": "ok"
+    },
+    {
+      "idpk": "f95b4b31-7545-4f48-8507-1abdde001bc6",
+      "city": "EEE",
+      "requested": 60,
+      "offset_ms": 244.92,
+      "result": "ok"
+    },
+    {
+      "idpk": "9d6d8782-4ac8-496e-ba4b-0ef0eb47a25e",
+      "city": "FFF",
+      "requested": 60,
+      "offset_ms": 285.33,
+      "result": "ok"
+    }
+  ],
+  "details": {}
+}

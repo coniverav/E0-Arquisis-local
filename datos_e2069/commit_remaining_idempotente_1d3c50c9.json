@@ -1,0 +1,17 @@
+{
+  "mode": "SIMULACION_LOCAL_SIN_CENTRAL",
+  "result": "PASS",
+  "case": "commit_remaining_idempotente",
+  "cycleId": "e2069-7892d1c8-451b-4f17-9729-33c7e97c0830",
+  "offerId": "KLD-e2069-7892d1c8-451b-4f17-9729-33c7e97c0830",
+  "capacity": 100,
+  "remaining": 40,
+  "total_holds": 40,
+  "reserved_bids": 2,
+  "rejected_bids": 1,
+  "available_rejections": [
+    40
+  ],
+  "attempts": [],
+  "details": {}
+}

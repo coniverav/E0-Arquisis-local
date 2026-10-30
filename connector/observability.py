@@ -35,6 +35,26 @@ def record_consumer_connection(consumer: str, state: str, error_type: str | None
             logger.debug("No fue posible registrar conexión en New Relic")
 
 
+def record_consumer_heartbeat(consumer: str) -> None:
+    """Señal periódica del consumidor conectado, incluso sin ofertas nuevas.
+
+    No representa mensajes realmente procesados. Es útil para alertas de
+    pérdida de señal sin confundir silencio del mercado con una caída.
+    """
+    if consumer not in {"city", "market"}:
+        raise ValueError("consumer desconocido")
+    fields = {"consumer": consumer}
+    logger.info("broker_heartbeat consumer=%s", consumer)
+    if nr_agent is not None:
+        try:
+            nr_agent.record_custom_event(
+                "EnergySharkBrokerHeartbeat", fields,
+                application=nr_agent.application(),
+            )
+        except Exception:
+            logger.debug("No fue posible registrar latido de consumidor en New Relic")
+
+
 class ObservedIncomingMessage:
     """Proxy transparente de entrega AMQP con auditoría de duración y resultado."""
 

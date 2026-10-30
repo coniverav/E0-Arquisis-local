@@ -475,3 +475,73 @@ Las pruebas de `master/tests/test_e2075_audit_v3.py` envían por HTTP objetos y 
 ---
 
 Los cambios de E2-070, E2-071 y E2-075 se integraron mediante la PR #86. Las pruebas anteriores acreditan el comportamiento local de esta rama, no su operación desplegada.
+
+---
+
+# E2-072 - Frescura y capacidad del feed de mercado
+
+### Prompt relevante
+
+> "E2-072 (G02): Soportar TTL/capacidad del feed de mercado, marcadores de frescura, `market-closed` y recuperación ante mensajes perdidos."
+
+### Resumen de la respuesta y utilidad
+
+La implementación de `connector/connector.py` avisa a Master al conectar o reconectar el consumidor de mercado, antes de reanudar el consumo. `master/app/services/market_feed.py` registra la posible brecha en ciclos abiertos y `master/app/services/market_book.py` marca como antiguas las ofertas cuyo último evento precede la reconexión, excluyéndolas de candidatas de compra. El libro expone `feedGapAt`, `lastFeedEventAt` y un estado de frescura; el cierre se confirma con `market-closed` o se aplica conservadoramente al llegar el plazo oficial. También se solicita nuevamente el contexto de `status-statement` y `distance-table` dentro del cupo de `request/ask`.
+
+`connector/tests/test_market_consumer.py` y `master/tests/test_market_book.py` cubren los cambios locales. `docs/market/E2-072-feed-freshness.md` deja el límite explícito: el protocolo v3.0.2 no ofrece cursor ni replay de ofertas. Si el broker descarta mensajes por TTL o por el máximo de 5.000, el nodo no puede reconstruir todo el feed ni probar que una conexión continua no perdió eventos. Las métricas reales de la cola y el comportamiento tras reconexión siguen pendientes de validación en el entorno del curso.
+
+---
+
+# E2-073 - Configuración de estrategia comercial (RF04/AD6)
+
+### Prompt relevante
+
+> "E2-073 (RF04/AD6): Formulario Frontend para configurar precio, cantidad, span y políticas, mostrando validaciones y vigencia en el siguiente ciclo sin redeploy."
+
+### Resumen de la respuesta y utilidad
+
+En Backend se versionaron el precio directo y el tope de cantidad de ofertas seller en `master/app/services/strategy_config.py` y `master/app/services/seller_offer.py`, con migración y pruebas de edición. La corrección posterior respetó el precio directo configurado sin imponerle el piso usado para el cálculo por multiplicador. El OpenAPI de Contracts documenta los nuevos campos y la precisión del precio en centavos.
+
+En Frontend se añadió `src/components/MarketStrategyView.jsx` para editar precio, fracción, cantidad máxima, span y políticas. La pantalla indica la versión activa y la pendiente, y comunica que los cambios se aplican al siguiente ciclo. Se agregaron tests de la lógica de estrategia y ajustes para aceptar precios directos en centavos y mostrar nombres legibles de políticas. Durante la revisión local con API y PostgreSQL de prueba se pudo abrir la pantalla y ver sus controles; eso no acredita por sí solo que una edición haya entrado en vigor en un ciclo real desplegado.
+
+---
+
+# E2-074 - Comparación del experimento span (RF06)
+
+### Prompt relevante
+
+> "E2-074 (RF06): Vista comparativa del experimento span, con métricas por ciclo y agrupadas, baseline y resultados Wallet."
+
+### Resumen de la respuesta y utilidad
+
+`master/app/services/cycle_metrics.py` incorpora ingresos seller y recompra al costo efectivo, además de los casos buyer, y sus pruebas cubren estos cálculos. Frontend agregó `src/components/SpanExperimentView.jsx` con detalle por ciclo, agregados por span y estado de conciliación Wallet. Se corrigió el agregado para considerar todos los ciclos disponibles y mantener los resultados agrupados al paginar el detalle.
+
+La inspección visual local se hizo con cuatro ciclos sintéticos: dos finales de span 60 s, uno final de 120 s y uno pendiente de 120 s. La vista mostró el pendiente sin incluirlo en los importes agregados de ciclos finales. Las cifras mostradas eran datos de demostración, no resultados del mercado ni mediciones de Wallet productiva. El informe experimental con ciclos reales exigido por RDOC05 sigue siendo un trabajo distinto.
+
+---
+
+# E2-076 - Contratos v3.0.2 y CI (RDOC04)
+
+## 1. Fuentes y separación de responsabilidades
+
+### Prompt relevante
+
+> "E2-076 (RDOC04): Completar schemas v3, fixtures y pruebas contractuales contra los contratos oficiales, integradas en CI."
+
+> "Pero mi duda es más profunda, era necesario tener schemas en el repo de backend para esto?"
+
+### Resumen de la respuesta y utilidad
+
+`Arquisis-G10-Contracts` incorporó el inventario oficial v3.0.2: 46 schemas, 261 fixtures del curso, OpenAPI propia y pruebas contractuales. Su workflow valida los contratos y emisores del Backend contra los schemas oficiales. El repositorio Backend conserva sólo 21 schemas como fixtures locales necesarios para sus pruebas sin red; el commit `7bc3025` eliminó las copias que estas pruebas no usan. Se compararon los 21 archivos restantes con Contracts y sus hashes coincidieron. La documentación de procedencia explica que el inventario y su mantenimiento pertenecen al repositorio organizacional de Contracts.
+
+## 2. Corrección del CI y validación
+
+### Prompt relevante
+
+> "Eso si, otra cosa nada que ver pero falló el CI en el repo de contratos. Igual no he mergeado ninguna PR."
+
+### Resumen de la respuesta y utilidad
+
+La primera falla del CI se debió a que `requirements-test.txt` instalaba `jsonschema` sin los validadores de formato: fechas sin zona horaria pasaban inadvertidas. El commit `5a221f3` agregó `jsonschema[format]` y una prueba que detecta la ausencia del validador `date-time`. El siguiente job expuso otra dependencia omitida: las pruebas integradas importaban `aio_pika` desde Connector, pero el workflow instalaba sólo Master. El commit `7dd7275` agregó la instalación de `connector/requirements.txt`.
+
+Las 14 pruebas locales de Contracts pasaron y el job `contracts` de la PR #12 terminó en verde después de ambos ajustes. Antes de ello, se habían ejecutado 39 pruebas relevantes de Backend tras reducir sus fixtures. El CI de Contracts descargaba Backend desde `develop` en esa corrida; corresponde repetir la validación contractual después de integrar la PR de Backend. Las PR #12 de Contracts, #87 de Backend y #20 de Frontend permanecían abiertas y sin merge al redactar esta entrada.

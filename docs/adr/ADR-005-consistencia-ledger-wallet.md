@@ -73,6 +73,14 @@ Los `balancesAfter` recibidos se conservarán como evidencia, sin sobrescribir i
 
 Un proceso consultará periódicamente `GET /balance` y utilizará `GET /statement` para examinar diferencias o recuperar movimientos. La comparación tendrá en cuenta saldos disponibles y retenidos y la vigencia temporal de las respuestas. Al cierre de cada ciclo, el dashboard reflejará el estado oficial conocido o identificará discrepancias sin corregir silenciosamente el historial (Microsoft, 2026; PostgreSQL Global Development Group, s. f.).
 
+### Precisión para E2-070 (antes de extender la implementación)
+
+La comparación no se declarará `MATCH` únicamente porque un snapshot `EVENT` coincida con `GET /balance`: también debe contrastar los efectos locales pertinentes del ledger con los asientos oficiales. La explicación conservará `entryId`, `reference`, `cycleId`, tipo, activo, monto y el identificador del hecho local correlacionado. Una referencia del statement no se presumirá siempre `swapId`: el contrato sólo lo da como ejemplo. Los efectos pendientes y los asientos sin correlación quedarán explícitos; no se inventará una operación local para cuadrar un saldo.
+
+Se consultarán páginas de `/statement` desde la más reciente hasta encontrar una zona de solapamiento con asientos ya persistidos, sin reutilizar `nextCursor` como cursor permanente: el contrato lo define como opaco y no asegura estabilidad entre consultas. El solapamiento por `entryId` cubre asientos tardíos y empates en `createdAt`; si no se alcanza dentro del presupuesto de páginas, la sincronización quedará incompleta y no producirá un `MATCH`. El balance `asOf` delimitará los asientos admisibles en esa comparación. El estado de avance y el resultado se persistirán juntos, sin borrar historia previa.
+
+Los límites de Wallet y de publicación se administrarán por ciudad con coordinación en PostgreSQL entre procesos. Las llamadas diferidas conservarán su identidad económica y sus vencimientos; un HTTP `202` seguirá siendo únicamente constancia de recepción. Esta coordinación sacrifica simplicidad a cambio de evitar que `master`, `master2`, el scheduler o el connector consuman cada uno el cupo completo. Si no existe una referencia local independiente temporalmente comparable, la conciliación conservará `NO_LOCAL_BASELINE`.
+
 ### *Tradeoff*
 
 La decisión privilegia consistencia con la wallet, recuperación y auditabilidad por sobre simplicidad. Mantener el ledger de E1 como autoridad local no se ajustaría al nuevo modelo; consultar solamente la wallet reduciría duplicación de estado, pero sacrificaría autonomía e historial propio.

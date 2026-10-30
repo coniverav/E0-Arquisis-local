@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -39,6 +40,7 @@ from ..services.funding import (
     validate_funding_v3,
 )
 from ..services.strategy_config import bind_strategy_to_cycle
+from ..services.cycle_metrics import refresh_cycle_metrics
 from ..services.bid_responses import process_bid_reply
 from ..services.incoming_bids import process_incoming_bid
 from ..services.seller_bid_acceptance import reserve_incoming_bid
@@ -737,6 +739,27 @@ def ingest_protocol_message(
         )
 
         session.commit()
+
+        # E2-065: actualizar RF06 sin arriesgar la transacción comercial.
+        # El ledger/inbox/outbox ya está confirmado; un problema de métricas
+        # se registra para el siguiente tick del scheduler, sin pedir redelivery.
+        if audit_status == INBOUND_PROCESSED and payload.type in {
+            "status-statement", "bid", "bid-accepted", "bid-rejected",
+            "swap-settled", "trade-recorded", "imbalance-settlement",
+        }:
+            metrics_cycle_id = payload.cycleId
+            if payload.type == "swap-settled" and record is not None:
+                metrics_cycle_id = record.cycle_id
+            if metrics_cycle_id:
+                try:
+                    refresh_cycle_metrics(session, cycle_id=metrics_cycle_id, now=now)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    logging.getLogger(__name__).exception(
+                        "E2-065: no se pudo actualizar métricas del ciclo %s",
+                        metrics_cycle_id,
+                    )
 
         return {
             "status": response_status,

@@ -16,6 +16,7 @@ from ..models import Cycle
 from ..services.seller_offer import enqueue_seller_offer
 from ..services.seller_offer_events import close_expired_local_offers
 from ..services.seller_swap_dispatch import dispatch_swap_proposals
+from ..services.cycle_metrics import refresh_recent_cycle_metrics
 from ..services.seller_bid_policy import process_due_seller_bids  # E2-063
 
 from ..services.cycle_scheduler import (
@@ -102,6 +103,16 @@ def run() -> None:
                 # No se publica withdrawn después de market.lastOfferAt.
                 local_offers_closed = close_expired_local_offers(session)
                 session.commit()
+                # E2-065: snapshots de RF06 para cierres/fallback y
+                # hechos tardíos, usando transacción independiente.
+                try:
+                    with Session(engine) as metrics_session:
+                        refresh_recent_cycle_metrics(
+                            metrics_session, now=datetime.now(timezone.utc),
+                        )
+                        metrics_session.commit()
+                except Exception:
+                    logger.exception("E2-065: fallo al refrescar métricas de ciclos")
                 if local_offers_closed:
                     logger.info("Ofertas seller cerradas: %s", local_offers_closed)
 

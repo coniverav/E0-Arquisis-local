@@ -1160,3 +1160,49 @@ class StrategyConfig(SQLModel, table=True):
     )
     created_by: Optional[str] = Field(default=None)
 
+class CycleStrategyMetric(SQLModel, table=True):
+    """E2-065/RF06: snapshot persistente por ciclo, versionado por AD6."""
+
+    __tablename__ = "cycle_strategy_metrics"
+
+    cycle_id: str = Field(primary_key=True, foreign_key="cycles.cycle_id", ondelete="CASCADE")
+    strategy_version: int = Field(index=True, nullable=False)
+    span_seconds: int = Field(nullable=False)
+    selection_policy: str = Field(nullable=False)
+    acceptance_policy: str = Field(nullable=False)
+    deficit_kwh: int = Field(default=0, nullable=False)
+    bought_kwh: int = Field(default=0, nullable=False)
+    covered_kwh: int = Field(default=0, nullable=False)
+    coverage_rate: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(8, 4), nullable=False),
+    )
+    rejected_bids: int = Field(default=0, nullable=False)
+    rejected_incoming_bids: int = Field(default=0, nullable=False)
+    buy_cost: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(20, 2), nullable=False),
+    )
+    transport_cost: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(20, 2), nullable=False),
+    )
+    settlement_cost: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+    real_cost: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+    baseline_cost: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+    baseline_source: Optional[str] = Field(default=None)
+    savings_vs_baseline: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+    missing_transport_trades: int = Field(default=0, nullable=False)
+    status: str = Field(default="IN_PROGRESS", index=True, nullable=False)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
+

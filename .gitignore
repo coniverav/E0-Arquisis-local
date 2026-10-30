@@ -24,3 +24,4 @@ certbot/www/
 certbot/conf/
 
 probar_tests.sh
+.e2065_backup/

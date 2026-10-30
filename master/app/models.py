@@ -543,6 +543,11 @@ class MarketCycle(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     closed_msg_id: Optional[str] = Field(default=None)
+    # Una reconexión puede haber perdido mensajes por TTL/capacidad del broker.
+    # Es una señal de riesgo, no una prueba de que faltó una oferta específica.
+    feed_gap_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
 
 
 class MarketFeedOffer(SQLModel, table=True):
@@ -1165,6 +1170,10 @@ class StrategyConfig(SQLModel, table=True):
         default=Decimal("1.00"),
         sa_column=Column(Numeric(10, 4), nullable=False),
     )
+    offer_price_override: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
+    )
+    offer_quantity_cap: Optional[int] = Field(default=None)
     # FIFO, MAX_REMAINING, BATCH
     bid_acceptance_policy: str = Field(default="FIFO", nullable=False)
     # CHEAPEST_EFFECTIVE_PRICE, MIN_DISTANCE

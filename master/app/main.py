@@ -46,8 +46,8 @@ from .services.negotiation_state import (
 )
 
 app = FastAPI(
-    title="EnergyShark E1",
-    version="2.0.0",
+    title="EnergyShark E2 API",
+    version="3.0.2",
 )
 
 app.add_middleware(

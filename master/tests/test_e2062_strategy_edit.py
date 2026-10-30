@@ -81,6 +81,10 @@ def test_update_requires_claim_subject_and_refuses_invalid_values_without_writes
         {**POLICY, "offerPriceMarkup": "1.12345"},
         {**POLICY, "offerPriceMarkup": "9999999"},
         {**POLICY, "offerQuantityFraction": "0.10001"},
+        {**POLICY, "offerPriceOverride": "0"},
+        {**POLICY, "offerPriceOverride": "2.123"},
+        {**POLICY, "offerQuantityCap": -1},
+        {**POLICY, "offerQuantityCap": 1.5},
         {**POLICY, "bidAcceptancePolicy": "NO_SUCH_POLICY"},
         {**POLICY, "offerSelectionPolicy": "NO_SUCH_POLICY"},
         {**POLICY, "spanSeconds": True},
@@ -125,6 +129,48 @@ def test_edition_audits_all_fields_actor_and_preserves_exact_values():
         "offerSelectionPolicy": {"before": "CHEAPEST_EFFECTIVE_PRICE", "after": "MIN_DISTANCE"},
         "spanSeconds": {"before": 60, "after": 45},
     }
+
+
+def test_direct_offer_controls_are_versioned_and_apply_only_to_next_cycle():
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        current = _cycle(session, now - timedelta(minutes=1))
+        old = bind_strategy_to_cycle(session, current)
+        session.commit()
+        current_id = current.cycle_id
+        assert old.offer_price_override is None
+    saved = _authorized_post({**POLICY, "offerPriceOverride": "330.00", "offerQuantityCap": 150})
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["offerPriceOverride"] == "330.00"
+    assert saved.json()["offerQuantityCap"] == 150
+    with Session(engine) as session:
+        upcoming = _cycle(session, now + timedelta(minutes=1))
+        selected = bind_strategy_to_cycle(session, upcoming)
+        session.commit()
+        assert get_cycle_strategy(session, current_id).offer_price_override is None
+        assert selected.offer_price_override == Decimal("330.00")
+        assert selected.offer_quantity_cap == 150
+        quantity, price = calculate_offer(
+            sellable=500, wallet_available=Decimal("400"),
+            generation_cost=Decimal("200"), buyback_price=Decimal("250"),
+            markup=selected.offer_price_markup, fraction=selected.offer_quantity_fraction,
+            price_override=selected.offer_price_override,
+            quantity_cap=selected.offer_quantity_cap,
+        )
+        assert (quantity, price) == (150, Decimal("330.00"))
+    audit = _authorized_get("/market/strategy/audit").json()["items"][0]
+    assert audit["changes"]["offerPriceOverride"] == {"before": None, "after": "330.00"}
+    assert audit["changes"]["offerQuantityCap"] == {"before": None, "after": 150}
+    assert calculate_offer(
+        sellable=500, wallet_available=Decimal("400"),
+        generation_cost=Decimal("200"), buyback_price=Decimal("250"),
+        price_override=Decimal("240"), quantity_cap=0,
+    ) == (0, Decimal("240.00"))
+    assert calculate_offer(
+        sellable=500, wallet_available=Decimal("400"),
+        generation_cost=Decimal("200"), buyback_price=Decimal("250"),
+        price_override=Decimal("240.00"), quantity_cap=100,
+    ) == (100, Decimal("240.00"))
 
 
 def test_audit_pagination_compares_against_previous_version_outside_page():

@@ -8,7 +8,7 @@
     "routingKey": "city.{CODE}",
     "sender": ["central"],
     "receivers": ["city.{CODE}"],
-    "userId": "none"
+    "userId": "central"
   },
   "allOf": [
     { "$ref": "../common/envelope.schema.json" },

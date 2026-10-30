@@ -1,9 +1,9 @@
 {
-  "amqp/imbalance-settlement.schema.json": "f9d7224b4fe3b210fdc908afc4dd27936e2f4691f80ce83e0e69da3a8f813369",
+  "amqp/imbalance-settlement.schema.json": "291442d2f79ea79017f791eab1d756ca183f396560e8eb51855786b38af322d3",
   "amqp/offer.schema.json": "0427c4e99626a15148ac0818f3a93e8ece347d15af344ab8c90895b65215bd60",
-  "amqp/status-statement.schema.json": "2c47a3ef169cbb148a47958a53b5b5608b34fb93703c6eba72f5fb3d2a163155",
-  "amqp/swap-settled.schema.json": "d2109ab6b02775dfe8eb55ee8f00bfd1f2761f39b7f77149d65d1a0f9f97a2cc",
-  "amqp/trade-recorded.schema.json": "4ff6960ba239a33ffb2b29c4bcd04d34aafd5f2e8c7305e783883c3c239f11bf",
+  "amqp/status-statement.schema.json": "5c76126aaf48275600d4bb4e25bcea4fb1976d8a3047fbbd3f34ccbc238edbaa",
+  "amqp/swap-settled.schema.json": "3a149300a6ddaa1ae5f10f8bcc8f758182f9e25ad5fdcd244c4211cc28fd3963",
+  "amqp/trade-recorded.schema.json": "c62dc0ac486ce17ff7b001a4a4a7b4656b54f57c836cced66d42a594600bdf83",
   "common/asset-amount.schema.json": "c70fc8c860239b6dc19a49fbaf07b2fb5b07126a865b448ec606e106172367f8",
   "common/balances-after.schema.json": "5448cb44e636a73661cf6a73954661058947beca77fa7ece32481eadf6fe7cd1",
   "common/central-sender.schema.json": "544a1526b00c860edc4550bbb052f3e546bc380f4408b2d88b86c92e1ad5b2c8",

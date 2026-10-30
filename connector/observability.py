@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+from datetime import datetime, timezone
 
 logger = logging.getLogger("connector.observability")
 
@@ -72,6 +73,13 @@ class ObservedIncomingMessage:
                         value = _safe(payload.get(field))
                         if value is not None:
                             self.fields[field] = value
+                    if consumer == "market" and isinstance(payload.get("timestamp"), str):
+                        source_time = datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00"))
+                        if source_time.tzinfo is not None:
+                            age = (datetime.now(timezone.utc) - source_time).total_seconds()
+                            if 0 <= age <= 86400:
+                                # Señal de atraso, no medición exacta de TTL del broker.
+                                self.fields["sourceAgeSeconds"] = round(age, 2)
         except (ValueError, TypeError, UnicodeError):
             pass
 

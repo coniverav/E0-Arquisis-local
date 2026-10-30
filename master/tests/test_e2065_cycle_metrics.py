@@ -178,7 +178,7 @@ def test_duplicate_refresh_does_not_duplicate_or_modify_unchanged_timestamp():
             CycleStrategyMetric.cycle_id == cid)).all()) == 1
 
 
-def test_excludes_seller_income_and_does_not_count_unsettled_bids():
+def test_seller_income_does_not_count_as_buyer_purchase():
     with Session(engine) as session:
         cid, _ = _seed(session, closed=True)
         _entry(session, cid, 1, "SWAP_SETTLED", "600", "-300", {
@@ -188,6 +188,39 @@ def test_excludes_seller_income_and_does_not_count_unsettled_bids():
         metric = refresh_cycle_metrics(session, cycle_id=cid, now=NOW)
         assert metric.bought_kwh == 0
         assert metric.buy_cost == Decimal("0.00")
+        session.rollback()
+
+
+def test_seller_baseline_and_real_cost_include_buyback_and_sale_revenue():
+    with Session(engine) as session:
+        cid, _ = _seed(session, closed=True)
+        cycle = session.get(Cycle, cid)
+        cycle.generation_capacity = Decimal("1500")
+        cycle.consumption = Decimal("1000")
+        cycle.status_payload = {
+            "energy": {"sellable": 500},
+            "market": {"imbalancePrice": "5", "buybackPrice": "2"},
+        }
+        session.add(cycle)
+        _entry(session, cid, 1, "SWAP_SETTLED", "300", "-100", {
+            "role": "PROPOSER", "swapId": "seller-sale",
+            "give": {"asset": "KWH", "amount": "100"},
+            "take": {"asset": "CR", "amount": "300"},
+        })
+        settlement_id = str(uuid4())
+        session.add(ImbalanceSettlement(
+            idpk=str(uuid4()), msg_id=str(uuid4()), cycle_id=cid,
+            settlement_id=settlement_id, kwh_held=400, deficit=0,
+            coverage=400, price_per_energy=Decimal("2"), total=Decimal("800"),
+            balance_after=Decimal("0"), recorded_at=NOW,
+        ))
+        _entry(session, cid, 2, "IMBALANCE_SETTLEMENT", "800", details={"settlementId": settlement_id})
+        metric = refresh_cycle_metrics(session, cycle_id=cid, now=NOW)
+        assert metric.status == "FINAL"
+        assert metric.baseline_cost == Decimal("-1000.00")
+        assert metric.real_cost == Decimal("-1100.00")
+        assert metric.savings_vs_baseline == Decimal("100.00")
+        assert metric.bought_kwh == 0
         session.rollback()
 
 

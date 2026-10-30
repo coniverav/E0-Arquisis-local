@@ -112,7 +112,10 @@ def test_buyer_met_offer_to_settlement_with_visible_ledger_gap(
     offer = {
         "idpk": str(uuid4()), "msgId": str(uuid4()),
         "type": "offer", "cityId": "MET", "cycleId": cycle_id,
-        "timestamp": market["opensAt"],
+        # El broker simulado abre el consumidor en esta entrega. E2-072 marca
+        # como inciertas las ofertas anteriores a esa conexión; MET publica
+        # aquí una oferta nueva después de la señal de recuperación.
+        "timestamp": _iso(clock.now + timedelta(seconds=15)),
         "data": {"offerId": offer_id, "quantity": 1200,
                  "pricePerEnergy": float(price)},
     }

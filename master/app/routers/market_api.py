@@ -27,6 +27,8 @@ class StrategyOut(BaseModel):
     status: str
     offerPriceMarkup: Decimal
     offerQuantityFraction: Decimal
+    offerPriceOverride: Decimal | None
+    offerQuantityCap: int | None
     bidAcceptancePolicy: str
     offerSelectionPolicy: str
     spanSeconds: int
@@ -47,6 +49,8 @@ class StrategyUpdateIn(BaseModel):
     # silenciosamente y no coincidiría con el valor auditado de la edición.
     offerPriceMarkup: Decimal = Field(gt=0, max_digits=10, decimal_places=4)
     offerQuantityFraction: Decimal = Field(ge=0, le=1, max_digits=10, decimal_places=4)
+    offerPriceOverride: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=2)
+    offerQuantityCap: int | None = Field(default=None, ge=0, strict=True)
     bidAcceptancePolicy: str
     offerSelectionPolicy: str
     spanSeconds: int = Field(ge=0, strict=True)
@@ -56,7 +60,7 @@ class StrategyUpdateIn(BaseModel):
 
 class StrategyChangeOut(BaseModel):
     before: str | int | None
-    after: str | int
+    after: str | int | None
 
 
 class StrategyAuditItemOut(BaseModel):
@@ -148,6 +152,8 @@ def _strategy(config: StrategyConfig | None) -> StrategyOut | None:
         version=config.version, status=config.status,
         offerPriceMarkup=config.offer_price_markup,
         offerQuantityFraction=config.offer_quantity_fraction,
+        offerPriceOverride=config.offer_price_override,
+        offerQuantityCap=config.offer_quantity_cap,
         bidAcceptancePolicy=config.bid_acceptance_policy,
         offerSelectionPolicy=config.offer_selection_policy,
         spanSeconds=config.span_seconds,
@@ -222,6 +228,8 @@ def read_strategy_options() -> StrategyOptionsOut:
 _STRATEGY_FIELDS = {
     "offerPriceMarkup": "offer_price_markup",
     "offerQuantityFraction": "offer_quantity_fraction",
+    "offerPriceOverride": "offer_price_override",
+    "offerQuantityCap": "offer_quantity_cap",
     "bidAcceptancePolicy": "bid_acceptance_policy",
     "offerSelectionPolicy": "offer_selection_policy",
     "spanSeconds": "span_seconds",
@@ -297,6 +305,8 @@ def update_strategy(
             session,
             offer_price_markup=payload.offerPriceMarkup,
             offer_quantity_fraction=payload.offerQuantityFraction,
+            offer_price_override=payload.offerPriceOverride,
+            offer_quantity_cap=payload.offerQuantityCap,
             bid_acceptance_policy=payload.bidAcceptancePolicy,
             offer_selection_policy=payload.offerSelectionPolicy,
             span_seconds=payload.spanSeconds,

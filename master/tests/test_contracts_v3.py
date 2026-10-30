@@ -1,4 +1,4 @@
-"""E2-022/E2-028: los fixtures usados en pruebas cumplen el contrato v3.0.1."""
+"""E2-076: los fixtures emitidos en pruebas cumplen el contrato v3.0.2."""
 
 import hashlib
 import json
@@ -10,12 +10,14 @@ from tests.contracts_v3 import SCHEMAS, example, schema_hashes, validate
 
 
 def test_vendored_schemas_match_official_hashes():
-    for relative, expected in schema_hashes().items():
-        digest = hashlib.sha256((SCHEMAS / relative).read_bytes()).hexdigest()
-        assert digest == expected, f"schema modificado: {relative}"
+    actual = {
+        path.relative_to(SCHEMAS).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in SCHEMAS.rglob("*.schema.json")
+    }
+    assert actual == schema_hashes(), "subconjunto de schemas distinto del tag fijado"
 
 
-def test_official_examples_are_schema_valid():
+def test_synthetic_examples_are_schema_valid():
     validate("amqp/status-statement", example("status-statement.json"))
     validate("amqp/offer", example("offer.json"))
     validate("amqp/swap-settled", example("swap-settled.json"))

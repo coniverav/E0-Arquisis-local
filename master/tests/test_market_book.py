@@ -1,5 +1,5 @@
 """E2-035: la vista usa el snapshot transaccional E2-017, sin inventar saldo wallet."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from uuid import uuid4
 
@@ -122,3 +122,49 @@ def test_missing_cycle_has_empty_book_without_guessing_latest():
     unknown = book(f"cycle-{uuid4()}")
     assert unknown["total"] == 0
     assert unknown["marketClosed"] is False
+
+
+def test_reconnect_marks_old_feed_stale_and_new_update_restores_offer_freshness():
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cycle = f"gap-{uuid4()}"
+    send(cycle, timestamp=(now - timedelta(minutes=1)).isoformat())
+    with Session(engine) as session:
+        session.add(Cycle(
+            cycle_id=cycle, status_idpk=str(uuid4()),
+            market_opens_at=now - timedelta(minutes=2),
+            market_closes_at=now + timedelta(minutes=18),
+            opening_budget_balance=0, opening_energy_balance=0,
+            budget_balance=0, energy_balance=0, last_sequence=0,
+            status_payload={}, created_at=now,
+        ))
+        session.commit()
+    gap = TestClient(app).post("/internal/audit/inbound/market-gap", json={"reason": "RECONNECTED"})
+    assert gap.status_code == 200, gap.text
+    assert cycle in gap.json()["affectedCycleIds"]
+    before = book(cycle)
+    assert before["freshness"] == "GAP_OBSERVED"
+    assert before["offers"][0]["stale"] is True
+    assert before["feedGapAt"] is not None
+    send(cycle, "offer-updated", timestamp=(now + timedelta(seconds=2)).isoformat())
+    after = book(cycle)
+    assert after["offers"][0]["stale"] is False
+    assert after["offers"][0]["remaining"] == 12
+
+
+def test_missing_market_closed_uses_official_deadline_and_marks_freshness():
+    cycle = f"cycle-{uuid4()}"
+    send(cycle)
+    with Session(engine) as session:
+        session.add(Cycle(
+            cycle_id=cycle, status_idpk=str(uuid4()),
+            market_opens_at=datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc),
+            market_closes_at=datetime(2026, 10, 25, 12, 6, tzinfo=timezone.utc),
+            opening_budget_balance=0, opening_energy_balance=0,
+            budget_balance=0, energy_balance=0, last_sequence=0,
+            status_payload={}, created_at=datetime.now(timezone.utc),
+        ))
+        session.commit()
+    result = book(cycle)
+    assert result["marketClosed"] is True
+    assert result["freshness"] == "CLOSED_BY_DEADLINE"
+    assert result["marketClosedAt"] is None

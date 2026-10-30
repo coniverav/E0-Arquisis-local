@@ -1,5 +1,6 @@
 """Aplica el feed al snapshot; inbound_messages conserva cada recepción."""
 
+from datetime import datetime, timezone
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -8,7 +9,8 @@ from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import Session, select
 
-from app.models import InboundMessage, MarketCycle, MarketEventClaim, MarketFeedOffer
+from app.config import CITY_ID, RABBITMQ_CENTRAL_ROUTING_KEY
+from app.models import Cycle, InboundMessage, MarketCycle, MarketEventClaim, MarketFeedOffer
 from app.schemas import MarketFeedMessageIn
 from app.services.message_audit import (
     INBOUND_DUPLICATE,
@@ -17,6 +19,33 @@ from app.services.message_audit import (
     mark_inbound_result,
     record_inbound_message,
 )
+from app.services.information_requests import enqueue_information_request
+
+
+def record_market_feed_gap(session: Session, *, now: datetime | None = None) -> list[str]:
+    """Marca ciclos abiertos tras reconexión y pide contexto recuperable.
+
+    El protocolo no permite pedir replay de ofertas. Hasta recibir un evento
+    nuevo de cada vendedor, su snapshot anterior se presenta como incierto.
+    """
+    now = now or datetime.now(timezone.utc)
+    cycles = session.exec(select(Cycle).where(
+        Cycle.status_idpk.is_not(None), Cycle.market_opens_at <= now,
+        Cycle.market_closes_at > now,
+    )).all()
+    affected = []
+    for item in cycles:
+        market = _lock_market_cycle(session, item.cycle_id)
+        market.feed_gap_at = now
+        session.add(market)
+        affected.append(item.cycle_id)
+    for ask in ("status-statement", "distance-table"):
+        enqueue_information_request(
+            session, ask=ask, city_id=CITY_ID,
+            routing_key=RABBITMQ_CENTRAL_ROUTING_KEY, commit=False,
+        )
+    session.commit()
+    return affected
 
 
 def _fingerprint(payload: dict) -> str:

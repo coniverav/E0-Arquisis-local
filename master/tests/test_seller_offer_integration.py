@@ -33,6 +33,7 @@ from app.models import (
     StrategyConfig,
 )
 from app.services.seller_offer import enqueue_seller_offer
+from app.services.strategy_config import create_pending_strategy
 from app.services.wallet_client import WalletClient
 from tests.contracts_v3 import example, validate
 
@@ -263,6 +264,37 @@ def test_creates_one_offer_from_official_status_statement():
         assert message.payload["cycleId"] == scenario.cycle_id
         assert message.payload["cityId"] == CITY_ID
         assert message.payload["idpk"] != message.payload["msgId"]
+
+
+def test_direct_price_and_quantity_are_published_from_cycle_strategy():
+    with Session(engine) as session:
+        pending = create_pending_strategy(
+            session,
+            offer_price_markup=Decimal("1.2000"),
+            offer_quantity_fraction=Decimal("1.0000"),
+            offer_price_override=Decimal("1.00"),
+            offer_quantity_cap=500,
+            bid_acceptance_policy="FIFO",
+            offer_selection_policy="CHEAPEST_EFFECTIVE_PRICE",
+            span_seconds=60,
+        )
+        # La edición antecede a opensAt oficial del siguiente ciclo.
+        pending.created_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        session.add(pending)
+        session.commit()
+    with Scenario() as scenario:
+        assert scenario.strategy.offer_price_override == Decimal("1.00")
+        assert scenario.strategy.offer_quantity_cap == 500
+        assert Decimal(str(scenario.envelope["data"]["market"]["buybackPrice"])) > Decimal("1.00")
+        first, second = scenario.run()
+        assert (first, second) == (True, False)
+        assert len(scenario.offers()) == 1
+        assert scenario.offers()[0].price_per_energy == Decimal("1.00")
+        assert scenario.offers()[0].initial_quantity == 500
+        message = scenario.outbound()[0].payload
+        validate("amqp/offer", message)
+        assert message["data"]["pricePerEnergy"] == 1.0
+        assert message["data"]["quantity"] == 500
 
 
 def test_does_not_publish_offer_below_min_bid():

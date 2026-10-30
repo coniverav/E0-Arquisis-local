@@ -64,6 +64,8 @@ def create_pending_strategy(
     bid_acceptance_policy: str,
     offer_selection_policy: str,
     span_seconds: int,
+    offer_price_override: Decimal | None = None,
+    offer_quantity_cap: int | None = None,
     created_by: Optional[str] = None,
     expected_version: Optional[int] = None,
 ) -> StrategyConfig:
@@ -85,6 +87,13 @@ def create_pending_strategy(
         raise ValueError("politica de seleccion desconocida")
     if type(span_seconds) is not int or span_seconds < 0:
         raise ValueError("span_seconds debe ser un entero no negativo")
+    direct_price = Decimal(str(offer_price_override)) if offer_price_override is not None else None
+    if direct_price is not None and (not direct_price.is_finite() or direct_price <= 0):
+        raise ValueError("offer_price_override debe ser positivo y finito")
+    if direct_price is not None and direct_price != direct_price.quantize(Decimal("0.01")):
+        raise ValueError("offer_price_override debe expresarse en centavos")
+    if offer_quantity_cap is not None and (type(offer_quantity_cap) is not int or offer_quantity_cap < 0):
+        raise ValueError("offer_quantity_cap debe ser entero no negativo")
 
     lock_city_ledger(session)
     _ensure_initial_strategy(session)
@@ -96,6 +105,8 @@ def create_pending_strategy(
         status="PENDING",
         offer_price_markup=markup,
         offer_quantity_fraction=fraction,
+        offer_price_override=direct_price,
+        offer_quantity_cap=offer_quantity_cap,
         bid_acceptance_policy=bid_acceptance_policy,
         offer_selection_policy=offer_selection_policy,
         span_seconds=span_seconds,

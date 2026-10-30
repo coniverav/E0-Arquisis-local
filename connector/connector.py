@@ -41,6 +41,7 @@ MASTER_URL = os.getenv("MASTER_URL", "http://master:8000/internal/messages",)
 MASTER_ERROR_URL = os.getenv("MASTER_ERROR_URL", "http://master:8000/internal/protocol/errors",)
 MASTER_AUDIT_URL = os.getenv("MASTER_AUDIT_URL", "http://master:8000/internal/audit/inbound",)
 MASTER_MARKET_URL = f"{MASTER_AUDIT_URL.rstrip('/')}/market"
+MASTER_MARKET_GAP_URL = f"{MASTER_AUDIT_URL.rstrip('/')}/market-gap"
 MASTER_OUTBOUND_AUDIT_URL = os.getenv(
     "MASTER_OUTBOUND_AUDIT_URL",
     "http://master:8000/internal/audit/outbound",
@@ -741,6 +742,14 @@ async def consume_market_forever() -> None:
                 heartbeat_task = asyncio.create_task(market_consumer_heartbeat())
                 try:
                     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                        # La cola expira mensajes tras un ciclo y descarta los
+                        # más antiguos al superar 5000. No hay replay oficial
+                        # del feed: registrar riesgo antes de consumir de nuevo.
+                        gap = await client.post(
+                            MASTER_MARKET_GAP_URL,
+                            json={"reason": "RECONNECTED"},
+                        )
+                        gap.raise_for_status()
                         async with queue.iterator() as iterator:
                             async for message in iterator:
                                 await process_market_message(message, client)

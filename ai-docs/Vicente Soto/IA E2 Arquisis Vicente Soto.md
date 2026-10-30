@@ -393,3 +393,85 @@ Las pruebas añadidas o ajustadas cubren `status-statement`, `distance-table`, e
 El test `test_reconcile_tick_throttles_between_runs` expuso que `_last_tick_monotonic=0.0` confundía «aún no ejecutado» con un instante real: si el reloj monotónico del host estaba bajo el intervalo configurado, se omitía la primera conciliación. El commit `0ad4b6c`, en la PR #74, cambió ese estado inicial a `None` en `master/app/services/wallet_reconciliation.py`. El intervalo limita los ticks posteriores, mientras que el primero se ejecuta. El test fija un reloj monotónico bajo para reproducir esa condición. No se modificó el cálculo de saldos, la aplicación de eventos ni el reporte.
 
 Tras advertir que se había cambiado comportamiento funcional, se ejecutaron las suites completas: Master, `423 passed, 3 subtests passed`, con PostgreSQL temporal aislado; Connector, `150 passed, 12 subtests passed`. Master emitió una advertencia de deprecación de Starlette/AnyIO, sin fallos. Se actualizó la descripción de la PR con esos resultados y se retiró el contenedor temporal. Al redactar esta entrada, `develop` contiene la corrección de identidad AMQP, pero aún no incluye el commit del primer tick. La validación en producción de la conciliación y del release E2-048 sigue pendiente.
+
+---
+
+# E2-070 - Conciliación automática Wallet–ledger (AD5)
+
+## 1. Diagnóstico y decisión
+
+### Prompt relevante
+
+> "Criterio de cierre: Wallet `GET /balance` y ledger local comparables ante reordenamientos y duplicados, con explicación por identificador y cálculo."
+
+### Resumen de la respuesta y utilidad
+
+El diagnóstico distinguió el saldo oficial de Wallet del ledger local y mostró que comparar solamente dos snapshots no bastaba para afirmar consistencia económica. Se precisó el ADR AD5 antes de implementar: correlacionar asientos de `/statement` con hechos locales por ciclo, swap, operación, activo y monto; conservar diferencias sin inventar una referencia local; y usar `NO_LOCAL_BASELINE` cuando falta evidencia comparable.
+
+## 2. Implementación y corrección posterior
+
+### Prompt relevante
+
+> "No asumas que la ausencia de una fila `Cycle` demuestra automáticamente un bug. Primero revisa los invariantes del modelo, las condiciones que generan snapshots `EVENT` y la semántica real de los estados de conciliación."
+
+### Resumen de la respuesta y utilidad
+
+`master/app/services/wallet_reconciliation.py` compara `GET /balance`, snapshots de eventos y asientos de `/statement` con las operaciones y saldos materializados del ciclo. Persiste el resultado y una explicación con identificadores y deltas; la migración `e2070_reconciliation_provenance.py` incorpora la procedencia temporal necesaria. `master/app/services/wallet_service.py` conserva snapshots de eventos Wallet como evidencia, sin convertir HTTP `202` en liquidación.
+
+La revisión independiente reprodujo un caso alcanzable: `swap-settled` podía guardar un snapshot `EVENT` para un `SwapRecord` cuyo `Cycle` no existía, sin crear asientos de ledger. Antes del fix, la igualdad entre ese snapshot y `GET /balance` producía un falso `MATCH`. El commit `40d8de7` exige presencia del ciclo para ese estado y devuelve `NO_LOCAL_BASELINE` en el caso huérfano. Las pruebas distinguen ese caso de un ciclo válido con ledger consistente, otro discrepante y una divergencia local sin baseline oficial suficiente. No se convirtió toda ausencia de baseline en `DIVERGENT`.
+
+## 3. Validación y límite conocido
+
+`master/tests/test_e2070_reconciliation.py` cubre las comparaciones por operación, asientos tardíos, eventos reordenados o duplicados y el caso huérfano. La validación final compartida de la PR pasó con PostgreSQL temporal aislado: Master, `507 passed, 3 subtests passed`; Connector, `151 passed, 12 subtests passed`; y contratos oficiales v3.0.2, `7 passed`. Los 25 tests focalizados de conciliación y auditoría también pasaron. No se verificó la conciliación contra Wallet productiva.
+
+Quedó identificado un riesgo: un barrido completo de `/statement` que exceda 100 páginas falla sin guardar avance parcial y puede volver a fallar en el siguiente intento. No se comprobó que el historial real alcance ese límite. La medida de AD5 en el dashboard sigue pendiente en Frontend.
+
+---
+
+# E2-071 - Retry-After, deadlines y cuotas operacionales (RF03)
+
+## 1. Alcance revisado
+
+### Prompt relevante
+
+> "Comprueba que las cuotas sean realmente compartidas entre Master, Master2, Scheduler y Connector."
+
+### Resumen de la respuesta y utilidad
+
+La revisión permitió separar la recuperación de respuestas HTTP perdidas, ya abordada en E2-068, del control de cupos y tiempos de E2-071. La misma operación económica conserva su `Idempotency-Key` durante reintentos; una respuesta HTTP incierta no se trata como un swap liquidado.
+
+## 2. Implementación y pruebas
+
+`master/app/services/operational_rate_limits.py` registra en PostgreSQL cupos por ciudad para lecturas y escrituras Wallet, ofertas de mercado y `request-ask`. La reserva usa bloqueo de fila para coordinar procesos; la migración `e2071_rate_limits_accept_retry.py` agrega el estado persistente. El cliente Wallet interpreta `Retry-After` en respuestas 429 y 503, mientras que las rutas de swaps, timeouts y publicación difieren intentos según límites y vencimientos. El Connector consulta el cupo antes de publicar ofertas y conserva el mensaje en el outbox si debe esperar.
+
+`master/tests/test_e2071_operational_limits.py` prueba ventanas compartidas entre sesiones, bloqueo `Retry-After`, respuestas HTTP, aplazamiento sin perder el outbox y concurrencia por el último cupo. También se ampliaron pruebas de aceptación y timeouts de swaps y de publicación del Connector. La validación final de la rama incluyó las suites completas citadas en E2-070; fue local, sin llamadas a Wallet ni broker productivos. La coordinación real entre réplicas desplegadas y sus plazos requiere comprobación en el entorno E2.
+
+---
+
+# E2-075 - Auditoría Wallet e interciudad (RF05)
+
+## 1. Trazas consultables
+
+### Prompt relevante
+
+> "Comprueba que ningún endpoint exponga JWT, `swapToken`, API keys o información sensible, incluso en campos anidados."
+
+### Resumen de la respuesta y utilidad
+
+Se agregaron en `master/app/routers/audit_v3.py` consultas paginadas para mensajes interciudad, eventos Wallet y conciliaciones. Permiten seguir `msgId`, `idpk`, ciclo y swap hasta registros de ledger, statement y snapshots. Las rutas requieren el JWT configurado y un `sub` no vacío. `GET /audit/anomalies` conserva la forma consumida por Frontend; `docs/api/E2-075-audit-v3.md` describe filtros y respuestas. Esto dejó evidencia consultable para `DUPLICATE`, `DISCARDED`, `NACKED` e `IDENTITY_MISMATCH`, sin afirmar que la vista de demo del Frontend estuviera terminada.
+
+## 2. Corrección de fuga HTTP y motivo NACK
+
+### Prompt relevante
+
+> "Reproduce mediante HTTP el caso de `access_token` anidado."
+
+### Resumen de la respuesta y utilidad
+
+La prueba HTTP confirmó que el serializador anterior podía devolver `access_token` dentro de un payload malformado. El commit `84467e6` cambió `master/app/routers/message_audit.py` para exponer sólo identificadores auditados del envelope y dejar `rawPayload` en `null`; el original permanece en PostgreSQL para diagnóstico. También se recuperó `reasonCode` de los NACK salientes desde su payload persistido, limitado a códigos conocidos del protocolo. Un motivo NACK malformado no provoca error 500 ni se devuelve como credencial.
+
+Las pruebas de `master/tests/test_e2075_audit_v3.py` envían por HTTP objetos y listas con distintos nombres de credenciales, texto crudo malformado y NACK válidos o malformados. Pasaron junto con los 25 tests focalizados y las suites completas indicadas antes. No se probó la política de acceso del gateway/Auth0 en producción. Faltan la actualización del OpenAPI organizacional y una vista Frontend para la demo RF05.
+
+---
+
+Los cambios de E2-070, E2-071 y E2-075 se integraron mediante la PR #86. Las pruebas anteriores acreditan el comportamiento local de esta rama, no su operación desplegada.

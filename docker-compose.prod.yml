@@ -118,10 +118,16 @@ services:
     container_name: cycle-scheduler
     restart: unless-stopped
     command:
+      - newrelic-admin
+      - run-program
       - python
       - -m
       - app.workers.cycle_scheduler
     environment:
+      NEW_RELIC_LICENSE_KEY: ${NEW_RELIC_LICENSE_KEY:?NEW_RELIC_LICENSE_KEY is required}
+      NEW_RELIC_APP_NAME: ${NEW_RELIC_WORKER_APP_NAME:-EnergyShark Scheduler}
+      NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
+      NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
       DATABASE_URL: ${DATABASE_URL}
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CYCLE_SCHEDULER_POLL_SECONDS: ${CYCLE_SCHEDULER_POLL_SECONDS}

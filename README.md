@@ -769,3 +769,11 @@ El presupuesto se arrastra entre ciclos mediante asientos trazables, sin traslad
 Aplicar `alembic upgrade head` antes del código nuevo (`f210v2reports`). El downgrade se bloquea si perdería correcciones. Probar el arrastre sobre una copia histórica: usa validUntil, conserva asientos y rechaza fechas ambiguas. No modifica reportes históricos ni descuenta penalty nuevamente.
 
 `.env.example` usa la cola observada `city.KLD.q`. El usuario AMQP sigue siendo `city.KLD`; cola e identidad son propiedades distintas. `distance-table` admite sender central, cityId ausente/null y cycleId opcional, conforme a la evidencia productiva informada.
+
+### E2-061 · Panel y alertas wallet/broker
+
+La definición de New Relic y las instrucciones de publicación se encuentran en
+[`docs/observability/E2-061-alertas-panel-wallet-broker.md`](docs/observability/E2-061-alertas-panel-wallet-broker.md).
+El comando `python tools/newrelic_e2061.py --account-id NUMERO` genera un
+**dry-run sin red**. Las alertas y el dashboard sólo se crean en la cuenta con
+`--apply` y una user API key válida.

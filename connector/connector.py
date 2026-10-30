@@ -6,7 +6,11 @@ from pathlib import Path
 import signal
 import ssl
 
-from observability import ObservedIncomingMessage, record_consumer_connection
+from observability import (
+    ObservedIncomingMessage,
+    record_consumer_connection,
+    record_consumer_heartbeat,
+)
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
 from protocol.publisher import (
@@ -697,6 +701,13 @@ async def process_market_message(message, client: httpx.AsyncClient) -> None:
     await asyncio.sleep(HTTP_RETRY_SECONDS)
 
 
+async def market_consumer_heartbeat(interval_seconds: float = 60.0) -> None:
+    """Se ejecuta solo mientras la conexión del consumidor market está activa."""
+    while True:
+        record_consumer_heartbeat("market")
+        await asyncio.sleep(interval_seconds)
+
+
 async def consume_market_forever() -> None:
     """Consume el feed en su propia conexión, aislado de la cola dirigida."""
     tls_context = ssl.create_default_context()
@@ -720,10 +731,15 @@ async def consume_market_forever() -> None:
                 record_consumer_connection("market", "connected")
                 logger.info("Conectado. Esperando feed en %s", RABBITMQ_MARKET_QUEUE)
 
-                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                    async with queue.iterator() as iterator:
-                        async for message in iterator:
-                            await process_market_message(message, client)
+                heartbeat_task = asyncio.create_task(market_consumer_heartbeat())
+                try:
+                    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                        async with queue.iterator() as iterator:
+                            async for message in iterator:
+                                await process_market_message(message, client)
+                finally:
+                    heartbeat_task.cancel()
+                    await asyncio.gather(heartbeat_task, return_exceptions=True)
 
         except asyncio.CancelledError:
             raise

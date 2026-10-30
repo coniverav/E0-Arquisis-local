@@ -37,6 +37,18 @@ Los decimales admiten como máximo cuatro cifras fraccionarias, coherentes con
 `Numeric(10,4)`, para evitar auditorías de valores redondeados silenciosamente.
 Las políticas y el `span` se validan contra las opciones admitidas por AD6.
 
+## Controles directos RF04 (E2-073)
+
+El mismo formulario puede enviar `offerPriceOverride` (CR/KWH positivo, hasta
+cuatro decimales) y `offerQuantityCap` (KWH enteros no negativos). Ambos son
+opcionales: `null` conserva el cálculo anterior mediante multiplicador y
+fracción. El precio directo respeta el piso `buybackPrice` del ciclo. El tope
+de cantidad se aplica después de la fracción y nunca excede el excedente
+vendible ni el saldo Wallet; cero permite no publicar oferta. Estos valores
+se guardan en la nueva versión `PENDING`, se auditan y se fijan al ciclo igual
+que los demás campos. Requieren la migración `e2073directoffer` antes de
+utilizar el formulario actualizado.
+
 `GET /market/strategy?cycleId=...` distingue la versión `ACTIVE`, la última
 `PENDING` y la versión **realmente fijada** en el ciclo consultado. El inicio
 del próximo ciclo selecciona la nueva versión según `market.opensAt` oficial;
@@ -48,7 +60,8 @@ un `status-statement` tardío no reescribe la estrategia de un ciclo anterior.
 `total`, `offset`, `limit`, `items`, ordenados de versión más nueva a antigua.
 Cada registro indica `version`, `previousVersion`, `status`, `createdAt`,
 `createdBy`, `effectiveFromCycleId` y diferencias `changes` (`before`/`after`)
-para los cinco parámetros. Es una vista sobre el historial persistente
+para los parámetros configurables, incluidos los dos controles directos cuando
+cambian. Es una vista sobre el historial persistente
 versionado; **no agrega una segunda fuente de verdad ni una migración**.
 
 Las versiones anteriores conservan sus parámetros originales. Solo evolucionan

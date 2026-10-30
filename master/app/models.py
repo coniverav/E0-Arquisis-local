@@ -1170,6 +1170,10 @@ class StrategyConfig(SQLModel, table=True):
         default=Decimal("1.00"),
         sa_column=Column(Numeric(10, 4), nullable=False),
     )
+    offer_price_override: Optional[Decimal] = Field(
+        default=None, sa_column=Column(Numeric(20, 4), nullable=True),
+    )
+    offer_quantity_cap: Optional[int] = Field(default=None)
     # FIFO, MAX_REMAINING, BATCH
     bid_acceptance_policy: str = Field(default="FIFO", nullable=False)
     # CHEAPEST_EFFECTIVE_PRICE, MIN_DISTANCE

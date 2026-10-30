@@ -29,6 +29,8 @@ def calculate_offer(
     buyback_price: Decimal,
     markup: Decimal = DEFAULT_MARKUP,
     fraction: Decimal = DEFAULT_FRACTION,
+    price_override: Decimal | None = None,
+    quantity_cap: int | None = None,
 ) -> tuple[int, Decimal]:
     """Calcula cantidad y precio sin ofrecer más KWH que los disponibles."""
 
@@ -36,6 +38,10 @@ def calculate_offer(
         raise ValueError("offer_quantity_fraction debe estar entre 0 y 1")
     if markup <= 0:
         raise ValueError("offer_price_markup debe ser positivo")
+    if price_override is not None and (not price_override.is_finite() or price_override <= 0):
+        raise ValueError("offer_price_override debe ser positivo y finito")
+    if quantity_cap is not None and (type(quantity_cap) is not int or quantity_cap < 0):
+        raise ValueError("offer_quantity_cap debe ser entero no negativo")
 
     wallet_kwh = max(
         0, int(wallet_available.to_integral_value(rounding=ROUND_DOWN))
@@ -45,10 +51,12 @@ def calculate_offer(
     quantity = int(
         (Decimal(available) * fraction).to_integral_value(rounding=ROUND_DOWN)
     )
+    if quantity_cap is not None:
+        quantity = min(quantity, quantity_cap)
 
     price = max(
         buyback_price,
-        (generation_cost * markup).quantize(CENT, rounding=ROUND_HALF_UP),
+        (price_override if price_override is not None else generation_cost * markup).quantize(CENT, rounding=ROUND_HALF_UP),
     )
 
     return quantity, price.quantize(CENT, rounding=ROUND_HALF_UP)
@@ -157,6 +165,8 @@ async def enqueue_seller_offer(
                 buyback_price=Decimal(str(market["buybackPrice"])),
                 markup=strategy.offer_price_markup,
                 fraction=strategy.offer_quantity_fraction,
+                price_override=strategy.offer_price_override,
+                quantity_cap=strategy.offer_quantity_cap,
             )
 
             if quantity <= 0:

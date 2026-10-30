@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from datetime import timedelta
 import re
 from sqlalchemy import or_, exists
 from sqlalchemy.orm import aliased
@@ -51,6 +52,7 @@ from ..services.message_audit import (
     record_outbound_message,
 )
 from ..services.market_feed import persist_market_feed
+from ..services.operational_rate_limits import reserve as reserve_rate_limit
 from ..services.buy_bids import renew_failed_bid_dispatches
 
 #En un duplicado interesa también conocer cuál fue el mensaje que realmente obtuvo el claim y aplicó la operación.
@@ -288,6 +290,36 @@ def list_outbound_dispatch(
             for message in messages
         ]
     }
+
+@router.post("/outbound/{msg_id}/reserve-quota")
+def reserve_outbound_quota(
+    msg_id: str,
+    session: Session = Depends(get_session),
+):
+    """Reserva el cupo de publicación compartido antes del envío AMQP."""
+    message = session.exec(select(OutboundMessage).where(
+        OutboundMessage.msg_id == msg_id
+    ).with_for_update()).first()
+    if message is None or not message.dispatch_required or message.status not in {OUTBOUND_PENDING, OUTBOUND_FAILED}:
+        raise HTTPException(status_code=409, detail="outbound no elegible")
+    category = (
+        "market:offer" if message.message_type in {"offer", "offer-updated", "offer-withdrawn"}
+        else "central:request" if message.message_type == "request" and message.request_ask in {"status-statement", "distance-table"}
+        else None
+    )
+    if category is None:
+        raise HTTPException(status_code=409, detail="outbound no sujeto a este cupo")
+    now = datetime.now(timezone.utc)
+    if message.expires_at is not None and message.expires_at <= now:
+        raise HTTPException(status_code=409, detail="outbound vencido")
+    if message.available_at is not None and message.available_at > now:
+        return {"allowed": False, "retryAfter": max(1, int((message.available_at - now).total_seconds()) + 1)}
+    retry_after = reserve_rate_limit(session, category, now=now)
+    message.available_at = now + timedelta(seconds=retry_after if retry_after else 15)
+    session.add(message)
+    session.commit()
+    return {"allowed": retry_after == 0, "retryAfter": retry_after}
+
 
 @router.post("/outbound/{msg_id}/result")
 def update_outbound_audit(

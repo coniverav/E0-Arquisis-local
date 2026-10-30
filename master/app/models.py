@@ -877,6 +877,10 @@ class SwapRecord(SQLModel, table=True):
         default=None,
         sa_column=Column(Text, nullable=True),
     )
+    accept_retry_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
 
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
@@ -1120,6 +1124,18 @@ class WalletReconciliation(SQLModel, table=True):
     )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class OperationalRateLimit(SQLModel, table=True):
+    """Ventana de 60 segundos y bloqueo HTTP compartidos por la ciudad."""
+
+    __tablename__ = "operational_rate_limits"
+
+    key: str = Field(primary_key=True)
+    attempts: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False))
+    blocked_until: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
 

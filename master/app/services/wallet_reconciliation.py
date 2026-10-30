@@ -346,6 +346,9 @@ async def reconcile_wallet_tick(
         with Session(engine) as session:
             return await reconcile_wallet(session, client=client, now=now)
     except (WalletError, OSError) as exc:
+        retry_after = getattr(exc, "retry_after", None)
+        if isinstance(retry_after, int) and retry_after > interval:
+            _last_tick_monotonic = current_tick + retry_after - interval
         logger.warning("Conciliación wallet no disponible: %s", exc)
         return None
     except Exception:

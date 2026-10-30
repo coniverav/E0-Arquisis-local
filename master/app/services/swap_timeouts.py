@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import and_, exists, or_
 from sqlmodel import Session, select
@@ -315,7 +316,12 @@ async def expire_stale_swaps(
                 try:
                     await client.cancel_swap(
                         record.swap_id,
-                        idempotency_key=record.idempotency_key,
+                        # Cancelar es otra operación: una llave UUID estable,
+                        # distinta de la usada en POST /swaps, también tras reinicio.
+                        idempotency_key=str(uuid5(
+                            NAMESPACE_URL,
+                            f"energyshark:cancel:{record.idempotency_key}:{record.swap_id}",
+                        )),
                     )
                     stats["cancel_requested"] += 1
                 except WalletError as exc:

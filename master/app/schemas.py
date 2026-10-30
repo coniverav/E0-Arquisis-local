@@ -559,6 +559,7 @@ class AuditAnomalyOut(BaseModel):
     idpk: str | None
     type: str | None
     cycleId: str | None
+    sender: str | None = None
 
     status: Literal[
         "DUPLICATE",

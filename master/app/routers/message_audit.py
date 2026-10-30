@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from datetime import timedelta
+from copy import deepcopy
 import re
 from sqlalchemy import or_, exists
 from sqlalchemy.orm import aliased
@@ -81,13 +82,22 @@ def _inbound_message_to_out(
             if claim is not None:
                 related_msg_id = claim.msg_id
 
-    # El JWT del swap es un token portador. Nunca exponerlo en auditoría HTTP.
-    safe_payload = message.payload
-    if message.message_type == "bid-accepted" and isinstance(safe_payload, dict):
-        safe_payload = dict(safe_payload)
-        if isinstance(safe_payload.get("data"), dict):
-            safe_payload["data"] = dict(safe_payload["data"])
-            safe_payload["data"].pop("swapToken", None)
+    # Los eventos wallet usan data.token; bid-accepted usa data.swapToken.
+    # La auditoría conserva el original en PostgreSQL, pero nunca lo devuelve.
+    def redact(value):
+        if isinstance(value, dict):
+            return {key: redact(item) for key, item in value.items()
+                    if key.lower() not in {"token", "swaptoken", "apikey", "x-api-key", "authorization", "secret"}}
+        if isinstance(value, list):
+            return [redact(item) for item in value]
+        return value
+
+    safe_payload = redact(deepcopy(message.payload))
+    sensitive_pattern = r"(?i)(token|api.?key|authorization|secret)"
+    raw_is_sensitive = bool(message.raw_payload and re.search(
+        sensitive_pattern, message.raw_payload
+    ))
+    safe_reason = None if message.reason and re.search(sensitive_pattern, message.reason) else message.reason
 
     return InboundMessageAuditOut(
         id=message.id,
@@ -97,12 +107,14 @@ def _inbound_message_to_out(
         cycleId=message.cycle_id,
         status=message.status,
         reasonCode=message.reason_code,
-        reason=message.reason,
+        reason=safe_reason,
         receivedAt=message.received_at,
         processedAt=message.processed_at,
         relatedMsgId=related_msg_id,
         payload=safe_payload,
-        rawPayload=(None if message.message_type == "bid-accepted" else message.raw_payload),
+        rawPayload=(None if message.message_type == "bid-accepted"
+                    or (message.message_type or "").startswith("swap-")
+                    or raw_is_sensitive else message.raw_payload),
     )
 
 def _inbound_message_to_anomaly_out(
@@ -120,6 +132,7 @@ def _inbound_message_to_anomaly_out(
         idpk=internal.idpk,
         type=internal.type,
         cycleId=internal.cycleId,
+        sender=message.sender,
         status=internal.status,
         reasonCode=internal.reasonCode,
         reason=internal.reason,
@@ -615,6 +628,9 @@ def list_audit_anomalies(
         alias="msgId",
     ),
     idpk: str | None = None,
+    sender: str | None = None,
+    cycle_id: str | None = Query(None, alias="cycleId"),
+    offset: int = Query(0, ge=0, le=10000),
     limit: int = Query(
         100,
         ge=1,
@@ -661,6 +677,11 @@ def list_audit_anomalies(
             InboundMessage.idpk == idpk
         )
 
+    if sender is not None:
+        conditions.append(InboundMessage.sender == sender)
+    if cycle_id is not None:
+        conditions.append(InboundMessage.cycle_id == cycle_id)
+
     statement = select(InboundMessage)
     count_statement = select(
         func.count(InboundMessage.id)
@@ -686,6 +707,7 @@ def list_audit_anomalies(
             InboundMessage.received_at.desc(),
             InboundMessage.id.desc(),
         )
+        .offset(offset)
         .limit(limit)
     ).all()
 

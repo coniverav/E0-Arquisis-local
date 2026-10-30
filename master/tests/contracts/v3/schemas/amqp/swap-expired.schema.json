@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/swap-expired.schema.json",
+  "title": "SwapExpired",
+  "description": "La propuesta venció sin que nadie la aceptara, y la retención de `give` se liberó. Va sólo al proponente: la wallet no sabe quién iba a aceptar. No lleva `data.idpk`, porque ninguna operación lo causó. Evento de la wallet que la central reenvía a `city.{CODE}`, con `sender: \"central\"` y el envelope de la E1 (el `idpk` del envelope es el de este envío, como en todo mensaje). No lleva `cycleId`: la wallet no sabe de ciclos.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["wallet"],
+    "receivers": ["city.{proponente}"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "swap-expired" },
+    "data": {
+      "title": "SwapExpiredData",
+      "description": "Contenido del `swap-expired`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["swapId", "balancesAfter"],
+      "properties": {
+        "swapId": { "type": "string", "minLength": 1, "description": "Identificador del swap." },
+        "balancesAfter": {
+          "$ref": "../common/balances-after.schema.json",
+          "description": "Saldos de la ciudad que recibe este evento después de la operación."
+        }
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}

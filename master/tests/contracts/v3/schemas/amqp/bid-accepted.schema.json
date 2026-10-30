@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/bid-accepted.schema.json",
+  "title": "BidAccepted",
+  "description": "El vendedor aceptó el bid: ya propuso el swap en la wallet y la wallet confirmó la propuesta. Va a la cola `city.{comprador}`, después del `ack` del bid. El comprador debe verificar `swapToken` antes de aceptar el swap en la wallet: el swap es al portador, y un token válido no garantiza disponibilidad (si otro acepta primero, `SWAP_NOT_PROPOSED`).",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{comprador}",
+    "sender": [
+      "city"
+    ],
+    "receivers": [
+      "city.{comprador}"
+    ],
+    "userId": "required"
+  },
+  "allOf": [
+    {
+      "$ref": "../common/envelope.schema.json"
+    },
+    {
+      "$ref": "../common/city-sender.schema.json"
+    },
+    {
+      "$ref": "../common/cycle-bound.schema.json"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "type",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "bid-accepted"
+    },
+    "data": {
+      "$ref": "#/$defs/Data"
+    }
+  },
+  "$defs": {
+    "Data": {
+      "title": "BidAcceptedData",
+      "description": "Contenido del `bid-accepted`.",
+      "type": "object",
+      "required": [
+        "target",
+        "offerId",
+        "quantity",
+        "pricePerEnergy",
+        "amount",
+        "swapId",
+        "swapToken",
+        "expiresAt"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del `bid` al que responde."
+        },
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El `offerId` de la oferta, tal como lo eligió el vendedor en su `offer`."
+        },
+        "quantity": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "kWh del bid aceptado, enteros: el bid se acepta entero."
+        },
+        "pricePerEnergy": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Precio por kWh de la oferta, en créditos."
+        },
+        "amount": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Total en créditos: `round2(quantity × pricePerEnergy)`."
+        },
+        "swapId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identificador del swap que el vendedor propuso en la wallet."
+        },
+        "swapToken": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El mismo JWT (ES256) que la wallet envió al vendedor en `swap-proposed.data.token`; sus claims los describe `token/swap-token-claims.schema.json`. El comprador lo verifica contra `/.well-known/jwks.json` antes de aceptar."
+        },
+        "expiresAt": {
+          "$ref": "../common/instant.schema.json",
+          "description": "Instante en que la propuesta vence si nadie la acepta (el `expiresAt` del `swap-proposed`)."
+        }
+      }
+    }
+  }
+}

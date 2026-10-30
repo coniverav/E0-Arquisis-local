@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/retired-type.schema.json",
+  "title": "RetiredType",
+  "description": "Tipos de la E1 retirados en el protocolo v3. La central responde `ack` y luego `error` `TYPE_RETIRED` (410) a cualquier mensaje de ciudad con uno de estos tipos. El `transfer` como pago (el que traía `data.becauseOf`) también se retira, pero `transfer` sigue siendo un tipo vigente para el financiamiento al abrir el ciclo, así que no está en esta lista.",
+  "enum": ["negotiation-proposal", "give", "take", "demand-statement"]
+}

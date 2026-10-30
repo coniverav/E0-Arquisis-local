@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/index.schema.json",
+  "title": "ContractRoot",
+  "description": "Raíz para generar tipos: alcanza cada mensaje AMQP a través de `AnyMessage` y cada catálogo a través de una propiedad. Cada raíz que un generador de tipos necesita se alcanza por una entrada de `properties`, porque una entrada de `$defs` que es sólo un `$ref` no se emite como tipo. No describe un mensaje que viaje por el broker.",
+  "type": "object",
+  "properties": {
+    "message": {
+      "$ref": "#/$defs/AnyMessage"
+    },
+    "reason": {
+      "$ref": "reason/reason.schema.json"
+    },
+    "retiredType": {
+      "$ref": "common/retired-type.schema.json"
+    },
+    "swapTokenClaims": {
+      "$ref": "token/swap-token-claims.schema.json"
+    }
+  },
+  "$defs": {
+    "AnyMessage": {
+      "title": "AnyMessage",
+      "description": "Cualquier mensaje AMQP de este contrato.",
+      "anyOf": [
+        {
+          "$ref": "amqp/ack.schema.json"
+        },
+        {
+          "$ref": "amqp/bid-accepted.schema.json"
+        },
+        {
+          "$ref": "amqp/bid-rejected.schema.json"
+        },
+        {
+          "$ref": "amqp/bid.schema.json"
+        },
+        {
+          "$ref": "amqp/distance-table.schema.json"
+        },
+        {
+          "$ref": "amqp/error.schema.json"
+        },
+        {
+          "$ref": "amqp/imbalance-settlement.schema.json"
+        },
+        {
+          "$ref": "amqp/market-closed.schema.json"
+        },
+        {
+          "$ref": "amqp/nack.schema.json"
+        },
+        {
+          "$ref": "amqp/negotiation-report.schema.json"
+        },
+        {
+          "$ref": "amqp/offer-updated.schema.json"
+        },
+        {
+          "$ref": "amqp/offer-withdrawn.schema.json"
+        },
+        {
+          "$ref": "amqp/offer.schema.json"
+        },
+        {
+          "$ref": "amqp/request.schema.json"
+        },
+        {
+          "$ref": "amqp/status-statement.schema.json"
+        },
+        {
+          "$ref": "amqp/swap-cancelled.schema.json"
+        },
+        {
+          "$ref": "amqp/swap-expired.schema.json"
+        },
+        {
+          "$ref": "amqp/swap-proposed.schema.json"
+        },
+        {
+          "$ref": "amqp/swap-rejected.schema.json"
+        },
+        {
+          "$ref": "amqp/swap-settled.schema.json"
+        },
+        {
+          "$ref": "amqp/trade-recorded.schema.json"
+        },
+        {
+          "$ref": "amqp/transfer.schema.json"
+        }
+      ]
+    }
+  }
+}

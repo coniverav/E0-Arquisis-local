@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/common/rate4.schema.json",
+  "title": "Rate4",
+  "description": "Tarifa en créditos por kWh·km, con hasta cuatro decimales (`x-decimals: 4`). Viaja como `number` JSON.",
+  "type": "number",
+  "x-decimals": 4
+}

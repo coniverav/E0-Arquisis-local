@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/request.schema.json",
+  "title": "Request",
+  "description": "Petición directa de una ciudad a la central para que le reenvíe un mensaje que la central emite y que no mueve su ledger. Una petición válida produce dos mensajes: primero un `ack` y después, aparte, la respuesta, para la ventana de negociación abierta en ese momento o la última que se abrió. Una petición que nombre cualquier otra cosa en `ask` se rechaza con `nack` `MALFORMED_MESSAGE` (422), sin `ack` previo. Se aceptan a lo sumo 10 peticiones por minuto por ciudad; las que exceden se descartan y se registran, sin respuesta.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "central",
+    "sender": ["city"],
+    "receivers": ["central"],
+    "userId": "required"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/city-sender.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "request" },
+    "cycleId": {
+      "type": "string",
+      "description": "Opcional y sin efecto: una petición no está ligada a un ciclo y la central ignora este campo (no lo juzga ni responde `CYCLE_EXPIRED` por él). El ciclo de la respuesta lo elige la central y viaja en la respuesta."
+    },
+    "data": { "$ref": "#/$defs/Data" }
+  },
+  "$defs": {
+    "Data": {
+      "title": "RequestData",
+      "description": "Contenido de la petición.",
+      "type": "object",
+      "required": ["ask"],
+      "properties": {
+        "ask": {
+          "enum": ["status-statement", "distance-table"],
+          "description": "Qué mensaje le piden a la central que les reenvíe. Acepta exactamente estos dos valores."
+        }
+      }
+    }
+  }
+}

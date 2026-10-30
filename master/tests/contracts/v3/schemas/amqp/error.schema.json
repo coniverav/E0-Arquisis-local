@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/error.schema.json",
+  "title": "ErrorMessage",
+  "description": "Rechaza la operación de un mensaje bien formado y correctamente dirigido que la central no puede atender. Como el mensaje sí fue recibido, un `error` siempre va precedido del `ack` de ese mensaje. `reason` y `code` van en el nivel superior del envelope. No se hacen ACKs de errores ni errores de errores. Sólo lo envía la central.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{CODE}"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../reason/refusals.schema.json#/$defs/ErrorRefusal" },
+    {
+      "if": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": { "reason": { "const": "REPORT_TOO_EARLY" } }
+      },
+      "then": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["opensAt"],
+            "properties": { "opensAt": { "type": "string", "format": "date-time" } }
+          }
+        }
+      }
+    }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "error" },
+    "data": { "$ref": "#/$defs/Data" }
+  },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "ErrorMessageData",
+      "description": "Contenido del `error`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "message"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del mensaje que provocó este rechazo."
+        },
+        "message": {
+          "type": "string",
+          "description": "Texto humano que describe la falla."
+        },
+        "cycleId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "El `cycleId` que traía el mensaje rechazado, devuelto tal cual si es un string de a lo sumo 64 caracteres; si no, no viene."
+        },
+        "opensAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Sólo en `REPORT_TOO_EARLY`, y ahí siempre: instante (ISO 8601) en que abre el periodo de cierre, desde el cual pueden reintentar el reporte."
+        }
+      }
+    }
+  }
+}

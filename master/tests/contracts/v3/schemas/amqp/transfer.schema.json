@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/transfer.schema.json",
+  "title": "Transfer",
+  "description": "Financiamiento del ciclo: los créditos que la central acredita en la cuenta de su ciudad en la wallet al abrir la ventana, junto con el `status-statement`. Conserva la forma de la E1 (`data.quantity` y, sólo cuando hubo multa, el objeto `data.penalty`) y agrega `data.balanceAfter` y `data.creditLine`. En `/statement`, el asiento `funding` es el financiamiento bruto del ciclo; una multa es su propio asiento `penalty`, debitado en `validUntil` del ciclo multado y etiquetado con él, y `data.quantity` es el neto (bruto menos la multa); `data.balanceAfter` ya incluye ambos asientos. El `transfer` como pago de la E1 (el que traía `data.becauseOf`) se retira: en el protocolo v3 un `transfer` siempre es financiamiento.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{CODE}"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": { "type": { "const": "transfer" }, "data": { "$ref": "#/$defs/Data" } },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "TransferData",
+      "description": "Contenido del `transfer` de financiamiento.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["quantity", "balanceAfter", "creditLine"],
+      "properties": {
+        "quantity": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos que efectivamente reciben en este ciclo. Si hubo multa, ya viene descontada: no vuelvan a restarla."
+        },
+        "penalty": { "$ref": "#/$defs/Penalty" },
+        "balanceAfter": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Saldo disponible en créditos de su cuenta en la wallet después de acreditar este financiamiento. Puede ser negativo."
+        },
+        "creditLine": {
+          "$ref": "../common/cr.schema.json",
+          "type": "number",
+          "minimum": 0,
+          "description": "Línea de crédito vigente, en créditos: para retener `CR` la wallet exige `available + creditLine ≥ monto`, es decir, pueden comprar con saldo negativo hasta `-creditLine`."
+        }
+      }
+    },
+    "Penalty": {
+      "title": "TransferPenalty",
+      "description": "Detalle de la multa descontada de `quantity`. Sólo viene cuando hubo multa: sin multa la clave `penalty` no viene, ni en cero ni en `null`. Pregunten por la presencia de la clave, no por su valor. Nunca se acumulan dos multas en un mismo `transfer`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "forCycleId"],
+      "properties": {
+        "amount": {
+          "$ref": "../common/cr.schema.json",
+          "description": "Créditos descontados por la multa."
+        },
+        "forCycleId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Ciclo por el cual se les multó (el ciclo cuyo `negotiation-report` nunca llegó), que no es el ciclo en el que se cobra."
+        }
+      }
+    }
+  }
+}

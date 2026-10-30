@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/swap-state.schema.json",
+  "title": "SwapState",
+  "description": "Estado de un swap: cuerpo de `GET /swaps/{swapId}` y del `200` que devuelve una escritura repetida con una `Idempotency-Key` ya conocida (ese `200` no ejecuta nada). La verdad del resultado son los eventos en `city.{CODE}`; este cuerpo es lo que la wallet sabe en el momento de la lectura.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["swapId", "status"],
+  "properties": {
+    "swapId": { "type": "string", "minLength": 1, "description": "Identificador del swap." },
+    "status": {
+      "enum": ["accepted", "proposed", "settled", "cancelled", "expired", "rejected"],
+      "description": "`accepted`: aceptado y aún sin resolver. `proposed`: la propuesta se procesó y `give` quedó retenido. `settled`: ambas patas se liquidaron. `cancelled`: el proponente lo canceló. `expired`: venció sin aceptación. `rejected`: la operación no se pudo ejecutar."
+    },
+    "lastEvent": {
+      "title": "SwapLastEvent",
+      "description": "El último evento del swap, con el mismo `type` y el mismo `data` que el evento publicado en `city.{CODE}`; `reason` y `code` vienen sólo si el evento los lleva (`swap-rejected`). No viene mientras el swap no tenga eventos. `lastEvent.data.balancesAfter` trae los saldos propios de la ciudad que lee, en el instante de la lectura, nunca los de otra ciudad.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "swap-proposed" },
+            "data": { "$ref": "../amqp/swap-proposed.schema.json#/properties/data" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "swap-settled" },
+            "data": { "$ref": "../amqp/swap-settled.schema.json#/properties/data" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "swap-cancelled" },
+            "data": { "$ref": "../amqp/swap-cancelled.schema.json#/properties/data" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "swap-expired" },
+            "data": { "$ref": "../amqp/swap-expired.schema.json#/properties/data" }
+          }
+        },
+        {
+          "type": "object",
+          "allOf": [{ "$ref": "../reason/refusals.schema.json#/$defs/SwapRejectedRefusal" }],
+          "required": ["type", "data"],
+          "properties": {
+            "type": { "const": "swap-rejected" },
+            "data": { "$ref": "../amqp/swap-rejected.schema.json#/properties/data" }
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    }
+  }
+}

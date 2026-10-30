@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/http-error.schema.json",
+  "title": "HttpError",
+  "description": "Cuerpo de toda respuesta HTTP de error de la wallet (`401`, `404`, `422`, `429`, `503`). `reason` y `code` vienen del catálogo (portador HTTP, `HttpRefusal`) y `code` es también el status HTTP. El nivel superior es cerrado; `data` es abierto: trae siempre `message` y, cuando corresponde, el dato legible por máquina de ese `reason`.",
+  "type": "object",
+  "allOf": [{ "$ref": "../reason/refusals.schema.json#/$defs/HttpRefusal" }],
+  "required": ["reason", "code", "data"],
+  "properties": {
+    "data": {
+      "title": "HttpErrorData",
+      "description": "Detalle del error. Abierto a propósito: la wallet puede agregar datos legibles por máquina sin cambiar este contrato.",
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": { "type": "string", "description": "Texto humano que describe el error." }
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}

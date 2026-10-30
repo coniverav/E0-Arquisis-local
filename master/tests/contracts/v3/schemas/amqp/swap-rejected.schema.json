@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/swap-rejected.schema.json",
+  "title": "SwapRejected",
+  "description": "La operación (`propose`, `accept` o `cancel`) no se pudo ejecutar; `reason` y `code` van en el nivel superior del envelope. Va a quien intentó la operación y, cuando falla un `accept`, también al proponente del swap, cuya retención se libera: un nodo debe esperar un `swap-rejected` con `operation: \"accept\"` que no envió. Cuando un `accept` falla con `INSUFFICIENT_ASSET`, la copia del aceptante trae `asset`, `available` y `required`; la del proponente trae `asset` y `required`, nunca `available`, que sería el saldo de otra ciudad. Evento de la wallet que la central reenvía a `city.{CODE}`, con `sender: \"central\"` y el envelope de la E1 (el `idpk` del envelope es el de este envío, como en todo mensaje). No lleva `cycleId`: la wallet no sabe de ciclos. `data.idpk` es igual a la `Idempotency-Key` de la operación que lo causó.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["wallet"],
+    "receivers": ["city.{quien intentó la operación}", "city.{proponente} (accept fallido)"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../reason/refusals.schema.json#/$defs/SwapRejectedRefusal" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "swap-rejected" },
+    "data": {
+      "title": "SwapRejectedData",
+      "description": "Contenido del `swap-rejected`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["idpk", "operation", "message"],
+      "properties": {
+        "swapId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Identificador del swap, cuando existe."
+        },
+        "idpk": {
+          "type": "string",
+          "format": "uuid",
+          "description": "La `Idempotency-Key` de la operación que causó este evento."
+        },
+        "operation": {
+          "enum": ["propose", "accept", "cancel"],
+          "description": "Operación que no se pudo ejecutar."
+        },
+        "message": { "type": "string", "description": "Texto humano que describe la falla." },
+        "asset": {
+          "enum": ["CR", "KWH"],
+          "description": "Dato legible por máquina de `INSUFFICIENT_ASSET`: el activo que faltó (`give` al proponer, `take` al aceptar)."
+        },
+        "available": {
+          "type": "number",
+          "description": "Dato legible por máquina de `INSUFFICIENT_ASSET`: lo disponible de ese activo en la cuenta de la ciudad que intentó la operación. Viene sólo en la copia de esa ciudad; la copia que recibe el proponente cuando falla un `accept` no lo trae."
+        },
+        "required": {
+          "type": "number",
+          "description": "Dato legible por máquina de `INSUFFICIENT_ASSET`: lo que la operación necesitaba de ese activo."
+        }
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/market-closed.schema.json",
+  "title": "MarketClosed",
+  "description": "Cierre del mercado del ciclo. La central emite uno solo por ciclo, en `closesAt`, al exchange `market` con routing key `market.closed`: llega a toda cola `market.{CODE}` por su binding `market.#` y no choca con los `market.offer.{CODE}` que publican las ciudades. Las ofertas que no fueron retiradas quedan sin efecto. `data` siempre es `{}`: el `cycleId` va en el nivel superior del envelope, como en todo mensaje de la central.",
+  "x-amqp": {
+    "exchange": "market",
+    "routingKey": "market.closed",
+    "sender": ["central"],
+    "receivers": ["market.{CODE} (todas)"],
+    "userId": "none"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": { "type": { "const": "market-closed" }, "data": { "$ref": "#/$defs/Data" } },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "MarketClosedData",
+      "description": "Siempre `{}`. El `cycleId` del ciclo que cierra va en el nivel superior del envelope, nunca aquí.",
+      "type": "object",
+      "additionalProperties": false
+    }
+  }
+}

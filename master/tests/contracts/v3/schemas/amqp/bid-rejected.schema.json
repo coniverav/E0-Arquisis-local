@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/bid-rejected.schema.json",
+  "title": "BidRejected",
+  "description": "El vendedor rechazó el bid. Es un `error` en el sentido de la E1: va a la cola `city.{comprador}` precedido del `ack` del bid, con `reason` y `code` en el nivel superior. Un bid se acepta o se rechaza entero; con `QUANTITY_UNAVAILABLE`, `data.available` permite pedir el resto en un segundo bid. Un bid malformado o con un `user_id` que no corresponde es `nack`, como siempre, no `bid-rejected`.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{comprador}",
+    "sender": [
+      "city"
+    ],
+    "receivers": [
+      "city.{comprador}"
+    ],
+    "userId": "required"
+  },
+  "allOf": [
+    {
+      "$ref": "../common/envelope.schema.json"
+    },
+    {
+      "$ref": "../common/city-sender.schema.json"
+    },
+    {
+      "$ref": "../common/cycle-bound.schema.json"
+    },
+    {
+      "$ref": "../reason/refusals.schema.json#/$defs/BidRejectedRefusal"
+    },
+    {
+      "if": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "const": "QUANTITY_UNAVAILABLE"
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "available"
+            ],
+            "properties": {
+              "available": {
+                "$ref": "../common/kwh.schema.json"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "type": "object",
+  "required": [
+    "type",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "bid-rejected"
+    },
+    "data": {
+      "$ref": "#/$defs/Data"
+    }
+  },
+  "$defs": {
+    "Data": {
+      "title": "BidRejectedData",
+      "description": "Contenido del `bid-rejected`.",
+      "type": "object",
+      "required": [
+        "target",
+        "offerId"
+      ],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del `bid` al que responde."
+        },
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El `offerId` de la oferta, tal como lo eligió el vendedor en su `offer`."
+        },
+        "message": {
+          "type": "string",
+          "description": "Texto humano que describe el rechazo."
+        },
+        "requested": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "kWh que pedía el bid."
+        },
+        "available": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "Sólo en `QUANTITY_UNAVAILABLE`, y ahí siempre: kWh que el vendedor todavía puede vender."
+        }
+      }
+    }
+  }
+}

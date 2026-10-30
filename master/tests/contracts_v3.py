@@ -1,4 +1,4 @@
-"""Carga de los contratos v3.0.1 vendorizados para las pruebas.
+"""Carga de los contratos v3.0.2 vendorizados para las pruebas.
 
 Los schemas son copias exactas del tag oficial (ver
 `contracts/v3/PROVENANCE.md`). Este módulo no redefine el contrato: sólo lo

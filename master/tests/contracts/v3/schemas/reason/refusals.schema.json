@@ -1,0 +1,471 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/reason/refusals.schema.json",
+  "title": "Refusal",
+  "description": "Pares (`reason`, `code`) por portador. Cada mensaje de rechazo incluye en su `allOf` el de su portador, de modo que un `reason` que no corresponde al portador, o un `code` que no corresponde al `reason`, invalida el mensaje. `x-emitter` en cada par dice quién lo emite en ese portador.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/NackRefusal"
+    },
+    {
+      "$ref": "#/$defs/ErrorRefusal"
+    },
+    {
+      "$ref": "#/$defs/BidRejectedRefusal"
+    },
+    {
+      "$ref": "#/$defs/SwapRejectedRefusal"
+    },
+    {
+      "$ref": "#/$defs/HttpRefusal"
+    }
+  ],
+  "$defs": {
+    "NackRefusal": {
+      "title": "NackRefusal",
+      "description": "Pares (`reason`, `code`) que puede llevar un `nack`: rechazos de recepción, nunca precedidos de `ack`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "MALFORMED_MESSAGE"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "central o cualquier receptor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "UNKNOWN_TYPE"
+            },
+            "code": {
+              "const": 400
+            }
+          },
+          "x-emitter": "central o cualquier receptor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "IDPK_EQUALS_MSGID"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "central o cualquier receptor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "IDENTITY_MISMATCH"
+            },
+            "code": {
+              "const": 403
+            }
+          },
+          "x-emitter": "central o cualquier receptor"
+        }
+      ]
+    },
+    "ErrorRefusal": {
+      "title": "ErrorRefusal",
+      "description": "Pares (`reason`, `code`) que puede llevar un `error` de la central: rechazos de la operación, siempre precedidos del `ack` del mensaje.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "CYCLE_UNKNOWN"
+            },
+            "code": {
+              "const": 404
+            }
+          },
+          "x-emitter": "central"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "CYCLE_EXPIRED"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "central"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "REPORT_TOO_EARLY"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "central"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "TYPE_RETIRED"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "central"
+        }
+      ]
+    },
+    "BidRejectedRefusal": {
+      "title": "BidRejectedRefusal",
+      "description": "Pares (`reason`, `code`) que puede llevar un `bid-rejected` del vendedor.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "QUANTITY_UNAVAILABLE"
+            },
+            "code": {
+              "const": 409
+            }
+          },
+          "x-emitter": "vendedor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "OFFER_WITHDRAWN"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "vendedor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "BID_TOO_SMALL"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "vendedor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "MARKET_CLOSED"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "vendedor"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SELF_TRADE"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "vendedor"
+        }
+      ]
+    },
+    "SwapRejectedRefusal": {
+      "title": "SwapRejectedRefusal",
+      "description": "Pares (`reason`, `code`) que puede llevar un `swap-rejected` de la wallet.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "MARKET_CLOSED"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "INSUFFICIENT_ASSET"
+            },
+            "code": {
+              "const": 402
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SWAP_NOT_PROPOSED"
+            },
+            "code": {
+              "const": 409
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SWAP_EXPIRED"
+            },
+            "code": {
+              "const": 410
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "NOT_PROPOSER"
+            },
+            "code": {
+              "const": 403
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SELF_SWAP"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SAME_ASSET"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "wallet"
+        }
+      ]
+    },
+    "HttpRefusal": {
+      "title": "HttpRefusal",
+      "description": "Pares (`reason`, `code`) que puede llevar el cuerpo de una respuesta HTTP de error de la wallet; `code` es también el status HTTP.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "SWAP_UNKNOWN"
+            },
+            "code": {
+              "const": 404
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "MALFORMED_REQUEST"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "IDEMPOTENCY_MISMATCH"
+            },
+            "code": {
+              "const": 422
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "WALLET_BUSY"
+            },
+            "code": {
+              "const": 503
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "RATE_LIMITED"
+            },
+            "code": {
+              "const": 429
+            }
+          },
+          "x-emitter": "wallet"
+        },
+        {
+          "type": "object",
+          "required": [
+            "reason",
+            "code"
+          ],
+          "properties": {
+            "reason": {
+              "const": "UNAUTHORIZED"
+            },
+            "code": {
+              "const": 401
+            }
+          },
+          "x-emitter": "wallet"
+        }
+      ]
+    }
+  }
+}

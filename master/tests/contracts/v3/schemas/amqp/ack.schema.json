@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/ack.schema.json",
+  "title": "Ack",
+  "description": "Confirma la recepción de un mensaje, no la aceptación de su contenido. Lo envía el receptor a la cola del emisor: la central a una ciudad, o una ciudad a la central o a otra ciudad. No se hacen ACKs de un `ack`, de un `nack` ni de un `error`. Tiene dos variantes: la de la central (cerrada, con `sender`) y la de una ciudad (abierta, con `cityId`).",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE} | central",
+    "sender": ["central", "city"],
+    "receivers": ["city.{CODE}", "central"],
+    "userId": "required"
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/CentralAck" },
+    { "$ref": "#/$defs/CityAck" }
+  ],
+  "$defs": {
+    "CentralAck": {
+      "title": "CentralAck",
+      "description": "`ack` que envía la central. Cerrado: un campo que no está aquí lo invalida.",
+      "allOf": [
+        { "$ref": "../common/envelope.schema.json" },
+        { "$ref": "../common/central-sender.schema.json" }
+      ],
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "ack" },
+        "data": { "$ref": "#/$defs/CentralAckData" }
+      },
+      "unevaluatedProperties": false
+    },
+    "CentralAckData": {
+      "title": "CentralAckData",
+      "description": "Contenido del `ack` de la central.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del mensaje que se está reconociendo."
+        }
+      }
+    },
+    "CityAck": {
+      "title": "CityAck",
+      "description": "`ack` que envía una ciudad. Abierto: el receptor ignora campos extra.",
+      "allOf": [
+        { "$ref": "../common/envelope.schema.json" },
+        { "$ref": "../common/city-sender.schema.json" }
+      ],
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "ack" },
+        "data": { "$ref": "#/$defs/CityAckData" }
+      }
+    },
+    "CityAckData": {
+      "title": "CityAckData",
+      "description": "Contenido del `ack` de una ciudad.",
+      "type": "object",
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del mensaje que se está reconociendo."
+        }
+      }
+    }
+  }
+}

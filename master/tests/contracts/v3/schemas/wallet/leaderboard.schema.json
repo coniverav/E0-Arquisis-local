@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/wallet/leaderboard.schema.json",
+  "title": "Leaderboard",
+  "description": "Cuerpo de `GET /leaderboard`: la fila propia de la ciudad que llama, sin desglose de las demás ciudades. Se recalcula a cada cierre de ciclo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cityId", "score", "cyclesComputed", "position"],
+  "properties": {
+    "cityId": { "$ref": "../common/city-code.schema.json", "description": "La ciudad dueña de la clave `X-Api-Key`." },
+    "score": {
+      "type": "number",
+      "description": "`Σ ahorro / Σ |baseline|` sobre los ciclos computados del periodo de puntaje. Puede ser negativo. Es 0 sin ciclos computados, o si `Σ |baseline|` es 0."
+    },
+    "cyclesComputed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Ciclos que entran en el puntaje: los del periodo de puntaje, sin los que la central no alcanzó a contactar a la ciudad."
+    },
+    "position": { "type": "integer", "minimum": 1, "description": "Posición propia en la tabla; 1 es el mayor `score`. Es un ranking de competencia: ciudades con el mismo `score` comparten posición y la siguiente salta (1, 1, 3), sin desempate." }
+  }
+}

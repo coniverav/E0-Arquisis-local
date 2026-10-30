@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/reason/reason.schema.json",
+  "title": "Reason",
+  "description": "Catálogo de todos los `reason` vigentes. `reason` y `code` van en el nivel superior del envelope (o del cuerpo HTTP); cuando viajan como `error` por AMQP, van precedidos del `ack` del mensaje. Cada valor anota su `code` (`x-code`), los portadores en que puede viajar (`x-carriers`: `nack`, `error`, `bid-rejected`, `swap-rejected`, `http`) y quién lo emite (`x-emitters`). Los pares exactos (`reason`, `code`) por portador están en `refusals.schema.json`.",
+  "oneOf": [
+    {
+      "const": "MALFORMED_MESSAGE",
+      "description": "El mensaje está malformado: el envelope no trae al menos sus cuatro campos, o su contenido es inválido. `data.message` dice qué falló.",
+      "x-code": 422,
+      "x-carriers": ["nack"],
+      "x-emitters": ["central", "cualquier receptor"]
+    },
+    {
+      "const": "UNKNOWN_TYPE",
+      "description": "El tipo del mensaje no existe.",
+      "x-code": 400,
+      "x-carriers": ["nack"],
+      "x-emitters": ["central", "cualquier receptor"]
+    },
+    {
+      "const": "IDPK_EQUALS_MSGID",
+      "description": "El `idpk` es inválido: debe diferir del `msgId`, puesto que las respuestas hacen referencia al `msgId`.",
+      "x-code": 422,
+      "x-carriers": ["nack"],
+      "x-emitters": ["central", "cualquier receptor"]
+    },
+    {
+      "const": "IDENTITY_MISMATCH",
+      "description": "El `user_id` entregado no corresponde al `cityId` declarado en el mensaje, o no viene. El rechazo se entrega a la cola de la ciudad que efectivamente publicó.",
+      "x-code": 403,
+      "x-carriers": ["nack"],
+      "x-emitters": ["central", "cualquier receptor"]
+    },
+    {
+      "const": "CYCLE_UNKNOWN",
+      "description": "El `cycleId` nombrado no existe.",
+      "x-code": 404,
+      "x-carriers": ["error"],
+      "x-emitters": ["central"]
+    },
+    {
+      "const": "CYCLE_EXPIRED",
+      "description": "La ventana de negociación de ese ciclo ya cerró.",
+      "x-code": 410,
+      "x-carriers": ["error"],
+      "x-emitters": ["central"]
+    },
+    {
+      "const": "REPORT_TOO_EARLY",
+      "description": "El reporte llegó antes de que abriera el periodo de cierre de la ventana de negociación. `data.opensAt` trae el instante desde el cual pueden reintentarlo.",
+      "x-code": 422,
+      "x-carriers": ["error"],
+      "x-emitters": ["central"]
+    },
+    {
+      "const": "TYPE_RETIRED",
+      "description": "Tipo retirado de la E1.",
+      "x-code": 410,
+      "x-carriers": ["error"],
+      "x-emitters": ["central"]
+    },
+    {
+      "const": "QUANTITY_UNAVAILABLE",
+      "description": "El bid excede lo disponible; `data.available`.",
+      "x-code": 409,
+      "x-carriers": ["bid-rejected"],
+      "x-emitters": ["vendedor"]
+    },
+    {
+      "const": "OFFER_WITHDRAWN",
+      "description": "La oferta fue retirada.",
+      "x-code": 410,
+      "x-carriers": ["bid-rejected"],
+      "x-emitters": ["vendedor"]
+    },
+    {
+      "const": "BID_TOO_SMALL",
+      "description": "`quantity` menor que `minBid`.",
+      "x-code": 422,
+      "x-carriers": ["bid-rejected"],
+      "x-emitters": ["vendedor"]
+    },
+    {
+      "const": "MARKET_CLOSED",
+      "description": "Bid después de `lastBidAt`; swap con `KWH` fuera de mercado.",
+      "x-code": 410,
+      "x-carriers": ["bid-rejected", "swap-rejected"],
+      "x-emitters": ["vendedor", "wallet"]
+    },
+    {
+      "const": "SELF_TRADE",
+      "description": "El comprador es el propio vendedor.",
+      "x-code": 422,
+      "x-carriers": ["bid-rejected"],
+      "x-emitters": ["vendedor"]
+    },
+    {
+      "const": "INSUFFICIENT_ASSET",
+      "description": "Falta `give` al proponer o `take` al aceptar (en `CR`, más allá de `available + creditLine`); `asset`, `available`, `required`.",
+      "x-code": 402,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "SWAP_NOT_PROPOSED",
+      "description": "Aceptar o cancelar un swap ya resuelto.",
+      "x-code": 409,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "SWAP_EXPIRED",
+      "description": "Aceptar un swap vencido.",
+      "x-code": 410,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "NOT_PROPOSER",
+      "description": "Cancelar un swap ajeno.",
+      "x-code": 403,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "SELF_SWAP",
+      "description": "El proponente intenta aceptar su propio swap.",
+      "x-code": 422,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "SAME_ASSET",
+      "description": "`give` y `take` del mismo activo.",
+      "x-code": 422,
+      "x-carriers": ["swap-rejected"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "SWAP_UNKNOWN",
+      "description": "`swapId` inexistente.",
+      "x-code": 404,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "MALFORMED_REQUEST",
+      "description": "Cuerpo inválido.",
+      "x-code": 422,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "IDEMPOTENCY_MISMATCH",
+      "description": "Misma llave, payload distinto.",
+      "x-code": 422,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "WALLET_BUSY",
+      "description": "Nada se aceptó; reintentar con la misma llave es seguro.",
+      "x-code": 503,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "RATE_LIMITED",
+      "description": "Límites por minuto; header `Retry-After`.",
+      "x-code": 429,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    },
+    {
+      "const": "UNAUTHORIZED",
+      "description": "Clave ausente o inválida.",
+      "x-code": 401,
+      "x-carriers": ["http"],
+      "x-emitters": ["wallet"]
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/distance-table.schema.json",
+  "title": "DistanceTable",
+  "description": "Tabla de rutas de la ciudad que la recibe: una entrada por ciudad de destino, con la ciudad de destino como clave; el origen es la cola en la que llega. La central la envía en el turno de la ciudad de cada ciclo, otra vez cada vez que la tabla de la ciudad cambia (con el mismo shape y un `idpk` nuevo), y también como respuesta a un `request` con `ask: \"distance-table\"`; una ciudad puede recibir más de una en un ciclo y rige la última. Cada ciclo la central deshabilita, por sorteo, `routeDisablePerCycle` enlaces (1 por omisión), en ambos sentidos, desde el turno hasta `closesAt`; el equipo docente puede además deshabilitar o rehabilitar un enlace durante el mercado. Igual a la de la E1, con un campo más en `data`: `disabledRouteTransportCost`.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["central"],
+    "receivers": ["city.{CODE}"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "distance-table" },
+    "data": { "$ref": "#/$defs/Data" }
+  },
+  "unevaluatedProperties": false,
+  "$defs": {
+    "Data": {
+      "title": "DistanceTableData",
+      "description": "Contenido de la tabla de distancias.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distances", "disabledRouteTransportCost"],
+      "properties": {
+        "distances": {
+          "description": "Rutas de su ciudad: una entrada por ciudad de destino, con el código de la ciudad de destino como clave.",
+          "type": "object",
+          "patternProperties": {
+            "^[A-Z0-9]{3}$": { "$ref": "#/$defs/Route" }
+          },
+          "additionalProperties": false
+        },
+        "disabledRouteTransportCost": {
+          "$ref": "../common/rate4.schema.json",
+          "description": "Tarifa punitiva, en créditos por kWh·km, que se cobra al comprador cuando compra por una ruta con `enabled: false`: 10 veces el mayor `transportCost` habilitado de esta misma versión de la tabla. Comprar por una ruta deshabilitada no se rechaza; se cobra esta tarifa."
+        }
+      }
+    },
+    "Route": {
+      "title": "DistanceRoute",
+      "description": "Una ruta desde su ciudad hacia la ciudad de destino.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["distance", "transportCost", "enabled"],
+      "properties": {
+        "distance": {
+          "type": "number",
+          "description": "Distancia a la ciudad de destino, en metros. Es simétrica y no cambia entre ciclos."
+        },
+        "transportCost": {
+          "$ref": "../common/rate4.schema.json",
+          "description": "Costo de transporte de esta ruta, en créditos por kWh·km. Es dirigido: el costo de A a B y el de B a A son valores distintos, y se mueve de un ciclo al siguiente."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Si la ruta está habilitada. Una compra por una ruta deshabilitada paga `disabledRouteTransportCost` en vez de `transportCost`."
+        }
+      }
+    }
+  }
+}

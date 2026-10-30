@@ -1,4 +1,4 @@
-"""E2-022/E2-028: los fixtures usados en pruebas cumplen el contrato v3.0.1."""
+"""E2-076: los fixtures emitidos en pruebas cumplen el contrato v3.0.2."""
 
 import hashlib
 import json

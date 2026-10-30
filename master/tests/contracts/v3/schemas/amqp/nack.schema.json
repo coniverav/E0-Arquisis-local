@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/nack.schema.json",
+  "title": "Nack",
+  "description": "Rechaza la recepción de un mensaje: está malformado, su tipo no existe, su `idpk` es inválido o su identidad no corresponde. Un `nack` nunca va precedido de un `ack`: no hubo nada que aceptar. `reason` y `code` van en el nivel superior del envelope, como hermanos de `type`. No se hacen NACKs de un `nack`. Tiene dos variantes: la de la central (cerrada, con `sender`) y la de una ciudad (abierta, con `cityId`).",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE} | central",
+    "sender": ["central", "city"],
+    "receivers": ["city.{CODE}", "central"],
+    "userId": "required"
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/CentralNack" },
+    { "$ref": "#/$defs/CityNack" }
+  ],
+  "$defs": {
+    "CentralNack": {
+      "title": "CentralNack",
+      "description": "`nack` que envía la central. Cerrado: un campo que no está aquí lo invalida.",
+      "allOf": [
+        { "$ref": "../common/envelope.schema.json" },
+        { "$ref": "../common/central-sender.schema.json" },
+        { "$ref": "../reason/refusals.schema.json#/$defs/NackRefusal" }
+      ],
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "nack" },
+        "data": { "$ref": "#/$defs/CentralNackData" }
+      },
+      "unevaluatedProperties": false
+    },
+    "CentralNackData": {
+      "title": "CentralNackData",
+      "description": "Contenido del `nack` de la central.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "message"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del mensaje que provocó este rechazo."
+        },
+        "message": {
+          "type": "string",
+          "description": "Texto humano que describe la falla."
+        },
+        "cycleId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "El `cycleId` que traía el mensaje rechazado, devuelto tal cual si es un string de a lo sumo 64 caracteres; si no, no viene."
+        }
+      }
+    },
+    "CityNack": {
+      "title": "CityNack",
+      "description": "`nack` que envía una ciudad. Abierto: el receptor ignora campos extra.",
+      "allOf": [
+        { "$ref": "../common/envelope.schema.json" },
+        { "$ref": "../common/city-sender.schema.json" },
+        { "$ref": "../reason/refusals.schema.json#/$defs/NackRefusal" }
+      ],
+      "type": "object",
+      "required": ["type", "data"],
+      "properties": {
+        "type": { "const": "nack" },
+        "data": { "$ref": "#/$defs/CityNackData" }
+      }
+    },
+    "CityNackData": {
+      "title": "CityNackData",
+      "description": "Contenido del `nack` de una ciudad.",
+      "type": "object",
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "format": "uuid",
+          "description": "`msgId` del mensaje que provocó este rechazo."
+        },
+        "message": {
+          "type": "string",
+          "description": "Texto humano que describe la falla."
+        }
+      }
+    }
+  }
+}

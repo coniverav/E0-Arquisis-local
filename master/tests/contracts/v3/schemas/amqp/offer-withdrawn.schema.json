@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/offer-withdrawn.schema.json",
+  "title": "OfferWithdrawn",
+  "description": "El vendedor retira su oferta. Va al exchange `market` con la routing key propia `market.offer.{CODE}`, como la `offer`, y llega a la cola `market.{CODE}` de todas las ciudades. Es difusión: nunca se responde con `ack`. Cuenta para el límite `marketOpsPerMinute`. Un bid a una oferta retirada se rechaza con `bid-rejected` `OFFER_WITHDRAWN` (410).",
+  "x-amqp": {
+    "exchange": "market",
+    "routingKey": "market.offer.{CODE}",
+    "sender": [
+      "city"
+    ],
+    "receivers": [
+      "market.{CODE} (todas)"
+    ],
+    "userId": "required"
+  },
+  "allOf": [
+    {
+      "$ref": "../common/envelope.schema.json"
+    },
+    {
+      "$ref": "../common/city-sender.schema.json"
+    },
+    {
+      "$ref": "../common/cycle-bound.schema.json"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "type",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "offer-withdrawn"
+    },
+    "data": {
+      "$ref": "#/$defs/Data"
+    }
+  },
+  "$defs": {
+    "Data": {
+      "title": "OfferWithdrawnData",
+      "description": "Contenido del retiro.",
+      "type": "object",
+      "required": [
+        "offerId"
+      ],
+      "properties": {
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El `offerId` de la oferta, tal como lo eligió el vendedor en su `offer`."
+        }
+      }
+    }
+  }
+}

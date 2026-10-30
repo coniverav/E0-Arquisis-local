@@ -1,4 +1,6 @@
 # EnergyShark - Entrega 2 ⚡🦈
+
+El contexto compartido y los contratos v3.0.2 del grupo están en [`Arquisis-G10-Contracts/agents.md`](https://github.com/VicenteIgnacioSotoGonzalez/Arquisis-G10-Contracts/blob/develop/agents.md). Los schemas locales de `master/tests/contracts/v3` son una copia fijada para pruebas sin red.
 ## Arquitectura y despliegue
 
 La Entrega 1 separa la aplicación frontend de la API backend. El frontend se distribuye mediante Amazon S3 y CloudFront, la API se publica mediante API Gateway, que se integra con el backend desplegado en EC2.

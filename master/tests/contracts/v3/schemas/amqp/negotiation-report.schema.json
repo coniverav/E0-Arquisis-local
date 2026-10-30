@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/negotiation-report.schema.json",
+  "title": "NegotiationReport",
+  "description": "Reporte de cierre de una ciudad para un ciclo. Se acepta sólo dentro del periodo de cierre de la ventana de negociación. Antes de que abra se rechaza con `error` `REPORT_TOO_EARLY` (422, con `data.opensAt`); después de que la ventana cerró, con `error` `CYCLE_EXPIRED` (410); ambos van precedidos del `ack` del reporte. Un reporte malformado (por ejemplo, sin `cycleId`) recibe sólo un `nack` `MALFORMED_MESSAGE`, nunca un `ack` antes. Un segundo reporte del mismo ciclo, con un `idpk` nuevo y dentro del periodo de cierre, reemplaza al primero.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "central",
+    "sender": ["city"],
+    "receivers": ["central"],
+    "userId": "required"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/city-sender.schema.json" },
+    { "$ref": "../common/cycle-bound.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "negotiation-report" },
+    "data": { "$ref": "#/$defs/Data" }
+  },
+  "$defs": {
+    "Data": {
+      "title": "NegotiationReportData",
+      "description": "Posición de cierre de la ciudad para el ciclo.",
+      "type": "object",
+      "required": ["budgetBalance", "energyBalance"],
+      "properties": {
+        "budgetBalance": {
+          "type": "number",
+          "x-decimals": 2,
+          "description": "Su balance de presupuesto al cierre del ciclo, en créditos. Puede ser negativo: la central lo registra tal cual lo envían y no lo juzga."
+        },
+        "energyBalance": {
+          "type": "number",
+          "description": "Su balance energético al cierre del ciclo, en kWh. Puede ser negativo: la central lo registra tal cual lo envían y no lo juzga."
+        }
+      }
+    }
+  }
+}

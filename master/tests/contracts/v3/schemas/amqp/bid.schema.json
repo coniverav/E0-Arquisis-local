@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/bid.schema.json",
+  "title": "Bid",
+  "description": "Oferta de compra de un comprador a un vendedor, a la cola `city.{vendedor}`. No lleva precio: el precio es el de la oferta, fijado por el vendedor, y el comprador lo acepta al enviar el bid. El vendedor responde `ack` (recepción) y después `bid-accepted` o `bid-rejected`; un bid se acepta o se rechaza entero. Un bid reenviado con el mismo `idpk` es el mismo bid: misma respuesta, sin un segundo swap. El receptor compara la propiedad AMQP `user_id` con `cityId` y responde `nack` `IDENTITY_MISMATCH` (403) si no corresponde o falta; un bid malformado también es `nack`. La plataforma no limita los bids: el vendedor decide qué hacer con un comprador que lo inunda.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{vendedor}",
+    "sender": [
+      "city"
+    ],
+    "receivers": [
+      "city.{vendedor}"
+    ],
+    "userId": "required"
+  },
+  "allOf": [
+    {
+      "$ref": "../common/envelope.schema.json"
+    },
+    {
+      "$ref": "../common/city-sender.schema.json"
+    },
+    {
+      "$ref": "../common/cycle-bound.schema.json"
+    }
+  ],
+  "type": "object",
+  "required": [
+    "type",
+    "data"
+  ],
+  "properties": {
+    "type": {
+      "const": "bid"
+    },
+    "data": {
+      "$ref": "#/$defs/Data"
+    }
+  },
+  "$defs": {
+    "Data": {
+      "title": "BidData",
+      "description": "Contenido del bid.",
+      "type": "object",
+      "required": [
+        "offerId",
+        "quantity"
+      ],
+      "properties": {
+        "offerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "El `offerId` de la oferta, tal como lo eligió el vendedor en su `offer`."
+        },
+        "quantity": {
+          "$ref": "../common/kwh.schema.json",
+          "description": "kWh que el comprador quiere, enteros. Si es menor que `minBid`, el vendedor responde `bid-rejected` `BID_TOO_SMALL` (422)."
+        }
+      }
+    }
+  }
+}

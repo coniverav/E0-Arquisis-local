@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.iic2173.org/energyshark/v3/amqp/swap-cancelled.schema.json",
+  "title": "SwapCancelled",
+  "description": "El proponente canceló la propuesta antes de que alguien la aceptara, y la retención de `give` se liberó. Va sólo al proponente. Evento de la wallet que la central reenvía a `city.{CODE}`, con `sender: \"central\"` y el envelope de la E1 (el `idpk` del envelope es el de este envío, como en todo mensaje). No lleva `cycleId`: la wallet no sabe de ciclos. `data.idpk` es igual a la `Idempotency-Key` de la operación que lo causó. Un `swap-cancelled` causado por el cierre del mercado, cuando la central deshabilita `KWH`, lleva en `data.idpk` la `Idempotency-Key` de la operación de la central que deshabilitó `KWH`, que la ciudad no reconoce como propia.",
+  "x-amqp": {
+    "exchange": "energy.x",
+    "routingKey": "city.{CODE}",
+    "sender": ["wallet"],
+    "receivers": ["city.{proponente}"],
+    "userId": "central"
+  },
+  "allOf": [
+    { "$ref": "../common/envelope.schema.json" },
+    { "$ref": "../common/central-sender.schema.json" }
+  ],
+  "type": "object",
+  "required": ["type", "data"],
+  "properties": {
+    "type": { "const": "swap-cancelled" },
+    "data": {
+      "title": "SwapCancelledData",
+      "description": "Contenido del `swap-cancelled`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["swapId", "idpk", "balancesAfter"],
+      "properties": {
+        "swapId": { "type": "string", "minLength": 1, "description": "Identificador del swap." },
+        "idpk": {
+          "type": "string",
+          "format": "uuid",
+          "description": "La `Idempotency-Key` de la operación que causó este evento."
+        },
+        "balancesAfter": {
+          "$ref": "../common/balances-after.schema.json",
+          "description": "Saldos de la ciudad que recibe este evento después de la operación."
+        }
+      }
+    }
+  },
+  "unevaluatedProperties": false
+}

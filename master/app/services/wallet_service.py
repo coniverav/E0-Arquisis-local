@@ -298,11 +298,22 @@ class WalletService:
         # El snapshot se agrega antes del commit para que la liquidación del
         # swap, la reserva y los balances queden en la misma transacción.
         if isinstance(data.get("balancesAfter"), dict):
+            settled_at = data.get("settledAt") if event_type == "swap-settled" else None
+            wallet_as_of = None
+            if isinstance(settled_at, str):
+                try:
+                    wallet_as_of = datetime.fromisoformat(settled_at.replace("Z", "+00:00"))
+                    if wallet_as_of.tzinfo is None:
+                        wallet_as_of = None
+                except ValueError:
+                    pass
             self.record_balance_snapshot(
                 session,
                 cycle_id=record.cycle_id,
                 source="EVENT",
                 balances_dict=data["balancesAfter"],
+                source_swap_id=record.swap_id,
+                wallet_as_of=wallet_as_of,
             )
 
         session.flush()
@@ -360,6 +371,8 @@ class WalletService:
         cycle_id: Optional[str],
         source: str,
         balances_dict: dict[str, Any],
+        source_swap_id: Optional[str] = None,
+        wallet_as_of: Optional[datetime] = None,
     ) -> WalletBalanceSnapshot:
         """
         Guarda un snapshot de los balances informado por la wallet (E2-022).
@@ -392,6 +405,8 @@ class WalletService:
 
         snapshot = WalletBalanceSnapshot(
             cycle_id=cycle_id,
+            source_swap_id=source_swap_id,
+            wallet_as_of=wallet_as_of,
             source=source,
             kwh_available=amount("KWH", kwh, "available"),
             kwh_held=amount("KWH", kwh, "held"),

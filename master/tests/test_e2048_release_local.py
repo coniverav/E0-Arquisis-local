@@ -228,11 +228,12 @@ def test_central_cycle_is_processed_and_replays_do_not_duplicate_effects(monkeyp
         )
         session.commit()
         matched = asyncio.run(reconcile_wallet(session, client=LocalWallet(), cycle_id=cycle_id))
-        assert matched.status == "MATCH"
+        assert matched.status == "DIVERGENT"
         assert matched.cr_available_local == Decimal("500")
-        # MATCH compara EVENT con Wallet; no valida el ledger E1 del ciclo.
+        # La coincidencia EVENT/REST no oculta el desfase Wallet/ledger.
         assert session.get(Cycle, cycle_id).budget_balance == Decimal("120")
         assert matched.cr_available_wallet != session.get(Cycle, cycle_id).budget_balance
+        assert Decimal(matched.explanation["local_evidence"]["single_cycle_cr"]["difference"]) == Decimal("380")
 
         opened = process_cycle_windows(session, now=now + timedelta(minutes=11))
         session.commit()

@@ -922,6 +922,10 @@ class WalletBalanceSnapshot(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
 
     cycle_id: Optional[str] = Field(default=None, index=True)
+    source_swap_id: Optional[str] = Field(default=None, index=True)
+    wallet_as_of: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True)
+    )
     # EVENT (derivado de swap-settled/trade-recorded/funding) / REST_SYNC (GET /balance)
     source: str = Field(index=True, nullable=False)
 

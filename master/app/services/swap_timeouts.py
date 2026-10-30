@@ -232,14 +232,16 @@ async def expire_stale_swaps(
     }
 
     for record in _stale_records(session, now, limit):
-        # Vendedor que nunca llegó a la wallet: expiración local segura.
+        # E2-068: timeout HTTP NO prueba ausencia de operación en wallet.
+        # Sólo puede declararse NEVER_SENT si nunca hubo intento POST.
+        # Si hubo intento y falta swapId, conservar HOLD y esperar evento o
+        # conciliación; jamás generar un segundo swap con idpk nuevo.
         if (
             record.role == "PROPOSER"
             and record.swap_id is None
-            and (
-                record.proposal_http_accepted_at is None
-                or record.proposal_blocked_at is not None
-            )
+            and record.proposal_attempt_count == 0
+            and record.proposal_http_accepted_at is None
+            and record.proposal_blocked_at is None
         ):
             if _expire_record(
                 session, record=record, reason="PROPOSAL_NEVER_SENT"

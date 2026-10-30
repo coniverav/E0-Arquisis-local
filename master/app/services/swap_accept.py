@@ -43,6 +43,9 @@ from app.services.wallet_client import (
     WalletTimeoutError,
 )
 from app.services.wallet_service import WalletService
+from app.services.wallet_recovery import (
+    inspect_known_swap, apply_wallet_observation, TERMINAL_STATES,
+)  # E2-068
 
 logger = logging.getLogger(__name__)
 
@@ -239,72 +242,100 @@ async def _accept_record(
     service: WalletService,
     now: datetime,
 ) -> str:
-    """Intenta aceptar un registro durable y clasifica el resultado."""
+    """E2-068: aceptación durable; GET y eventos preceden a otro POST.
 
+    Un timeout no crea otra operación. Se reusa el accept_idempotency_key
+    persistido. Un 202 tampoco implica SETTLED.
+    """
+    session.refresh(record, with_for_update=True)
+    if record.status in TERMINAL_STATES:
+        session.commit()
+        return "skipped"
+    session.commit()  # soltar lock antes de GET o POST HTTP
+
+    wallet = getattr(service, "client", None)
+    # Sólo consultar en recuperación, no en el primer intento.
+    if record.accept_attempts > 0 and wallet is not None and record.swap_id:
+        observed = await inspect_known_swap(wallet, record.swap_id)
+        if observed is not None:
+            session.refresh(record, with_for_update=True)
+            if record.status in TERMINAL_STATES:
+                session.commit()
+                return "recovered"
+            if apply_wallet_observation(
+                session, record=record, observation=observed, now=now,
+            ):
+                session.commit()
+                return "recovered"
+            session.commit()
+
+    # No reenviar aceptaciones cuyo token/vencimiento ya caducó.
+    if record.expires_at is not None and record.expires_at <= now:
+        return "skipped"  # E2-055 realizará la conciliación de expiración
+
+    session.refresh(record, with_for_update=True)
+    if record.status in TERMINAL_STATES or (record.status == "ACCEPT_SUBMITTED" and record.accept_error is None):
+        session.commit()
+        return "skipped"
     record.accept_attempts += 1
     record.accept_attempted_at = now
-    # Centinela durable: si el proceso muere durante el POST, el próximo tick
-    # reintenta con la misma llave (la wallet deduplica por Idempotency-Key).
     record.accept_error = "WALLET_IN_FLIGHT"
     record.status = "ACCEPT_SUBMITTED"
     session.add(record)
-    session.commit()
-    session.refresh(record)
+    session.commit()  # centinela durable antes de red, sin lock durante HTTP
 
+    outcome = "accepted"
+    code = None
+    retry_after = None
     try:
         response = await service.execute_accept_swap(session, record)
-    except WalletTimeoutError as exc:
-        record.accept_error = "WALLET_TIMEOUT"
-        session.add(record)
-        session.commit()
-        logger.warning(
-            "Timeout aceptando swap %s; se reintentará con la misma llave: %s",
-            record.swap_id, exc,
-        )
-        return "retry"
+        if not response.accepted_for_processing:
+            outcome = "retry"
+            code = f"UNEXPECTED_HTTP_{response.status_code}"
+    except WalletTimeoutError:
+        outcome, code = "retry", "WALLET_TIMEOUT"
     except WalletRateLimitError as exc:
-        record.accept_error = f"WALLET_RATE_LIMIT:{exc.retry_after}"
-        session.add(record)
-        session.commit()
-        logger.warning(
-            "Rate limit aceptando swap %s (Retry-After=%s)",
-            record.swap_id, exc.retry_after,
-        )
-        return "retry"
+        outcome, code = "retry", f"WALLET_RATE_LIMIT:{exc.retry_after}"
+        retry_after = exc.retry_after
     except WalletError as exc:
-        record.accept_error = f"WALLET_ERROR:{exc.status_code}"
-        if exc.status_code in RETRYABLE_WALLET_STATUSES or exc.status_code is None:
-            session.add(record)
+        code = f"WALLET_ERROR:{exc.status_code}"
+        outcome = ("retry" if exc.status_code in RETRYABLE_WALLET_STATUSES
+                   or exc.status_code is None else "rejected")
+
+    # Un 409 posterior a un 202 perdido podría significar que la wallet ya
+    # aceptó/terminó. Verificar con GET antes de declarar rechazo definitivo.
+    if outcome == "rejected" and wallet is not None and record.swap_id:
+        observed = await inspect_known_swap(wallet, record.swap_id)
+        if observed is not None:
+            session.refresh(record, with_for_update=True)
+            if record.status in TERMINAL_STATES:
+                session.commit()
+                return "recovered"
+            if apply_wallet_observation(
+                session, record=record, observation=observed, now=now,
+            ):
+                session.commit()
+                return "recovered"
             session.commit()
-            logger.warning(
-                "Error reintentable aceptando swap %s: %s",
-                record.swap_id, exc,
-            )
-            return "retry"
 
-        record.status = "REJECTED"
-        record.rejection_reason = f"WALLET_{exc.status_code}"
-        session.add(record)
+    # Fundamental: el evento AMQP pudo haber llegado durante el HTTP. Evitar
+    # que un timeout/202 tardío degrade SETTLED a ACCEPT_SUBMITTED o REJECTED.
+    session.refresh(record, with_for_update=True)
+    if record.status in TERMINAL_STATES:
         session.commit()
-        logger.error(
-            "Aceptación terminal rechazada para swap %s: %s",
-            record.swap_id, exc,
-        )
-        return "rejected"
-
-    if not response.accepted_for_processing:
-        # La wallet contestó sin 202. No se declara liquidación: se conserva
-        # la intención y se espera el evento final (AD5).
-        logger.info(
-            "Aceptación de swap %s respondió HTTP %s sin 202",
-            record.swap_id, response.status_code,
-        )
-
-    record.status = "ACCEPT_SUBMITTED"
-    record.accept_error = None
+        return "recovered"
+    if outcome == "accepted":
+        record.status = "ACCEPT_SUBMITTED"  # 202 != liquidación
+        record.accept_error = None
+    elif outcome == "retry":
+        record.accept_error = code
+    else:
+        record.status = "REJECTED"
+        record.rejection_reason = f"WALLET_{code.split(':')[-1]}" if code else "WALLET_ERROR"
+        record.accept_error = code
     session.add(record)
     session.commit()
-    return "accepted"
+    return outcome
 
 
 async def accept_pending_swaps(
@@ -324,6 +355,7 @@ async def accept_pending_swaps(
         "retry": 0,
         "rejected": 0,
         "skipped": 0,
+        "recovered": 0,
     }
 
     for bid in _accepted_bid_candidates(session, limit):

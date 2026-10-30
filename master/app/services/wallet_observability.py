@@ -95,7 +95,7 @@ class ObservedWalletAsyncClient(httpx.AsyncClient):
             elapsed_ms=(time.perf_counter() - started) * 1000,
             outcome=f"http_{response.status_code}",
             status_code=response.status_code,
-            retry_after=response.headers.get("Retry-After") if response.status_code == 429 else None,
+            retry_after=response.headers.get("Retry-After") if response.status_code in {429, 503} else None,
             idempotency_key=idpk,
         )
         return response

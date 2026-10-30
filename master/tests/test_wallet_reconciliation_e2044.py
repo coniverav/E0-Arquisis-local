@@ -339,8 +339,7 @@ def test_page_limit_does_not_persist_partial_reconciliation(monkeypatch):
         assert session.exec(select(WalletBalanceSnapshot)).all() == []
 
 
-def test_reconcile_tick_currently_retries_before_wallet_retry_after(monkeypatch):
-    """Documenta el riesgo de 429; no cambia la política en una tarjeta de QA."""
+def test_reconcile_tick_respects_wallet_retry_after(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(wallet_reconciliation, "_last_tick_monotonic", None)
     monkeypatch.setattr(wallet_reconciliation, "time", SimpleNamespace(monotonic=lambda: clock[0]))
@@ -356,4 +355,7 @@ def test_reconcile_tick_currently_retries_before_wallet_retry_after(monkeypatch)
     assert asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW)) is None
     clock[0] = 161.0
     assert asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW)) is None
-    assert client.calls == 2  # El Retry-After de 120 s no se aplicó.
+    assert client.calls == 1
+    clock[0] = 221.0
+    assert asyncio.run(reconcile_wallet_tick(interval_seconds=60, client=client, now=NOW)) is None
+    assert client.calls == 2

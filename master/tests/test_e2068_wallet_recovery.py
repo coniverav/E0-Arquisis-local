@@ -46,7 +46,7 @@ def _record(role='ACCEPTOR', **updates):
         proposal_last_error=None, proposal_blocked_at=None,
         proposal_expires_at=NOW + timedelta(seconds=50),
         proposal_attempt_count=1, rejection_reason=None,
-        accept_attempted_at=None,
+        accept_attempted_at=None, accept_retry_at=None,
     )
     fields.update(updates)
     return SimpleNamespace(**fields)

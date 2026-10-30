@@ -15,6 +15,7 @@ from decimal import Decimal, InvalidOperation
 import logging
 from typing import Any, Optional
 import httpx
+from sqlmodel import Session
 
 from app.config import (
     CITY_ID,
@@ -23,6 +24,8 @@ from app.config import (
     WALLET_TIMEOUT_SECONDS,
 )
 from app.services.wallet_observability import ObservedWalletAsyncClient
+from app.database import engine
+from app.services.operational_rate_limits import block, reserve
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +109,25 @@ class WalletClient:
             masked["X-Api-Key"] = "***REDACTED***"
         return masked
 
-    def _handle_response_error(self, response: httpx.Response) -> None:
+    def _reserve(self, category: str) -> None:
+        with Session(engine) as session:
+            retry_after = reserve(session, category)
+            session.commit()
+        if retry_after:
+            raise WalletRateLimitError(
+                "Wallet local rate limit or Retry-After active",
+                status_code=429, retry_after=retry_after,
+            )
+
+    def _handle_response_error(self, response: httpx.Response, category: str | None = None) -> None:
+        retry_after_str = response.headers.get("Retry-After")
+        # OpenAPI v3.0.2 define segundos enteros (incluido cero), no HTTP-date.
+        retry_after = int(retry_after_str) if retry_after_str and retry_after_str.isdecimal() else None
+        if response.status_code in {429, 503} and category is not None and retry_after is not None:
+            with Session(engine) as session:
+                block(session, category, retry_after)
+                session.commit()
         if response.status_code == 429:
-            retry_after_str = response.headers.get("Retry-After")
-            retry_after = int(retry_after_str) if retry_after_str and retry_after_str.isdigit() else None
             logger.warning(
                 "Wallet rate limit exceeded (HTTP 429). Retry-After: %s", retry_after
             )
@@ -123,6 +141,7 @@ class WalletClient:
             raise WalletError(
                 f"Wallet request failed with HTTP {response.status_code}",
                 status_code=response.status_code,
+                retry_after=retry_after if response.status_code == 503 else None,
             )
 
 
@@ -133,9 +152,10 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
+            self._reserve("wallet:read")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:read")
                 data = res.json()
 
                 try:
@@ -206,9 +226,10 @@ class WalletClient:
         }
 
         try:
+            self._reserve("wallet:write")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, json=payload, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:write")
                 return WalletSwapWriteResponse(
                     status_code=res.status_code,
                     data=res.json() if res.content else {},
@@ -233,9 +254,10 @@ class WalletClient:
         headers = self._get_headers(idempotency_key=idempotency_key)
 
         try:
+            self._reserve("wallet:write")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:write")
                 return WalletSwapWriteResponse(
                     status_code=res.status_code,
                     data=res.json() if res.content else {},
@@ -259,9 +281,10 @@ class WalletClient:
         headers = self._get_headers(idempotency_key=idempotency_key)
 
         try:
+            self._reserve("wallet:write")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.post(endpoint, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:write")
                 return WalletSwapWriteResponse(
                     status_code=res.status_code,
                     data=res.json() if res.content else {},
@@ -279,9 +302,10 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
+            self._reserve("wallet:read")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:read")
                 return res.json()
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise WalletTimeoutError("GET /swaps failed") from exc
@@ -301,9 +325,10 @@ class WalletClient:
         headers = self._get_headers()
 
         try:
+            self._reserve("wallet:read")
             async with ObservedWalletAsyncClient(timeout=self.timeout) as client:
                 res = await client.get(endpoint, params=params, headers=headers)
-                self._handle_response_error(res)
+                self._handle_response_error(res, "wallet:read")
                 data = res.json()
         except (httpx.TimeoutException, httpx.NetworkError) as exc:
             raise WalletTimeoutError("GET /statement failed") from exc

@@ -159,6 +159,10 @@ async def _outbox_retries_on_same_exchange_and_never_declares_topology():
         raise_for_status=lambda: None,
         json=lambda: {"items": [item]},
     )
+    client.post.return_value = SimpleNamespace(
+        status_code=200, raise_for_status=lambda: None,
+        json=lambda: {"allowed": True, "retryAfter": 0},
+    )
     statuses = []
 
     async def record(_client, _msg_id, *, status, error=None):
@@ -212,6 +216,10 @@ async def _outbox_publishes_bid_and_request():
         status_code=200, raise_for_status=lambda: None,
         json=lambda: {"items": [bid, request]},
     )
+    client.post.return_value = SimpleNamespace(
+        status_code=200, raise_for_status=lambda: None,
+        json=lambda: {"allowed": True, "retryAfter": 0},
+    )
     with (
         patch.object(connector, "CITY_ID", "KLD"),
         patch.object(connector, "RABBITMQ_OUTBOUND_EXCHANGE", "energy.x"),
@@ -235,6 +243,41 @@ async def _outbox_publishes_bid_and_request():
 
 def test_outbox_publishes_bid_and_request_on_directed_exchange():
     asyncio.run(_outbox_publishes_bid_and_request())
+
+
+async def _outbox_defers_market_offer_when_quota_is_full():
+    item = outbound("offer", {"offerId": "KLD-1", "quantity": 2, "pricePerEnergy": 3},
+                    route="market.offer.KLD", exchange="market")
+    directed, market, channel = AsyncMock(), AsyncMock(), AsyncMock()
+    channel.get_exchange.side_effect = [directed, market]
+    connection = AsyncMock()
+    connection.__aenter__.return_value = connection
+    connection.channel.return_value = channel
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.get.return_value = SimpleNamespace(
+        status_code=200, raise_for_status=lambda: None,
+        json=lambda: {"items": [item]},
+    )
+    client.post.return_value = SimpleNamespace(
+        status_code=200, raise_for_status=lambda: None,
+        json=lambda: {"allowed": False, "retryAfter": 45},
+    )
+    with (
+        patch.object(connector.aio_pika, "connect", new_callable=AsyncMock, return_value=connection),
+        patch.object(connector.httpx, "AsyncClient", return_value=client),
+        patch.object(connector.asyncio, "sleep", new_callable=AsyncMock,
+                     side_effect=asyncio.CancelledError()),
+    ):
+        with pytest.raises(asyncio.CancelledError):
+            await connector.publish_backend_outbox()
+    market.publish.assert_not_awaited()
+    directed.publish.assert_not_awaited()
+    client.post.assert_awaited_once()
+
+
+def test_outbox_keeps_offer_pending_when_city_quota_is_full():
+    asyncio.run(_outbox_defers_market_offer_when_quota_is_full())
 
 
 def test_protocol_ack_for_another_city_uses_its_route_and_our_identity():

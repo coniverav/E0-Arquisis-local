@@ -132,6 +132,8 @@ class FakeWallet:
     async def execute_accept_swap(self, session, record):
         self.calls.append((record.swap_id, record.accept_idempotency_key))
         outcome = self.outcomes.pop(0) if self.outcomes else "ok"
+        if isinstance(outcome, Exception):
+            raise outcome
         if outcome == "timeout":
             raise WalletTimeoutError("timeout")
         if outcome == "rate":
@@ -146,10 +148,10 @@ class FakeWallet:
         )
 
 
-def _run(wallet):
+def _run(wallet, *, now=None):
     with Session(engine) as session:
         stats = asyncio.run(
-            accept_pending_swaps(session, wallet_service=wallet)
+            accept_pending_swaps(session, wallet_service=wallet, now=now)
         )
         record = session.exec(select(SwapRecord)).first()
         if record is not None:
@@ -226,7 +228,10 @@ def test_timeout_retries_with_same_idempotency_key():
     assert record.accept_attempts == 1
     first_key = record.accept_idempotency_key
 
-    stats, record = _run(wallet)
+    stats, record = _run(wallet, now=record.accept_attempted_at + timedelta(seconds=1))
+    assert stats["accepted"] == 0
+    assert len(wallet.calls) == 1
+    stats, record = _run(wallet, now=record.accept_retry_at + timedelta(seconds=1))
     assert stats["accepted"] == 1
     assert record.accept_attempts == 2
     assert record.accept_error is None
@@ -243,6 +248,43 @@ def test_rate_limit_is_retryable():
 
     assert stats["retry"] == 1
     assert record.accept_error == "WALLET_RATE_LIMIT:1"
+
+
+def test_retry_after_120_survives_ticks_and_reuses_accept_key():
+    cycle, offer, bid = _setup_bid()
+    _post(TestClient(app), cycle, offer, bid)
+    wallet = FakeWallet([WalletRateLimitError("429", status_code=429, retry_after=120), "ok"])
+    stats, record = _run(wallet)
+    assert stats["retry"] == 1
+    first_key = record.accept_idempotency_key
+    first_at = record.accept_attempted_at
+    assert record.accept_retry_at == first_at + timedelta(seconds=120)
+    for elapsed in (5, 61):
+        stats, _ = _run(wallet, now=first_at + timedelta(seconds=elapsed))
+        assert stats["accepted"] == 0
+        assert len(wallet.calls) == 1
+    # El token del fixture vence en 60 segundos. La aceptación ya no se envía
+    # después de Retry-After; se espera la conciliación de expiración.
+    stats, record = _run(wallet, now=first_at + timedelta(seconds=121))
+    assert stats["accepted"] == 0
+    assert record.accept_idempotency_key == first_key
+    assert len(wallet.calls) == 1
+
+
+@pytest.mark.parametrize("status,retry_after", [(502, None), (503, 8), (504, None)])
+def test_ambiguous_http_retries_after_backoff_with_same_key(status, retry_after):
+    cycle, offer, bid = _setup_bid()
+    _post(TestClient(app), cycle, offer, bid)
+    wallet = FakeWallet([WalletError("temporal", status_code=status, retry_after=retry_after), "ok"])
+    first, record = _run(wallet)
+    assert first["retry"] == 1
+    key = record.accept_idempotency_key
+    immediate, _ = _run(wallet, now=record.accept_attempted_at + timedelta(seconds=1))
+    assert immediate["accepted"] == 0 and len(wallet.calls) == 1
+    later, record = _run(wallet, now=record.accept_retry_at + timedelta(seconds=1))
+    assert later["accepted"] == 1
+    assert record.accept_idempotency_key == key
+    assert [used for _, used in wallet.calls] == [key, key]
 
 
 def test_terminal_4xx_marks_rejected_and_does_not_retry():

@@ -261,6 +261,7 @@ async def dispatch_swap_proposals(
         except WalletError as exc:
             code = exc.status_code
             error_code = f'WALLET_HTTP_{code}' if code is not None else 'WALLET_ERROR'
+            retry_after = exc.retry_after
             if code is not None and 400 <= code < 500 and code != 429:
                 # Posible rechazo permanente: bloquear envío, preservar HOLD
                 # hasta reconciliar sin arriesgar energía duplicada.

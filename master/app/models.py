@@ -877,6 +877,10 @@ class SwapRecord(SQLModel, table=True):
         default=None,
         sa_column=Column(Text, nullable=True),
     )
+    accept_retry_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
 
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
@@ -918,6 +922,10 @@ class WalletBalanceSnapshot(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
 
     cycle_id: Optional[str] = Field(default=None, index=True)
+    source_swap_id: Optional[str] = Field(default=None, index=True)
+    wallet_as_of: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True)
+    )
     # EVENT (derivado de swap-settled/trade-recorded/funding) / REST_SYNC (GET /balance)
     source: str = Field(index=True, nullable=False)
 
@@ -1120,6 +1128,18 @@ class WalletReconciliation(SQLModel, table=True):
     )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+
+
+class OperationalRateLimit(SQLModel, table=True):
+    """Ventana de 60 segundos y bloqueo HTTP compartidos por la ciudad."""
+
+    __tablename__ = "operational_rate_limits"
+
+    key: str = Field(primary_key=True)
+    attempts: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False))
+    blocked_until: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
 

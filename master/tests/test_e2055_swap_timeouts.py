@@ -23,6 +23,7 @@ class FakeWallet:
         self.statuses = statuses or {}
         self.get_calls = []
         self.cancel_calls = []
+        self.cancel_keys = []
 
     async def get_swap(self, swap_id):
         self.get_calls.append(swap_id)
@@ -30,6 +31,7 @@ class FakeWallet:
 
     async def cancel_swap(self, swap_id, *, idempotency_key):
         self.cancel_calls.append(swap_id)
+        self.cancel_keys.append(idempotency_key)
 
 
 def _context(session, *, cycle_id, offer_id, now, last_bid_at=None):
@@ -203,6 +205,9 @@ def test_wallet_evidence_expires_and_pending_bid_after_last_bid():
         alive = session.exec(
             select(SwapRecord).where(SwapRecord.idpk == alive_idpk)
         ).one()
+        assert wallet.cancel_keys[0] != alive.idempotency_key
+        asyncio.run(expire_stale_swaps(session, now=now + timedelta(seconds=1), client=wallet))
+        assert wallet.cancel_keys == [wallet.cancel_keys[0], wallet.cancel_keys[0]]
         assert expired.status == "EXPIRED"
         assert alive.status == "PROPOSED"
         assert session.exec(

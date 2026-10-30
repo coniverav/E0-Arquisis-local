@@ -35,6 +35,7 @@ from .routers.market_book import router as market_book_router
 from .routers.buy_bids import router as buy_bids_router
 from .routers.seller_offer_actions import router as seller_offer_actions_router
 from .routers.market_api import router as market_api_router
+from .routers.cycle_metrics_api import router as cycle_metrics_api_router
 from .routers.negotiations import router as negotiations_router
 
 
@@ -67,6 +68,7 @@ app.include_router(market_book_router)
 app.include_router(buy_bids_router)
 app.include_router(seller_offer_actions_router)
 app.include_router(market_api_router)
+app.include_router(cycle_metrics_api_router)
 
 def _event_to_out(session: Session, event: Event) -> EventOut:
     demands = session.exec(

@@ -25,6 +25,7 @@ from sqlmodel import Session, select
 from ..config import CITY_ID, WALLET_TIMEOUT_SECONDS
 from ..database import engine as default_engine
 from ..models import MarketBid, MarketOffer, OfferReservation, SwapRecord
+from .wallet_recovery import (inspect_known_swap, apply_wallet_observation, TERMINAL_STATES)  # E2-068
 from .wallet_client import (
     WalletClient, WalletError, WalletRateLimitError,
     WalletTimeoutError, WalletSwapWriteResponse,
@@ -127,7 +128,8 @@ def _claim_one(session: Session, *, now: datetime) -> ProposalAttempt | None:
 
 def _finish(session: Session, attempt: ProposalAttempt, *, now: datetime,
             outcome: str, error_code: str | None = None,
-            retry_after: int | None = None) -> None:
+            retry_after: int | None = None,
+            confirmed_swap_id: str | None = None) -> None:
     record = session.exec(select(SwapRecord).where(
         SwapRecord.idpk == attempt.idpk,
     ).with_for_update()).first()
@@ -135,14 +137,30 @@ def _finish(session: Session, attempt: ProposalAttempt, *, now: datetime,
         # Otro proceso recuperó el lease. No sobrescribir su resultado.
         return
 
+    # E2-068: un evento wallet puede llegar mientras el POST está en vuelo.
+    # No pisar PROPOSED/SETTLED ni reactivar un swap terminal por un timeout.
+    if record.status in TERMINAL_STATES | {"PROPOSED"}:
+        record.proposal_claim_token = None
+        record.proposal_lease_until = None
+        record.proposal_retry_at = None
+        if outcome == 'ACCEPTED':
+            record.proposal_http_accepted_at = now
+        session.add(record)
+        session.flush()
+        return
+
     record.proposal_claim_token = None
     record.proposal_lease_until = None
     record.proposal_last_error = error_code
+    if confirmed_swap_id and not record.swap_id:
+        record.swap_id = confirmed_swap_id
     if outcome == 'ACCEPTED':
         record.proposal_http_accepted_at = now
         record.proposal_retry_at = None
         record.proposal_blocked_at = None
         # NO cambiar SwapRecord.status: HTTP 202 no implica swap-proposed.
+    elif outcome == 'RECOVERED':
+        record.proposal_retry_at = None
     elif outcome == 'BLOCKED':
         record.proposal_blocked_at = now
         record.proposal_retry_at = None
@@ -173,7 +191,7 @@ async def dispatch_swap_proposals(
     reference = _aware(now or datetime.now(timezone.utc))
     target_engine = db_engine or default_engine
     wallet = client or WalletClient()
-    totals = {'claimed': 0, 'accepted_202': 0, 'retry': 0, 'blocked': 0}
+    totals = {'claimed': 0, 'accepted_202': 0, 'retry': 0, 'blocked': 0, 'recovered': 0}
 
     for _ in range(limit):
         with Session(target_engine) as session:
@@ -183,9 +201,39 @@ async def dispatch_swap_proposals(
             break
         totals['claimed'] += 1
 
+        # E2-068: si un 202 se perdió y ya conocemos el swapId, consultar
+        # Wallet ANTES de repetir el POST. Sin swapId solo procede reintentar
+        # con la MISMA llave; no hay GET oficial por idempotency-key.
+        if attempt.attempt_count > 1:
+            with Session(target_engine) as recovery_session:
+                current = recovery_session.exec(select(SwapRecord).where(
+                    SwapRecord.idpk == attempt.idpk,
+                )).first()
+                known_swap_id = current.swap_id if current is not None else None
+            if known_swap_id:
+                observation = await inspect_known_swap(wallet, known_swap_id)
+                if observation is not None:
+                    with Session(target_engine) as recovery_session:
+                        current = recovery_session.exec(select(SwapRecord).where(
+                            SwapRecord.idpk == attempt.idpk,
+                        ).with_for_update()).first()
+                        if (current is not None
+                                and current.proposal_claim_token == attempt.claim_token
+                                and apply_wallet_observation(
+                                    recovery_session, record=current,
+                                    observation=observation, now=reference)):
+                            _finish(recovery_session, attempt,
+                                    now=_aware(now or datetime.now(timezone.utc)),
+                                    outcome='RECOVERED')
+                            recovery_session.commit()
+                            totals['recovered'] += 1
+                            continue
+                        recovery_session.commit()
+
         outcome = 'RETRY'
         error_code = None
         retry_after = None
+        confirmed_swap_id = None
         try:
             response: WalletSwapWriteResponse = await wallet.propose_swap(
                 idempotency_key=attempt.idempotency_key,
@@ -199,6 +247,10 @@ async def dispatch_swap_proposals(
             )
             if response.status_code == 202 and response.accepted_for_processing:
                 outcome = 'ACCEPTED'
+                if isinstance(response.data, dict):
+                    candidate = response.data.get('swapId')
+                    if isinstance(candidate, str) and candidate:
+                        confirmed_swap_id = candidate
             else:
                 error_code = f'UNEXPECTED_HTTP_{response.status_code}'
         except WalletRateLimitError as exc:
@@ -218,7 +270,8 @@ async def dispatch_swap_proposals(
 
         with Session(target_engine) as session:
             _finish(session, attempt, now=_aware(now or datetime.now(timezone.utc)),
-                    outcome=outcome, error_code=error_code, retry_after=retry_after)
+                    outcome=outcome, error_code=error_code, retry_after=retry_after,
+                    confirmed_swap_id=confirmed_swap_id)
             session.commit()
 
         if outcome == 'ACCEPTED':

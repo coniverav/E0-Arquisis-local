@@ -1,0 +1,61 @@
+{
+  "kind": "SYNTHETIC_EXPERIMENT_FIXTURES",
+  "source": "Datos ilustrativos diseñados para pruebas E2-066; NO son observaciones de la central",
+  "assumption": "Cada oferta elegible es aceptada inmediatamente; no hay competencia ni fallos wallet",
+  "scenarios": [
+    {
+      "id": "NORMAL", "deficitKwh": 200, "minBid": 10, "lastBidSeconds": 600,
+      "marketClosesSeconds": 660, "walletCapacityCr": 30000,
+      "imbalancePrice": "140", "disabledRouteTransportCost": "22",
+      "offers": [
+        {"cityId": "MET", "offerId": "N-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 600, "remainingKwh": 95, "pricePerEnergy": "103", "distanceMeters": 1000, "transportCost": "2", "routeEnabled": true},
+        {"cityId": "COR", "offerId": "N-COR", "arriveAtSeconds": 20, "expiresAtSeconds": 600, "remainingKwh": 140, "pricePerEnergy": "92", "distanceMeters": 3000, "transportCost": "2", "routeEnabled": true},
+        {"cityId": "HGW", "offerId": "N-HGW", "arriveAtSeconds": 110, "expiresAtSeconds": 600, "remainingKwh": 140, "pricePerEnergy": "88", "distanceMeters": 1500, "transportCost": "3", "routeEnabled": true}
+      ]
+    },
+    {
+      "id": "HIGH_PRICE", "deficitKwh": 180, "minBid": 10, "lastBidSeconds": 600,
+      "marketClosesSeconds": 660, "walletCapacityCr": 38000,
+      "imbalancePrice": "100", "disabledRouteTransportCost": "12",
+      "offers": [
+        {"cityId": "MET", "offerId": "HP-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 600, "remainingKwh": 120, "pricePerEnergy": "125", "distanceMeters": 1000, "transportCost": "3", "routeEnabled": true},
+        {"cityId": "COR", "offerId": "HP-COR", "arriveAtSeconds": 35, "expiresAtSeconds": 600, "remainingKwh": 100, "pricePerEnergy": "121", "distanceMeters": 2000, "transportCost": "3", "routeEnabled": true}
+      ]
+    },
+    {
+      "id": "LOW_LIQUIDITY", "deficitKwh": 300, "minBid": 20, "lastBidSeconds": 600,
+      "marketClosesSeconds": 660, "walletCapacityCr": 50000,
+      "imbalancePrice": "135", "disabledRouteTransportCost": "14",
+      "offers": [
+        {"cityId": "MET", "offerId": "LL-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 600, "remainingKwh": 30, "pricePerEnergy": "92", "distanceMeters": 1000, "transportCost": "2", "routeEnabled": true},
+        {"cityId": "COR", "offerId": "LL-COR", "arriveAtSeconds": 180, "expiresAtSeconds": 600, "remainingKwh": 40, "pricePerEnergy": "90", "distanceMeters": 2000, "transportCost": "2", "routeEnabled": true}
+      ]
+    },
+    {
+      "id": "ROUTE_DISABLED", "deficitKwh": 150, "minBid": 10, "lastBidSeconds": 600,
+      "marketClosesSeconds": 660, "walletCapacityCr": 30000,
+      "imbalancePrice": "160", "disabledRouteTransportCost": "50",
+      "offers": [
+        {"cityId": "MET", "offerId": "RD-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 600, "remainingKwh": 140, "pricePerEnergy": "70", "distanceMeters": 3000, "transportCost": "2", "routeEnabled": false},
+        {"cityId": "COR", "offerId": "RD-COR", "arriveAtSeconds": 0, "expiresAtSeconds": 600, "remainingKwh": 140, "pricePerEnergy": "94", "distanceMeters": 1000, "transportCost": "2", "routeEnabled": true}
+      ]
+    },
+    {
+      "id": "LATE_OFFERS", "deficitKwh": 180, "minBid": 10, "lastBidSeconds": 600,
+      "marketClosesSeconds": 660, "walletCapacityCr": 30000,
+      "imbalancePrice": "160", "disabledRouteTransportCost": "10",
+      "offers": [
+        {"cityId": "MET", "offerId": "LO-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 200, "remainingKwh": 160, "pricePerEnergy": "128", "distanceMeters": 1000, "transportCost": "2", "routeEnabled": true},
+        {"cityId": "COR", "offerId": "LO-COR", "arriveAtSeconds": 175, "expiresAtSeconds": 600, "remainingKwh": 180, "pricePerEnergy": "75", "distanceMeters": 2000, "transportCost": "3", "routeEnabled": true}
+      ]
+    },
+    {
+      "id": "EARLY_LAST_BID", "deficitKwh": 90, "minBid": 10, "lastBidSeconds": 120,
+      "marketClosesSeconds": 150, "walletCapacityCr": 20000,
+      "imbalancePrice": "170", "disabledRouteTransportCost": "10",
+      "offers": [
+        {"cityId": "MET", "offerId": "ELB-MET", "arriveAtSeconds": 0, "expiresAtSeconds": 150, "remainingKwh": 90, "pricePerEnergy": "115", "distanceMeters": 1000, "transportCost": "1", "routeEnabled": true}
+      ]
+    }
+  ]
+}

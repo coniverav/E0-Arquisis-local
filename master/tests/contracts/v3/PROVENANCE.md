@@ -1,7 +1,9 @@
-# Contratos v3 vendorizados para pruebas (E2-022 / E2-028 / E2-040–044)
+# Schemas v3 fijados para pruebas locales
 
-Estos archivos son copias locales que permiten ejecutar la suite sin clonar
-otro repositorio y sin depender de la red.
+Esta carpeta contiene sólo los schemas que usan los ejemplos de la suite de
+Master y sus referencias transitivas. Permite ejecutar las pruebas sin red.
+El inventario completo, los fixtures oficiales y el OpenAPI pertenecen a
+[`Arquisis-G10-Contracts`](https://github.com/VicenteIgnacioSotoGonzalez/Arquisis-G10-Contracts).
 
 ## Schemas
 
@@ -9,9 +11,9 @@ otro repositorio y sin depender de la red.
   tag `v3.0.2`, commit `62f6cf40768b6e42717d126e528dcd944e5bc0e3`.
 - Son copias sin modificaciones. `SOURCE_SHA256.json` guarda el SHA-256 de
   cada archivo y `test_contracts_v3.py` lo verifica.
-- Se incluyen los 46 schemas oficiales: mensajes AMQP, wallet, token,
-  catálogos de razón, fragmentos comunes e índice. El repositorio
-  `Arquisis-G10-Contracts` conserva también sus fixtures oficiales.
+- Se conservan 21 schemas necesarios para los ejemplos que Master valida;
+  no representan el inventario completo ni se cargan en producción.
+  Los 46 schemas oficiales están en `Arquisis-G10-Contracts/docs/schemas/v3/`.
 
 ## Ejemplos
 
@@ -40,7 +42,8 @@ otro repositorio y sin depender de la red.
 
 Al cambiar el tag oficial:
 
-1. Copiar todos los schemas desde el tag nuevo.
+1. Copiar desde el tag nuevo los schemas usados por estas pruebas y sus
+   referencias transitivas. Actualizar el inventario completo en Contracts.
 2. Regenerar `SOURCE_SHA256.json`.
 3. Ejecutar `python -m pytest tests/test_contracts_v3.py`.
 4. Revisar si cambió algún `required` o `additionalProperties` y ajustar los

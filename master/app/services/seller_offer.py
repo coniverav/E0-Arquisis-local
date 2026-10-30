@@ -40,6 +40,8 @@ def calculate_offer(
         raise ValueError("offer_price_markup debe ser positivo")
     if price_override is not None and (not price_override.is_finite() or price_override <= 0):
         raise ValueError("offer_price_override debe ser positivo y finito")
+    if price_override is not None and price_override != price_override.quantize(CENT):
+        raise ValueError("offer_price_override debe expresarse en centavos")
     if quantity_cap is not None and (type(quantity_cap) is not int or quantity_cap < 0):
         raise ValueError("offer_quantity_cap debe ser entero no negativo")
 
@@ -54,10 +56,10 @@ def calculate_offer(
     if quantity_cap is not None:
         quantity = min(quantity, quantity_cap)
 
-    price = max(
+    price = (price_override if price_override is not None else max(
         buyback_price,
-        (price_override if price_override is not None else generation_cost * markup).quantize(CENT, rounding=ROUND_HALF_UP),
-    )
+        (generation_cost * markup).quantize(CENT, rounding=ROUND_HALF_UP),
+    ))
 
     return quantity, price.quantize(CENT, rounding=ROUND_HALF_UP)
 

@@ -49,7 +49,7 @@ class StrategyUpdateIn(BaseModel):
     # silenciosamente y no coincidiría con el valor auditado de la edición.
     offerPriceMarkup: Decimal = Field(gt=0, max_digits=10, decimal_places=4)
     offerQuantityFraction: Decimal = Field(ge=0, le=1, max_digits=10, decimal_places=4)
-    offerPriceOverride: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=4)
+    offerPriceOverride: Decimal | None = Field(default=None, gt=0, max_digits=20, decimal_places=2)
     offerQuantityCap: int | None = Field(default=None, ge=0, strict=True)
     bidAcceptancePolicy: str
     offerSelectionPolicy: str

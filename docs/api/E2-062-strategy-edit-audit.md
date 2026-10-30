@@ -40,9 +40,11 @@ Las políticas y el `span` se validan contra las opciones admitidas por AD6.
 ## Controles directos RF04 (E2-073)
 
 El mismo formulario puede enviar `offerPriceOverride` (CR/KWH positivo, hasta
-cuatro decimales) y `offerQuantityCap` (KWH enteros no negativos). Ambos son
+dos decimales) y `offerQuantityCap` (KWH enteros no negativos). Ambos son
 opcionales: `null` conserva el cálculo anterior mediante multiplicador y
-fracción. El precio directo respeta el piso `buybackPrice` del ciclo. El tope
+fracción. El precio directo se publica como valor final elegido, incluso si
+está por debajo de `buybackPrice`: la recompra es un incentivo económico, no
+un piso reglamentario. El tope
 de cantidad se aplica después de la fracción y nunca excede el excedente
 vendible ni el saldo Wallet; cero permite no publicar oferta. Estos valores
 se guardan en la nueva versión `PENDING`, se auditan y se fijan al ciclo igual

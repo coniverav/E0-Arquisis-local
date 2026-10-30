@@ -90,6 +90,8 @@ def create_pending_strategy(
     direct_price = Decimal(str(offer_price_override)) if offer_price_override is not None else None
     if direct_price is not None and (not direct_price.is_finite() or direct_price <= 0):
         raise ValueError("offer_price_override debe ser positivo y finito")
+    if direct_price is not None and direct_price != direct_price.quantize(Decimal("0.01")):
+        raise ValueError("offer_price_override debe expresarse en centavos")
     if offer_quantity_cap is not None and (type(offer_quantity_cap) is not int or offer_quantity_cap < 0):
         raise ValueError("offer_quantity_cap debe ser entero no negativo")
 

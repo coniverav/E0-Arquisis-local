@@ -1171,7 +1171,7 @@ class StrategyConfig(SQLModel, table=True):
         sa_column=Column(Numeric(10, 4), nullable=False),
     )
     offer_price_override: Optional[Decimal] = Field(
-        default=None, sa_column=Column(Numeric(20, 4), nullable=True),
+        default=None, sa_column=Column(Numeric(20, 2), nullable=True),
     )
     offer_quantity_cap: Optional[int] = Field(default=None)
     # FIFO, MAX_REMAINING, BATCH

@@ -13,7 +13,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("strategy_configs", sa.Column("offer_price_override", sa.Numeric(20, 4), nullable=True))
+    op.add_column("strategy_configs", sa.Column("offer_price_override", sa.Numeric(20, 2), nullable=True))
     op.add_column("strategy_configs", sa.Column("offer_quantity_cap", sa.Integer(), nullable=True))
 
 

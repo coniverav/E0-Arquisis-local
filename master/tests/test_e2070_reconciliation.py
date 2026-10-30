@@ -7,7 +7,8 @@ from uuid import uuid4
 from sqlmodel import Session, select
 
 from app.database import engine
-from app.models import Cycle, LedgerEntry, WalletBalanceSnapshot, WalletStatementEntry
+from app.models import Cycle, LedgerEntry, SwapRecord, WalletBalanceSnapshot, WalletStatementEntry
+from app.services.wallet_service import WalletService
 from app.services.wallet_client import WalletBalanceResponse, WalletStatementPage
 from app.services.wallet_reconciliation import (
     fetch_incremental_statement_entries, reconcile_wallet, store_statement_entries,
@@ -187,7 +188,7 @@ def test_funding_penalty_transport_and_imbalance_use_distinct_local_effects():
 def test_statement_created_after_balance_asof_is_not_counted():
     now = datetime.now(timezone.utc)
     with Session(engine) as session:
-        cycle_id = f"e2070-no-cycle-{uuid4()}"
+        cycle_id = _cycle(session, now)
         _event(session, cycle_id, now - timedelta(minutes=1))
         late = _entry(cycle_id, now + timedelta(seconds=1), "CR", 100)
         report = asyncio.run(reconcile_wallet(session, client=Wallet(
@@ -207,6 +208,58 @@ def test_future_event_is_not_used_as_baseline():
         ), now=now))
     assert report.status == "NO_LOCAL_BASELINE"
     assert report.cr_available_local is None
+
+
+def test_settled_event_without_cycle_keeps_snapshot_but_no_ledger_or_match():
+    """El modelo permite el registro huérfano; el evento no crea el ciclo."""
+    now = datetime.now(timezone.utc)
+    cycle_id = f"e2070-orphan-{uuid4()}"
+    swap_id = f"swap-{uuid4()}"
+    with Session(engine) as session:
+        session.add(SwapRecord(
+            idpk=str(uuid4()), swap_id=swap_id, cycle_id=cycle_id,
+            role="PROPOSER", counterpart_city_id="HGW", give_asset="KWH",
+            give_amount=Decimal("2"), take_asset="CR", take_amount=Decimal("10"),
+            status="PROPOSED", idempotency_key=str(uuid4()), created_at=now,
+        ))
+        session.commit()
+        WalletService().process_swap_event(session, event_type="swap-settled", data={
+            "swapId": swap_id, "idpk": str(uuid4()), "settledAt": now.isoformat(),
+            "balancesAfter": {
+                "CR": {"available": 500, "held": 0},
+                "KWH": {"available": 0, "held": 0},
+            },
+        })
+        session.commit()
+        assert session.get(Cycle, cycle_id) is None
+        assert session.exec(select(LedgerEntry).where(LedgerEntry.cycle_id == cycle_id)).all() == []
+        assert session.exec(select(WalletBalanceSnapshot).where(
+            WalletBalanceSnapshot.cycle_id == cycle_id,
+            WalletBalanceSnapshot.source == "EVENT",
+        )).first() is not None
+        report = asyncio.run(reconcile_wallet(session, client=Wallet(
+            _balance(now + timedelta(seconds=1), cr="500", cycle_id=cycle_id),
+            [WalletStatementPage(entries=[], next_cursor=None)],
+        ), now=now + timedelta(seconds=1)))
+    assert report.status == "NO_LOCAL_BASELINE"
+    assert report.explanation["local_evidence"]["cycle_present"] is False
+
+
+def test_local_materialization_gap_without_event_is_reported_without_inventing_baseline():
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        cycle_id = _cycle(session, now, budget="120")
+        session.commit()
+        report = asyncio.run(reconcile_wallet(session, client=Wallet(
+            _balance(now, cr="500"),
+            [WalletStatementPage(entries=[], next_cursor=None)],
+        ), cycle_id=cycle_id, now=now))
+    assert report.status == "NO_LOCAL_BASELINE"
+    assert report.explanation["local_difference_without_global_baseline"] is True
+    assert report.explanation["local_evidence"]["ledger_materialization"] == {
+        "budget_rebuilt": "500.00", "budget_cycle": "120.00",
+        "energy_rebuilt": "0.00", "energy_cycle": "0.00", "consistent": False,
+    }
 
 
 def test_incremental_scan_stops_after_overlap_and_full_scan_recovers_late_entry():

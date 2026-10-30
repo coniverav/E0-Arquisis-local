@@ -252,7 +252,7 @@ def _operation_evidence(
     Una referencia opaca que no coincide no se convierte en un swap inventado.
     """
     if cycle_id is None:
-        return {"cycle_id": None, "operations": []}, False, False
+        return {"cycle_id": None, "cycle_present": False, "operations": []}, False, False
     cycle = session.get(Cycle, cycle_id)
     statement = session.exec(select(WalletStatementEntry).where(
         WalletStatementEntry.cycle_id == cycle_id,
@@ -334,7 +334,10 @@ def _operation_evidence(
             "status": state,
         })
 
-    result: dict[str, Any] = {"cycle_id": cycle_id, "operations": operations}
+    result: dict[str, Any] = {
+        "cycle_id": cycle_id, "cycle_present": cycle is not None,
+        "operations": operations,
+    }
     if cycle is not None:
         rebuilt_cr = cycle.opening_budget_balance + sum((entry.budget_delta for entry in ledger), Decimal("0"))
         rebuilt_kwh = cycle.opening_energy_balance + sum((entry.energy_delta for entry in ledger), Decimal("0"))
@@ -501,6 +504,15 @@ async def reconcile_wallet(
           or (baseline is not None and baseline.wallet_as_of is None)) and status == "MATCH":
         # Una coincidencia entre snapshots no demuestra acuerdo del ledger.
         status = "EXPLAINED"
+
+    if not local_evidence["cycle_present"] and status == "MATCH":
+        # Un EVENT es evidencia de Wallet, no reemplaza al ciclo ni al ledger.
+        # Un swap-settled puede persistir snapshot aunque falte su Cycle local.
+        status = "NO_LOCAL_BASELINE"
+        cr_local = kwh_local = None
+        cr_difference = kwh_difference = None
+        cr_explained = kwh_explained = None
+        cr_unexplained = kwh_unexplained = None
 
     report = WalletReconciliation(
         cycle_id=target_cycle,

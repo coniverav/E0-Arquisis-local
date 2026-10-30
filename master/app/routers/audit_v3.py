@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, false, func, or_
 from sqlmodel import Session, select
 
 from ..auth import verify_jwt
@@ -30,6 +30,9 @@ def _operator(claims: dict = Depends(verify_jwt)) -> None:
 router = APIRouter(prefix="/audit", tags=["audit-v3"], dependencies=[Depends(_operator)])
 WALLET_TYPES = ("swap-proposed", "swap-settled", "swap-rejected", "swap-expired", "swap-cancelled")
 INTERCITY_TYPES = ("bid", "bid-accepted", "bid-rejected", "ack", "nack")
+NACK_REASONS = frozenset({
+    "MALFORMED_MESSAGE", "UNKNOWN_TYPE", "IDPK_EQUALS_MSGID", "IDENTITY_MISMATCH",
+})
 
 
 class AuditPage(BaseModel):
@@ -82,8 +85,10 @@ def intercity_audit(
         outbound_conditions.append(OutboundMessage.status == status)
     if reason_code is not None:
         inbound_conditions.append(InboundMessage.reason_code == reason_code)
-        # Los outbounds no guardan un reasonCode estructurado.
-        direction = "INBOUND" if direction is None else direction
+        outbound_conditions.append(and_(
+            OutboundMessage.message_type == "nack",
+            OutboundMessage.payload["reason"].astext == reason_code,
+        ) if reason_code in NACK_REASONS else false())
 
     rows: list[tuple[datetime, int, dict[str, Any]]] = []
     total = 0
@@ -102,17 +107,19 @@ def intercity_audit(
                 "reasonCode": row.reason_code, "targetMsgId": target if isinstance(target, str) else None,
                 "occurredAt": row.received_at,
             }))
-    if direction != "INBOUND" and reason_code is None:
+    if direction != "INBOUND":
         total += session.exec(select(func.count(OutboundMessage.id)).where(*outbound_conditions)).one()
         outgoing = session.exec(select(OutboundMessage).where(*outbound_conditions)
             .order_by(OutboundMessage.created_at.desc(), OutboundMessage.id.desc())
             .limit(offset + limit)).all()
         for row in outgoing:
+            payload_reason = row.payload.get("reason") if isinstance(row.payload, dict) else None
             rows.append((row.created_at, row.id, {
                 "direction": "OUTBOUND", "msgId": row.msg_id, "idpk": row.idpk,
                 "type": row.message_type, "cycleId": row.cycle_id,
                 "cityId": row.routing_key[5:] if row.routing_key and row.routing_key.startswith("city.") else None,
-                "status": row.status, "reasonCode": None,
+                "status": row.status,
+                "reasonCode": payload_reason if row.message_type == "nack" and isinstance(payload_reason, str) and payload_reason in NACK_REASONS else None,
                 "targetMsgId": row.target_msg_id, "occurredAt": row.created_at,
             }))
     rows.sort(key=lambda item: (item[0], item[1]), reverse=True)

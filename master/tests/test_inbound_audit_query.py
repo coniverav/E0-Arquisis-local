@@ -69,7 +69,8 @@ class InboundAuditQueryTests(unittest.TestCase):
 
             session.commit()
 
-    #Un mensaje descartado puede no tener msgId ni idpk. Se conserva igualmente la evidencia cruda y la razón.
+    #Un mensaje descartado puede no tener msgId ni idpk. El raw queda en la base,
+    #pero no se devuelve por HTTP porque podría contener credenciales.
     def test_discarded_message_is_queryable(self):
         response = self.client.post(
             "/internal/audit/inbound",
@@ -105,10 +106,7 @@ class InboundAuditQueryTests(unittest.TestCase):
             created["reason"],
             "El mensaje no es JSON válido",
         )
-        self.assertEqual(
-            created["rawPayload"],
-            '{"msgId": "incompleto"',
-        )
+        self.assertIsNone(created["rawPayload"])
 
         query_response = self.client.get(
             "/internal/audit/inbound",

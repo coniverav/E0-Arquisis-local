@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 from datetime import timedelta
-from copy import deepcopy
 import re
 from sqlalchemy import or_, exists
 from sqlalchemy.orm import aliased
@@ -82,21 +81,15 @@ def _inbound_message_to_out(
             if claim is not None:
                 related_msg_id = claim.msg_id
 
-    # Los eventos wallet usan data.token; bid-accepted usa data.swapToken.
-    # La auditoría conserva el original en PostgreSQL, pero nunca lo devuelve.
-    def redact(value):
-        if isinstance(value, dict):
-            return {key: redact(item) for key, item in value.items()
-                    if key.lower() not in {"token", "swaptoken", "apikey", "x-api-key", "authorization", "secret"}}
-        if isinstance(value, list):
-            return [redact(item) for item in value]
-        return value
-
-    safe_payload = redact(deepcopy(message.payload))
-    sensitive_pattern = r"(?i)(token|api.?key|authorization|secret)"
-    raw_is_sensitive = bool(message.raw_payload and re.search(
-        sensitive_pattern, message.raw_payload
-    ))
+    # El mensaje entrante puede estar malformado: data y rawPayload no son
+    # confiables. Devolver sólo campos de correlación ya auditados por separado.
+    safe_payload = ({
+        key: value for key, value in (
+            ("msgId", message.msg_id), ("idpk", message.idpk),
+            ("type", message.message_type), ("cycleId", message.cycle_id),
+        ) if value is not None
+    } if isinstance(message.payload, dict) else None)
+    sensitive_pattern = r"(?i)(token|api[_-]?key|authorization|secret|password|bearer|credential|jwt|eyJ[A-Za-z0-9_-]+\.)"
     safe_reason = None if message.reason and re.search(sensitive_pattern, message.reason) else message.reason
 
     return InboundMessageAuditOut(
@@ -112,9 +105,7 @@ def _inbound_message_to_out(
         processedAt=message.processed_at,
         relatedMsgId=related_msg_id,
         payload=safe_payload,
-        rawPayload=(None if message.message_type == "bid-accepted"
-                    or (message.message_type or "").startswith("swap-")
-                    or raw_is_sensitive else message.raw_payload),
+        rawPayload=None,
     )
 
 def _inbound_message_to_anomaly_out(

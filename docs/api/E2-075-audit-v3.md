@@ -26,7 +26,7 @@ GET /audit/reconciliations?cycleId=<CYCLE_ID>&limit=50
 Authorization: Bearer <JWT_DE_USUARIO>
 ```
 
-No se devuelve `data.token`, `swapToken`, `Idempotency-Key`, API key ni payload crudo en las nuevas rutas. El serializador interno de inbound elimina esas claves del payload, omite el raw de mensajes con tokens y oculta motivos que mencionen secretos. El original sigue guardado en la auditoría interna para diagnóstico; por ello también se debe proteger el acceso a PostgreSQL y a `/internal/*` mediante la red privada/gateway del despliegue. `GET /audit/anomalies` conserva su acceso actual para no romper el Frontend y solo entrega metadatos reducidos.
+No se devuelve `data.token`, `swapToken`, `Idempotency-Key`, API key ni payload crudo en las nuevas rutas. El serializador interno de inbound devuelve sólo los identificadores auditados del envelope y `rawPayload: null`, incluso para mensajes malformados; el original sigue guardado en PostgreSQL para diagnóstico. Los NACK salientes exponen `reasonCode` únicamente si la razón persistida corresponde a un código conocido del protocolo. El acceso a PostgreSQL y a `/internal/*` debe protegerse mediante la red privada/gateway del despliegue. `GET /audit/anomalies` conserva su acceso actual para no romper el Frontend y solo entrega metadatos reducidos.
 
 ## Validación tras despliegue
 

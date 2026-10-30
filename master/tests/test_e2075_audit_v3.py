@@ -142,8 +142,76 @@ def test_internal_audit_response_redacts_wallet_token_recursively():
     })
     assert response.status_code == 200, response.text
     assert response.json()["rawPayload"] is None
-    assert response.json()["payload"]["data"]["nested"] == [{}]
+    assert response.json()["payload"]["type"] == "swap-proposed"
+    assert "data" not in response.json()["payload"]
     assert "private" not in response.text
+
+
+def test_internal_audit_http_never_echoes_untrusted_nested_credentials():
+    markers = ("SENTINEL_ACCESS", "SENTINEL_REFRESH", "SENTINEL_PRIVATE",
+               "SENTINEL_PASSWORD", "SENTINEL_JWT", "SENTINEL_API")
+    msg_id = str(uuid4())
+    response = client.post("/internal/audit/inbound", json={
+        "status": "DISCARDED", "reason": "mensaje malformado",
+        "msgId": msg_id, "idpk": str(uuid4()), "type": "swap-proposed",
+        "payload": {"msgId": msg_id, "type": "swap-proposed", "data": {
+            "swapId": "swap-safe", "access_token": markers[0],
+            "nested": [{"refreshToken": markers[1]},
+                       {"credentials": {"private_key": markers[2],
+                                        "password": markers[3]}}],
+            "jwt": markers[4], "xApiKey": markers[5],
+        }},
+        "rawPayload": "eyJhbGciOiJub25lIn0.SENTINEL_RAW.signature",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["payload"] == {"msgId": msg_id, "type": "swap-proposed",
+                                          "idpk": response.json()["idpk"]}
+    assert response.json()["rawPayload"] is None
+    assert not any(marker in response.text for marker in markers)
+    assert "SENTINEL_RAW" not in response.text
+    queried = client.get("/internal/audit/inbound", params={"msgId": msg_id})
+    assert queried.status_code == 200
+    assert "SENTINEL_" not in queried.text
+    with Session(engine) as session:
+        stored = session.get(InboundMessage, response.json()["id"])
+        assert stored.payload["data"]["access_token"] == markers[0]
+
+
+def test_outgoing_nack_exposes_its_persisted_protocol_reason_only():
+    now = datetime.now(timezone.utc)
+    cycle_id = f"audit-nack-{uuid4()}"
+    msg_id = str(uuid4())
+    with Session(engine) as session:
+        session.add(OutboundMessage(
+            msg_id=msg_id, idpk=str(uuid4()), message_type="nack",
+            cycle_id=cycle_id, target_msg_id=str(uuid4()),
+            routing_key="city.HGW", status="PUBLISHED", created_at=now,
+            payload={"reason": "IDENTITY_MISMATCH", "data": {"token": "SENTINEL_SECRET"}},
+        ))
+        session.commit()
+    result = _get("/audit/intercity", {"cycleId": cycle_id,
+        "direction": "OUTBOUND", "reasonCode": "IDENTITY_MISMATCH"})
+    assert result.status_code == 200, result.text
+    assert result.json()["total"] == 1
+    assert result.json()["items"][0]["reasonCode"] == "IDENTITY_MISMATCH"
+    assert "SENTINEL_SECRET" not in result.text
+
+
+def test_malformed_outgoing_nack_reason_is_not_exposed_or_a_server_error():
+    now = datetime.now(timezone.utc)
+    cycle_id = f"audit-malformed-{uuid4()}"
+    with Session(engine) as session:
+        session.add(OutboundMessage(
+            msg_id=str(uuid4()), idpk=str(uuid4()), message_type="nack",
+            cycle_id=cycle_id, routing_key="city.HGW", status="FAILED",
+            created_at=now,
+            payload={"reason": {"access_token": "SENTINEL_SECRET"}},
+        ))
+        session.commit()
+    result = _get("/audit/intercity", {"cycleId": cycle_id})
+    assert result.status_code == 200, result.text
+    assert result.json()["items"][0]["reasonCode"] is None
+    assert "SENTINEL_SECRET" not in result.text
 
 
 def test_anomalies_keep_frontend_shape_and_filter_identity_mismatch():

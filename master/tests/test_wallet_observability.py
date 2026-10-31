@@ -95,3 +95,37 @@ def test_wallet_event_is_associated_with_newrelic_application():
         obs.record_wallet_request(method="GET", endpoint="balance", elapsed_ms=12.5, outcome="http_200", status_code=200)
     agent.record_custom_event.assert_called_once()
     assert agent.record_custom_event.call_args.kwargs["application"] is agent.application.return_value
+
+
+def test_scheduler_registers_newrelic_application(monkeypatch):
+    from app.services import wallet_observability as obs
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("NEW_RELIC_MONITOR_MODE", "true")
+    agent = MagicMock()
+    with patch.object(obs, "nr_agent", agent):
+        obs.register_wallet_worker_application()
+    agent.register_application.assert_called_once_with(timeout=0.0)
+
+
+def test_scheduler_registration_is_disabled_with_monitor_off(monkeypatch):
+    from app.services import wallet_observability as obs
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("NEW_RELIC_MONITOR_MODE", "false")
+    agent = MagicMock()
+    with patch.object(obs, "nr_agent", agent):
+        obs.register_wallet_worker_application()
+    agent.register_application.assert_not_called()
+
+
+def test_scheduler_newrelic_errors_do_not_interrupt(monkeypatch):
+    from app.services import wallet_observability as obs
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("NEW_RELIC_MONITOR_MODE", "true")
+    agent = MagicMock()
+    agent.register_application.side_effect = RuntimeError("simulado")
+    with patch.object(obs, "nr_agent", agent):
+        obs.register_wallet_worker_application()
+    agent.register_application.assert_called_once_with(timeout=0.0)

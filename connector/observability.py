@@ -6,6 +6,7 @@ No se alteran el flujo AMQP ni sus ACK/NACK de protocolo.
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -16,6 +17,20 @@ try:
     import newrelic.agent as nr_agent
 except ImportError:
     nr_agent = None
+
+
+def register_connector_application() -> None:
+    """Activa la aplicación APM al iniciar el proceso no-web del conector."""
+    if os.getenv("NEW_RELIC_MONITOR_MODE", "false").lower() not in ("true", "1", "yes"):
+        return
+    if nr_agent is None:
+        logger.warning("New Relic habilitado, pero no está instalado el agente Python")
+        return
+    try:
+        # Registro asíncrono: no demora la conexión al broker.
+        nr_agent.register_application(timeout=0.0)
+    except Exception:
+        logger.warning("No fue posible registrar EnergyShark Connector en New Relic", exc_info=True)
 
 
 def _safe(value):

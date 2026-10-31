@@ -66,6 +66,17 @@ python tools/newrelic_e2061.py --apply
 - Revisar en producción `NEW_RELIC_MONITOR_MODE=true` tanto para `master`, `master2`, `cycle-scheduler` como para `connector`. Verificar también que la clave de ingesta corresponda a la cuenta correcta.
 - Configurar el workflow de notificaciones para la política `EnergyShark E2 | Anomalias wallet y broker`, si el grupo desea alertas fuera de la UI.
 
+## Registro de aplicaciones de procesos en segundo plano
+
+El `connector` y `cycle-scheduler` se ejecutan continuamente sin atender peticiones web.
+Ambos deben llamar a `newrelic.agent.register_application(timeout=0.0)` al comenzar
+si `NEW_RELIC_MONITOR_MODE` está habilitado. La inicialización del agente con
+`newrelic-admin run-program` por sí sola no demuestra que sus eventos personalizados
+se estén enviando. El registro es asíncrono para no bloquear el consumo ni el worker.
+
+Comprobar en New Relic tanto `EnergySharkBrokerHeartbeat` como `EnergySharkWalletHttp`
+tras desplegar, sin utilizar `Python Agent Test` como prueba de la aplicación real.
+
 ## Validación de evidencia para la demo
 
 1. **Wallet con timeout:** provocar una llamada simulada en ambiente de prueba, buscar `EnergySharkWalletHttp` con `outcome='timeout'` y verificar el gráfico y la condición. No generar operaciones duplicadas en el mercado real.

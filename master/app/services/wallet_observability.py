@@ -5,6 +5,7 @@ headers, payload, respuestas ni excepciones que puedan contener secretos.
 """
 
 import logging
+import os
 import re
 import time
 
@@ -16,6 +17,20 @@ try:
     import newrelic.agent as nr_agent
 except ImportError:  # Pruebas locales sin el agente instalado
     nr_agent = None
+
+
+def register_wallet_worker_application() -> None:
+    """Activa APM para el scheduler sin necesidad de peticiones HTTP."""
+    if os.getenv("NEW_RELIC_MONITOR_MODE", "false").lower() not in ("true", "1", "yes"):
+        return
+    if nr_agent is None:
+        logger.warning("New Relic habilitado, pero no está instalado el agente Python")
+        return
+    try:
+        # Evita detener el scheduler esperando al recolector.
+        nr_agent.register_application(timeout=0.0)
+    except Exception:
+        logger.warning("No fue posible registrar EnergyShark Scheduler en New Relic", exc_info=True)
 
 
 def wallet_endpoint(url: str) -> str:

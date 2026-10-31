@@ -38,6 +38,7 @@ from ..services.swap_accept import accept_pending_swaps
 from ..services.swap_timeouts import expire_stale_swaps
 from ..services.autonomous_buy import run_autonomous_buy_tick
 from ..services.wallet_reconciliation import reconcile_wallet_tick
+from ..services.wallet_observability import register_wallet_worker_application
 
 
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +49,7 @@ logger = logging.getLogger(
 
 
 def run() -> None:
+    register_wallet_worker_application()
     logger.info(
         "Cycle scheduler iniciado; poll=%ss",
         CYCLE_SCHEDULER_POLL_SECONDS,

@@ -10,6 +10,7 @@ from observability import (
     ObservedIncomingMessage,
     record_consumer_connection,
     record_consumer_heartbeat,
+    register_connector_application,
 )
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
@@ -770,6 +771,7 @@ async def consume_market_forever() -> None:
 
 
 async def main() -> None:
+    register_connector_application()
     loop = asyncio.get_running_loop()
     current_task = asyncio.current_task()
     installed_signals = []

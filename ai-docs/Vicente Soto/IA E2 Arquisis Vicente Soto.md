@@ -545,3 +545,61 @@ La inspección visual local se hizo con cuatro ciclos sintéticos: dos finales d
 La primera falla del CI se debió a que `requirements-test.txt` instalaba `jsonschema` sin los validadores de formato: fechas sin zona horaria pasaban inadvertidas. El commit `5a221f3` agregó `jsonschema[format]` y una prueba que detecta la ausencia del validador `date-time`. El siguiente job expuso otra dependencia omitida: las pruebas integradas importaban `aio_pika` desde Connector, pero el workflow instalaba sólo Master. El commit `7dd7275` agregó la instalación de `connector/requirements.txt`.
 
 Las 14 pruebas locales de Contracts pasaron y el job `contracts` de la PR #12 terminó en verde después de ambos ajustes. Antes de ello, se habían ejecutado 39 pruebas relevantes de Backend tras reducir sus fixtures. El CI de Contracts descargaba Backend desde `develop` en esa corrida; corresponde repetir la validación contractual después de integrar la PR de Backend. Las PR #12 de Contracts, #87 de Backend y #20 de Frontend permanecían abiertas y sin merge al redactar esta entrada.
+
+---
+
+# E2-077 - OpenAPI y contexto compartido (RDOC04)
+
+### Prompt relevante
+
+> "E2-077 (RDOC04): Actualizar OpenAPI para reflejar mercado, estrategias, bids/swaps, historial y experimentos. Mantener `agents.md` coherente."
+
+### Resumen de la respuesta y utilidad
+
+Al comparar `Arquisis-G10-Contracts/docs/openapi/openapi.yaml` con el OpenAPI generado por Backend se comprobó que ya tenían la misma estructura: 38 rutas y 58 schemas. La tarea agregó descripciones a las operaciones existentes para aclarar historial por ciclo, filtros de anomalías, frescura del feed, precio efectivo, estrategia versionada, estados de swaps y métricas por span. No se inventaron rutas públicas para crear bids: `/internal/market/bids` continúa siendo interno. `tests/test_v3_contracts.py` comprueba las rutas y campos requeridos por estas vistas.
+
+Se actualizó el `agents.md` organizacional de Contracts para separar el flujo E1 del mercado v3.0.2, sus dos colas y la distinción entre ACK, HTTP `202` y `swap-settled`. La copia de Frontend quedó sincronizada con ese contexto. Las 15 pruebas de Contracts pasaron y el CI de la PR #13 terminó en verde. Esa PR se integró en `develop` mediante `3cce870`; los cambios de documentación fueron `2d1c2aa`, `cc4dd77` y `f4d24e1` en Frontend. El OpenAPI describe la implementación actual, pero esta comparación local no acredita el despliegue de la API en producción.
+
+---
+
+# E2-078 - Vista de anomalías y correlaciones (RF05)
+
+### Prompt relevante
+
+> "E2-078 (RF05): Mejorar la vista de anomalías con filtros por `msgId` e `idpk`, permitiendo consultar duplicados, descartes, identidad ajena y motivos sin SQL."
+
+### Resumen de la respuesta y utilidad
+
+`src/components/AnomaliesView.jsx` y `src/services/anomalyAudit.js` ampliaron la consulta existente con filtro de código de motivo, paginación y columnas para `msgId`, `idpk`, emisor y mensaje original correlacionado. `IDENTITY_MISMATCH` se muestra como motivo de un registro `DISCARDED` o `NACKED`, sin inventar un cuarto estado de anomalía. El campo de motivo permite ingresar otros códigos además de los sugeridos. `tests/anomalyAudit.test.mjs` prueba la construcción de filtros y esa semántica.
+
+La revisión visual utilizó un servidor HTTP sintético local: mostró 53 anomalías, incluidos duplicados, un descarte por identidad y un NACK malformado. Las capturas acreditan la visualización de registros y correlaciones; no documentan que se haya pulsado la segunda página ni aplicado cada filtro en el navegador. El mock no se incorporó a la PR #21. Los cambios funcionales de E2-078 fueron `81218c5` y `b69ca5c`.
+
+---
+
+# E2-079 - Estados y errores del mercado (RF01/RF04)
+
+### Prompt relevante
+
+> "E2-079 (RF01/RF04): Mejorar los estados y errores de las vistas de mercado, distinguiendo HTTP 202, ACK y `swap-settled`, además de loading, timeout, 403 y 429."
+
+### Resumen de la respuesta y utilidad
+
+`src/components/MarketActivityView.jsx` consulta el historial público del ciclo y la auditoría interciudad para mostrar bids, swaps y ACK/NACK por separado. `src/services/marketActivity.js` distingue solicitud recibida por Wallet con HTTP `202`, propuesta recibida y liquidación confirmada por `swap-settled`; un bid aceptado tampoco se presenta como swap liquidado. La vista se añadió al detalle del ciclo y a la administración de mercado. `src/services/api.js` y `apiErrors.js` agregaron timeout local y mensajes diferenciados para falta de permiso, límite 429 y errores de red. Se corrigió además el estado vacío para no hablar de ACK/NACK de un ciclo inexistente.
+
+`tests/marketActivity.test.mjs` cubre la separación de estados y los mensajes de error. Con el mock local, las capturas mostraron un swap con HTTP `202`, otro propuesto, uno liquidado y trazas ACK/NACK. El mock respondió correctamente 403 y 429 en pruebas HTTP locales; no se registró una captura de esos estados ni de timeout en el navegador. Estos ensayos no comprueban entrega RabbitMQ, respuesta real de Wallet ni autorización desplegada. Los commits de E2-079 fueron `849ddc6`, `30175a7` y `2a305ea`.
+
+---
+
+# E2-080 - Frescura del feed y transporte (RF02)
+
+### Prompt relevante
+
+> "E2-080 (RF02): Incorporar indicadores de frescura del feed y rutas deshabilitadas, actualizar el precio efectivo ante cambios de `distance-table` y evitar presentar ofertas desactualizadas como garantizadas."
+
+### Resumen de la respuesta y utilidad
+
+`src/components/MarketBookView.jsx` consulta `GET /market/book` para un ciclo y actualiza la vista cada 10 segundos. Expone estado de frescura, posible brecha, cierre, marca de la última tabla, ruta habilitada o deshabilitada y precio nominal, transporte y efectivo. `src/services/marketBook.js` presenta ofertas inciertas o antiguas como observaciones sin disponibilidad garantizada; si no hay ciclo, la vista explica el estado vacío sin mostrar un selector inútil. `tests/marketBook.test.mjs` cubre estas etiquetas y la indicación de tarifa punitiva para rutas deshabilitadas.
+
+La revisión visual con tres ofertas sintéticas mostró una ruta deshabilitada y una oferta incierta. Al cambiar la tarifa en el mock local, el precio efectivo visible de HGW pasó de 225,03 a 225,06 CR/KWH, mientras la ruta deshabilitada conservó su tarifa punitiva. Esto verifica actualización y presentación de datos simulados, no la llegada real de `distance-table` ni la completitud del feed del broker. Los commits de E2-080 fueron `97471ef`, `37f6ca8` y `fe4ca26`.
+
+La validación final compartida de Frontend pasó con `npm test` (6 archivos de pruebas), `npm run lint` y `npm run build`. La PR #21 se integró en `develop` mediante `fb4ae7e`. El servidor mock y su cambio de `.gitignore` se excluyeron de la PR; las correcciones de interfaz surgidas durante la revisión visual sí se conservaron. Queda validar las vistas contra Backend, broker y Wallet desplegados.

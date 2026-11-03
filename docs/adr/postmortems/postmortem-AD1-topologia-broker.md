@@ -1,39 +1,32 @@
-# Post-mortem AD1: Topología del consumo del broker
+# Post-mortem AD1: Topología del consumo del broker (E2-082)
 
-### Contexto y decisión de E1
+**Revisión retrospectiva:** 3 de noviembre de 2026. Se examina el estado de E1 y su adaptación en el código de E2 del repositorio recibido. Las decisiones originales de [AD1](../ADR-001-broker-topology.md) no se reescriben.
 
-AD1 buscaba consumir mensajes RabbitMQ sin acoplar el ciclo de vida del consumidor a la API, recuperarse de cortes y registrar las recepciones antes de confirmar su entrega al broker. Se eligió **un connector independiente que se comunica por HTTP con FastAPI**, con persistencia de recepción y de publicaciones pendientes en PostgreSQL. Se descartó integrar el consumidor dentro de las réplicas de `master` por el acoplamiento y la coordinación adicional que habría requerido.
+### Decisión y resultado de E1
 
-### Qué ocurrió al implementar E1
+AD1 eligió un `connector` independiente que transporta mensajes RabbitMQ a FastAPI mediante HTTP. El backend persiste recepción, estados de negocio y publicaciones pendientes en PostgreSQL antes de devolver la confirmación que permite completar el ACK de entrega al broker. El diseño evitó incorporar consumidores a cada réplica de `master`, con el costo de un salto HTTP y un inbox/outbox que debe poder recuperarse. En E1 se atendía principalmente una cola dirigida, por lo que el supuesto de transporte único dejó de representar los dos flujos de E2.
 
-El código E1 tiene un `connector` separado que reintenta la conexión y envía por HTTP los mensajes válidos a `master` (`E0-Arquisis-local/connector/connector.py:405-620`). `record_inbound_message` confirma la recepción en PostgreSQL antes del efecto de negocio; los descartes y NACK tienen un camino de auditoría propio (`E0-Arquisis-local/master/app/services/message_audit.py:21-55`, `E0-Arquisis-local/master/app/routers/message_audit.py:348-378`). El outbox persiste propuestas y reportes, entre otros mensajes, para su despacho; ACK/NACK se publican en el camino inmediato tras registrar la intención. Ambos Compose **configuran** dos réplicas de API y un connector; esto describe el checkout, no prueba disponibilidad o recuperación en producción.
+### Cambio real al protocolo v3
 
-### Qué cambió con el protocolo v3
+E2 requiere separar `city.{CODE}` y `market.{CODE}`. El primero lleva mensajes dirigidos, valida el envelope y puede producir respuestas ACK/NACK de protocolo en la ruta del emisor autenticado. El segundo entrega eventos de mercado y **no** requiere ACK/NACK de protocolo; conserva solo el ACK de **entrega RabbitMQ** después de persistir el evento. La central administra TTL y capacidad de la cola market, por lo que el consumo continuo no prueba que nunca se pierdan eventos.
 
-La arquitectura de una sola cola ya no basta. En E2 el nodo debe consumir dos colas con comportamientos diferentes:
+[`connector/connector.py`](../../../connector/connector.py) ejecuta `consume_forever` y `consume_market_forever` como tareas independientes, distingue `process_market_message` y `market_consumer_heartbeat`, y reintenta conexiones. [`connector/protocol/`](../../../connector/protocol/) contiene la validación y el direccionamiento del canal dirigido. El backend persiste eventos y snapshots de market mediante [`market_feed.py`](../../../master/app/services/market_feed.py); la recepción dirigida y el outbox se apoyan en [`message_audit.py`](../../../master/app/services/message_audit.py) y las rutas internas. [`E2-072`](../../market/E2-072-feed-freshness.md) añade una marca de brecha observada tras conexión/reconexión, invalida ofertas antiguas para nuevas compras y recupera solo `status-statement` y `distance-table`, no un replay inexistente de ofertas.
 
-- `city.{CODE}`: canal dirigido de central, otras ciudades y wallet. Mantiene validación de envelope y respuestas ACK/NACK; para mensajes de otras ciudades se verifica además que `user_id` corresponda a `cityId`. En el checkout E1, la cola concreta de KLD se configura como `city.KLD.q`.
-- `market.{CODE}`: feed de `offer`, `offer-updated`, `offer-withdrawn` y `market-closed`. No corresponde enviar ACK de protocolo a estos mensajes. La cola tiene TTL de un ciclo y máximo 5.000 mensajes, por lo que debe drenarse oportunamente.
+### Evidencia disponible
 
-Se detectan incompatibilidades concretas en el checkout E1: `consume_forever` abre solo `RABBITMQ_QUEUE`; `complete_successful_message` y el camino NACK publican en `RABBITMQ_CENTRAL_ROUTING_KEY`, aunque el mensaje provenga de otra ciudad (`E0-Arquisis-local/connector/connector.py:233-273,405-450,500-564`). Además, `E0-Arquisis-local/connector/protocol/validation.py:10-49` no reconoce los tipos v3. Estas limitaciones afectan **G02, RF02, RF03 y RF05**.
+- [`connector/tests/test_market_consumer.py`](../../../connector/tests/test_market_consumer.py): ACK RabbitMQ posterior a persistencia, ausencia de ACK de protocolo en market, descarte auditado y reconexión simulada.
+- [`connector/tests/test_directed_ack_nack.py`](../../../connector/tests/test_directed_ack_nack.py): respuesta dirigida a ciudad/central según emisor, identidad inválida y no respuesta a mensajes de control.
+- [`master/tests/test_market_feed_persistence.py`](../../../master/tests/test_market_feed_persistence.py): historia y último estado del feed, deduplicación, rollback y concurrencia de sesiones.
+- **Observación operativa aportada durante E2-061 (31/10/2026):** logs de EC2 con conexiones `city` y `market`, `broker_heartbeat consumer=market` y `broker_delivery ... broker_ack`. Es evidencia de operación y telemetría, **no** un ensayo de desconexión prolongada, TTL agotado o mensajes perdidos. Esos logs no se incluyen como archivo versionado en este ZIP.
 
-### Reevaluación de la decisión
+Los archivos de pruebas acreditan cobertura diseñada, no una ejecución reciente de toda la suite en el paquete. Tampoco se adjuntan métricas del broker que demuestren consumo sin descartes bajo carga.
 
-**Se mantiene como propuesta arquitectónica la separación entre connector y API** y se reutilizan los mecanismos de auditoría y outbox de E1.
+### Tradeoff y divergencias
 
-**Lo que se debe modificar:** ampliar el connector para consumir ambas colas, separar sus políticas de procesamiento, direccionar las respuestas al emisor correcto en el canal dirigido, incorporar los contratos v3 y observar el estado del feed y sus posibles pérdidas. La lógica económica seguirá estando en el backend; connector conservará su responsabilidad de transporte y validación de protocolo.
+**La decisión de separar connector y API se mantiene.** El cambio a dos colas se resolvió separando políticas de consumo dentro del mismo servicio, en lugar de introducir consumidores en `master`. Se agregaron tareas, caminos de auditoría y señales de frescura, a cambio de conservar una responsabilidad de transporte clara.
 
-### Tradeoff y lecciones
+La divergencia relevante respecto de E1 es que una sola cola dirigida no permite expresar el feed efímero. Persistir antes del ACK resuelve el problema local de recepción, pero **no recupera eventos ya descartados por TTL o capacidad en RabbitMQ**. La marca de brecha tampoco detecta pérdidas silenciosas durante una conexión continua.
 
-La separación de responsabilidades sigue siendo adecuada para E2, pero la implementación E1 quedó acoplada a una sola cola y a respuestas dirigidas a la central. Extenderla exige nuevas rutas, estados, validaciones y pruebas de recuperación; el código actual todavía no demuestra que pueda drenar el feed bajo carga o tras un corte.
+### Cierre y acciones pendientes
 
-### Acciones y evidencia pendientes
-
-- Probar recepción simultánea de ambas colas y publicación de ofertas en `market.offer.{CODE}`.
-- Verificar ACK/NACK hacia otras ciudades, incluido `IDENTITY_MISMATCH`, y ausencia de ACK de protocolo en el feed de mercado.
-- Demostrar deduplicación, reconexión y persistencia de los caminos de recepción y publicación ante cortes, incluyendo fallos entre el commit y el ACK al broker.
-- Verificar con pruebas y en producción las nuevas métricas de consumo de mercado y los efectos de TTL/límites de cola.
-
-### Conclusión
-
-**AD1 sigue siendo una base de diseño para v3, pero su extensión está pendiente.** El checkout conserva connector independiente, auditoría y outbox E1; debe corregir los supuestos de una cola y de respuestas dirigidas siempre a la central.
+AD1 queda **conservada y extendida en el código E2**. Para evaluar completamente la resiliencia faltan ensayos de caída entre commit/ACK, corte real de RabbitMQ, recuperación con ambas colas y observabilidad del backlog o descartes del broker. No corresponde afirmar que la ausencia de pérdidas esté demostrada.

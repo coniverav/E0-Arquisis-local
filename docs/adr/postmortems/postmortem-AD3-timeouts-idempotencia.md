@@ -1,48 +1,40 @@
-# Post-mortem AD3: Timeouts e idempotencia de operaciones
+# Post-mortem AD3: Timeouts e idempotencia de operaciones (E2-082)
 
-### Contexto y decisión de E1
+**Revisión retrospectiva:** 3 de noviembre de 2026. El análisis contrasta [AD3](../ADR-003-timeouts-idempotency.md) con el estado actual del repositorio, diferenciando el flujo heredado de E1 de los nuevos mecanismos v3.
 
-AD3 trataba las negociaciones asíncronas con la central, sus plazos de 30 segundos para propuesta y, en el caso `give`, pago, y la necesidad de reintentar sin duplicar efectos. Se eligieron **deadlines y estados persistidos en PostgreSQL, gestionados fuera de las requests HTTP**, en lugar de esperar dentro de los endpoints o depender de timers en la memoria de cada `master`.
+### Decisión y resultado de E1
 
-En la implementación, el reintento de `negotiation-proposal` tras timeout y el reintento de `negotiation-report` tras `REPORT_TOO_EARLY` conservan el `idpk` y generan un nuevo `msgId` (`E0-Arquisis-local/master/app/services/negotiation_proposals.py:229-320`, `E0-Arquisis-local/master/app/services/negotiation_report_dispatch.py:96-154`). Un reintento de publicación del mismo mensaje conserva el payload del outbox; una corrección de reporte usa un `idpk` nuevo. El mecanismo buscaba soportar reinicios y dos instancias de API sin ejecutar dos veces el mismo efecto contable.
+En E1 se eligieron plazos y reintentos durables en PostgreSQL con un `cycle-scheduler` independiente. Esto evitó mantener temporizadores de negocio exclusivamente en memoria de una réplica de `master`. El `idpk` identificaba la operación y el `msgId` una publicación concreta; los reintentos de `negotiation-proposal` y algunos de `negotiation-report` podían conservar la primera identidad y emitir un mensaje nuevo. [`idempotency.py`](../../../master/app/services/idempotency.py) reclama el `idpk` en la misma transacción que su aplicación, y el outbox separa la intención de publicación del envío RabbitMQ.
 
-### Qué ocurrió al implementar E1
+El tradeoff de E1 fue aumentar estados, consultas y trabajo del scheduler para evitar repetir efectos ante reentregas y reinicios. El reporte por ciclo y sus reintentos siguen teniendo tratamiento propio.
 
-`E0-Arquisis-local/master/app/models.py:232-328` persiste estados/deadlines de negociaciones y reportes; `E0-Arquisis-local/master/app/workers/cycle_scheduler.py:33-108` procesa ventanas, vencimientos y reintentos. `E0-Arquisis-local/master/app/services/idempotency.py:18-42` reclama el `idpk` en la transacción del efecto. Las pruebas `test_negotiation_timeouts.py`, `test_negotiation_retries.py` y `test_e1_v2_reports.py` cubren casos E1; no demuestran todavía recuperación ante cortes reales de broker o wallet.
+### Cambio real al protocolo v3
 
-### Qué cambió con el protocolo v3
+La negociación `negotiation-proposal → give/take → transferencia de pago` de E1 fue retirada del mercado de E2. **`negotiation-report` sigue vigente**, por lo que no deben mezclarse los plazos del reporte con los de propuestas, bids o swaps.
 
-El flujo de E1 `negotiation-proposal → give/take → transfer de pago` fue **retirado**. Por tanto, sus timeouts de 30 segundos ya no deben gobernar el mercado de E2. **`negotiation-report` permanece vigente**, con ventana y reintentos propios; no debe confundirse con la negociación retirada.
+En el código E2 se reaprovecha **la disciplina** de durabilidad, no los deadlines de 30 segundos del negocio retirado:
 
-Ahora los tiempos y reintentos corresponden a ofertas, bids, swaps y wallet:
+- [`seller_bid_acceptance.py`](../../../master/app/services/seller_bid_acceptance.py) registra reserva e intención de swap en PostgreSQL, coordinadas por la fila de oferta (AD4).
+- [`seller_swap_dispatch.py`](../../../master/app/services/seller_swap_dispatch.py) utiliza `FOR UPDATE SKIP LOCKED`, lease, `proposal_expires_at` persistido y reintentos con la misma `Idempotency-Key`; el HTTP sucede tras cerrar la transacción.
+- [`swap_accept.py`](../../../master/app/services/swap_accept.py), [`wallet_recovery.py`](../../../master/app/services/wallet_recovery.py) y [`swap_timeouts.py`](../../../master/app/services/swap_timeouts.py) distinguen respuestas HTTP inciertas, estados confirmados de la wallet y liberación de reservas con evidencia. Una respuesta `202` no cierra el ciclo económico.
+- [`operational_rate_limits.py`](../../../master/app/services/operational_rate_limits.py) persiste cupos de lectura/escritura y bloqueos por `Retry-After` compartidos por ciudad, para no multiplicar el presupuesto de llamadas por réplica.
 
-- `POST /swaps`, `accept` y `cancel` requieren **`Idempotency-Key` estable** por operación.
-- Un HTTP **202 confirma recepción, no ejecución**; el resultado real lo determinan eventos de wallet o consultas de estado.
-- Una respuesta HTTP perdida o ambigua puede ocultar una operación procesada: se debe recuperar/reintentar con la **misma llave**, no crear otra.
-- `expiresAt` del swap puede fijarse hasta 60 segundos desde el momento de solicitarlo; la wallet determina su expiración. Los hitos del mercado (`lastOfferAt`, `lastBidAt`, `closesAt`, `reportOpensAt`) vienen del `status-statement` de la central.
-- Un `bid` repetido con el mismo `idpk` debe conservar su resultado lógico y no proponer un segundo swap.
+### Evidencia disponible
 
+- [`test_e2068_wallet_recovery.py`](../../../master/tests/test_e2068_wallet_recovery.py) contempla `202` perdido, GET con estado `accepted`/`settled`, 404/timeout indeterminado, eventos durante el HTTP y estados terminales que no retroceden.
+- [`test_e2071_operational_limits.py`](../../../master/tests/test_e2071_operational_limits.py) incluye cupos compartidos entre sesiones, bloqueo `Retry-After`, cuota de publicación y simultaneidad.
+- [`test_negotiation_timeouts.py`](../../../master/tests/test_negotiation_timeouts.py) y [`test_negotiation_retries.py`](../../../master/tests/test_negotiation_retries.py) conservan el alcance histórico de E1.
 
-### Reevaluación de la decisión
+Los archivos prueban cobertura implementada, pero no constituyen por sí solos evidencia de ejecución en producción, caída real de wallet o reinicio de worker con un swap pendiente.
 
-**Se conserva como principio el estado durable, los reintentos idempotentes y el procesamiento diferido fuera de las requests HTTP.** El worker y el outbox E1 son una base, no una implementación de seguimiento de swaps ni de escritura a wallet.
+### Tradeoff, divergencia y riesgo residual
 
-**Se debe cambiar la máquina de estados y el criterio de finalización:** los plazos locales de seguimiento se relacionarán con bids, marcas del ciclo y vencimiento informado por wallet, sin atribuir al worker local autoridad para expirar swaps. La operación no termina porque un POST responda 202; se debe procesar el evento correspondiente o consultar su estado. El reporte E1 conserva su propio camino de cierre y correcciones.
+**Se conserva AD3 como regla de reintento e idempotencia, con una máquina de estados diferente para E2.** El estado durable facilita recuperar incertidumbres, pero exige leases, expiraciones, ventanas oficiales, reintentos y conciliación; puede haber más de una solicitud HTTP con la misma llave sin que deba haber dos operaciones económicas. La wallet continúa siendo la autoridad sobre el resultado del swap.
 
-La disciplina de AD3 puede reutilizarse en el mercado (RF03), la serialización de aceptaciones (AD4) y la aplicación idempotente de eventos (AD5); esas adaptaciones siguen pendientes. **No se reutiliza literalmente el flujo de negocio retirado.**
+**Divergencia observable en código:** [`master/app/workers/cycle_scheduler.py`](../../../master/app/workers/cycle_scheduler.py) todavía invoca `process_expired_negotiations` y `enqueue_timed_out_negotiation_retries`, servicios heredados de E1. Su presencia **no demuestra** que se estén generando negociaciones v1 en producción, pero tampoco permite afirmar que el flujo retirado esté completamente desactivado. Debe verificarse si existen registros `Negotiation` elegibles y si alguna ruta aún los crea; el mecanismo de `negotiation-report` no debe eliminarse en esa revisión.
 
-### Tradeoff y lecciones
+Otra limitación: sin eventos oficiales o una consulta concluyente a wallet, un POST ambiguo o un GET 404 no justifica liberar `HOLD` ni generar otro swap. Los procesos deben conservar esa incertidumbre para recuperación o conciliación posterior.
 
-Persistir estados y vencimientos sigue siendo más complejo que usar un timer en memoria, pero permite recuperar trabajo pendiente ante reinicios y réplicas múltiples. E2 agrega la correlación del `idpk` de cada mensaje dirigido, la `Idempotency-Key` de cada escritura wallet y los eventos asociados al swap. El `msgId` identifica el mensaje concreto; no se debe asumir que el `idpk` de un bid sea automáticamente la llave HTTP para proponer o aceptar el swap.
+### Cierre y acciones pendientes
 
-### Acciones y evidencia pendientes
-
-- Desactivar el flujo E1 retirado para E2, manteniendo el historial antiguo consultable.
-- Modelar estados y plazos locales de seguimiento de bids/swaps de forma persistente, usando las marcas de tiempo centrales y el `expiresAt` de wallet.
-- Persistir llaves de idempotencia para escrituras wallet y correlacionar eventos posteriores; respetar `Retry-After` en 429 y diferenciar errores terminales de respuestas inciertas.
-- Probar timeout con operación procesada pero HTTP 202 perdido; verificar que la recuperación converge sin nuevo swap ni doble asiento.
-- Probar reinicio de worker/API con operaciones pendientes y respuesta de bid duplicado.
-
-### Conclusión
-
-**AD3 conserva su valor como disciplina de recuperación e idempotencia, pero el flujo de negociación que motivó sus plazos de 30 segundos fue retirado en E2.** Los mecanismos E1 de reporte siguen vigentes; adaptar el seguimiento de bids y swaps a la wallet está pendiente y no se acredita en producción.
+AD3 queda **reutilizada para swaps, bids y cuotas**, sin trasladar los plazos de negocio E1 al protocolo v3. Queda pendiente revisar el uso efectivo de los servicios de negociación heredados y ejecutar una prueba controlada de reinicio/corte con respuesta perdida que demuestre recuperación sin segunda operación económica. Los reintentos del reporte se evalúan separadamente.

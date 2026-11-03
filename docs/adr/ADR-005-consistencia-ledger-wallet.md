@@ -96,3 +96,19 @@ Microsoft. (s. f.). *Implement the Transactional Outbox pattern by using Azure C
 PostgreSQL Global Development Group. (s. f.). *3.4. Transactions*. PostgreSQL Documentation. Recuperado de https://www.postgresql.org/docs/16/tutorial-transactions.html
 
 Pontificia Universidad Católica de Chile. (2026). *2026-2 / IIC2173 - E2 | EnergyShark*. Enunciado del curso y Referencia de la API v3.
+
+---
+
+### Revisión retrospectiva E2-081 — 3 de noviembre de 2026
+
+La decisión anterior se conserva como registro previo a la implementación. Lo siguiente distingue mecanismos ya incorporados al repositorio de resultados que aún no están demostrados con datos oficiales de un cierre de ciclo.
+
+**Mecanismo implementado.** [`wallet_service.py`](../../master/app/services/wallet_service.py), [`cycle_accounting.py`](../../master/app/services/cycle_accounting.py) y [`trade_events.py`](../../master/app/services/trade_events.py) mantienen identidades de operación y efectos separados: `SWAP_SETTLED` para los activos intercambiados, `SWAP_TRANSPORT` para el cargo de transporte del comprador e `IMBALANCE_SETTLEMENT` para el cierre. [`ledger.py`](../../master/app/services/ledger.py) comprueba `(idpk, operation_type)` y modifica el historial y snapshot del ciclo dentro de la transacción del llamador. [`wallet_recovery.py`](../../master/app/services/wallet_recovery.py) y los workers de propuesta/aceptación recuperan respuestas HTTP inciertas sin tratar `202` como liquidación; cuando conocen `swapId` pueden consultar `GET /swaps/{id}` y conservar la llave de la operación.
+
+[`wallet_reconciliation.py`](../../master/app/services/wallet_reconciliation.py) consulta `GET /balance` y páginas de `GET /statement`, persiste `entryId` sin duplicarlo, realiza barridos completos periódicos y otros con solapamiento, y conserva una explicación por operación, activo, referencia y entradas de wallet/ledger. Compara el estado materializado con su reconstrucción, diferencia pendientes de divergencias y mantiene `authority="wallet"`. No inventa una operación cuando una referencia no es correlacionable. Una coincidencia de snapshots `EVENT` y `REST_SYNC` no basta por sí sola para declarar `MATCH`.
+
+**Evidencia de pruebas.** [`test_e2068_wallet_recovery.py`](../../master/tests/test_e2068_wallet_recovery.py) contiene escenarios de HTTP perdido, GET 404/timeout, respuesta tardía y estados terminales que no deben retroceder. [`test_e2070_reconciliation.py`](../../master/tests/test_e2070_reconciliation.py) contempla coincidencia sin respaldo contable, diferencias de montos, correlación por `swapId`, `entryId` y `asOf`, sincronización incremental e histórica y verificación de materialización. Son **casos implementados en el repositorio**, no resultados de ejecución acreditados por este ZIP. La prueba en producción de reconciliación contra un ciclo oficial y su extracto completo no está adjunta.
+
+**Tradeoff observado.** La alternativa 4 conserva historial y explicación local, a costa de más almacenamiento, consultas y estados `PENDING`/`EXPLAINED`/`DIVERGENT`/`NO_LOCAL_BASELINE`. Evita declarar saldo oficial a partir del ledger local, pero la conciliación es eventual: un evento demorado, un `statement` incompleto o la falta de una base temporal comparable pueden impedir concluir `MATCH`.
+
+**Divergencias y límites.** La implementación va más allá de la sección original «Precisión para E2-070 (antes de extender la implementación)»: dicha precisión ya está reflejada en servicios y pruebas, pero no hay en el paquete una corrida documentada con wallet central que demuestre coincidencia al cierre. Tampoco corresponde equiparar una respuesta HTTP `202` con un asiento contable definitivo. Se **mantiene** AD5, condicionando la validación de su medida de calidad a evidencia oficial por ciclo.

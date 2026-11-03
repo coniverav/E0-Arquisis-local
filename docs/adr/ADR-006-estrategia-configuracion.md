@@ -98,3 +98,19 @@ Fowler, M. (2017). *Feature Toggles (aka Feature Flags)*. MartinFowler.com. Recu
 PostgreSQL Global Development Group. (s. f.). *3.4. Transactions*. PostgreSQL Documentation. Recuperado de https://www.postgresql.org/docs/16/tutorial-transactions.html
 
 Pontificia Universidad Católica de Chile. (2026). *2026-2 / IIC2173 - E2 | EnergyShark*. Enunciado del curso.
+
+---
+
+### Revisión retrospectiva E2-081 — 3 de noviembre de 2026
+
+Se conserva la decisión original como registro de diseño. Esta sección contrasta su alternativa 4 con las rutas y pruebas que aparecen en el repositorio recibido.
+
+**Mecanismo implementado.** [`strategy_config.py`](../../master/app/services/strategy_config.py) almacena versiones `PENDING` de los parámetros de compra y venta en PostgreSQL. La edición y la apertura del ciclo utilizan un bloqueo compartido, comprueban versiones y asocian una estrategia a `Cycle.strategy_version` según `market.opensAt` oficial; un `status-statement` tardío no reasigna la política de un ciclo anterior. [`market_api.py`](../../master/app/routers/market_api.py) expone `GET /market/strategy`, `GET /market/strategies`, `GET /market/strategy/options`, `POST /market/strategy` y `GET /market/strategy/audit`; la escritura pide JWT con `sub`, admite `expectedVersion` y devuelve `409` ante una edición obsoleta. Los campos operacionales de las versiones históricas pueden cambiar de estado, mientras sus parámetros comerciales se conservan. La migración [`e2073_strategy_direct_offer.py`](../../master/alembic/versions/e2073_strategy_direct_offer.py) incorpora precio directo y tope de cantidad, junto con los controles documentados en [`E2-062`](../api/E2-062-strategy-edit-audit.md).
+
+Los servicios de ofertas, selección y compras consultan la configuración fijada al ciclo; [`cycle_metrics.py`](../../master/app/services/cycle_metrics.py) registra `strategy_version`, `span_seconds` y resultados necesarios para RF06.
+
+**Evidencia de pruebas.** [`test_strategy_config_ad6.py`](../../master/tests/test_strategy_config_ad6.py) verifica vigencia en el ciclo siguiente y llegada tardía de `status-statement`; [`test_e2062_strategy_edit.py`](../../master/tests/test_e2062_strategy_edit.py) contempla edición concurrente, error `409`, auditoría y preservación de la estrategia del ciclo abierto. [`test_e2065_cycle_metrics.py`](../../master/tests/test_e2065_cycle_metrics.py) comprueba cálculo y persistencia de métricas con datos controlados. Estos son casos presentes en el código; el ZIP no contiene una salida de pytest que permita atribuirles una ejecución aprobada.
+
+**Tradeoff observado.** Persistir una versión pendiente y fijarla por ciclo obliga a coordinar las ediciones con la recepción del `status-statement`, pero permite explicar por qué un cambio no afectó el mercado en curso. `expectedVersion` añade control frente a ediciones simultáneas, y la auditoría agrega trabajo de consulta sin una segunda fuente de configuración. El retraso de activación, aceptado en el ADR, es una consecuencia visible del diseño.
+
+**Divergencias y límites.** La API de edición está implementada, pero **el ZIP no incluye un frontend** con el cual verificar visualmente RF04 sin redeploy. Existen el plan [`E2-066`](../qa/E2-066-plan-spans.md) y el protocolo de captura [`E2-067`](../qa/E2-067-ejecucion-registro.md); los directorios `datos_e2066` y `datos_e2067` no contienen capturas de ciclos reales en este paquete. Por ello, no se declara concluido el experimento RF06 ni comprobada la edición mediante UI. Se **mantiene** AD6 en el backend, con validación de interfaz y resultados reales por `span` pendientes.

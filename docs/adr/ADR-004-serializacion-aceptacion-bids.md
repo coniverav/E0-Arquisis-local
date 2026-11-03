@@ -85,3 +85,17 @@ PostgreSQL Global Development Group. (s. f.). *13.4. Data Consistency Checks at 
 PostgreSQL Global Development Group. (s. f.). *13.2. Transaction Isolation*. PostgreSQL Documentation. Recuperado de https://www.postgresql.org/docs/16/transaction-iso.html
 
 Pontificia Universidad Católica de Chile. (2026). *2026-2 / IIC2173 - E2 | EnergyShark*. Enunciado del curso.
+
+---
+
+### Revisión retrospectiva E2-081 — 3 de noviembre de 2026
+
+Esta revisión evalúa la decisión original a partir del código disponible en el repositorio entregado. No reemplaza el contexto, las alternativas ni el tradeoff formulados antes de la implementación.
+
+**Mecanismo implementado.** [`reserve_incoming_bid`](../../master/app/services/seller_bid_acceptance.py) localiza el bid persistido, bloquea primero su `MarketOffer` con `SELECT ... FOR UPDATE` y luego el bid. Calcula disponibilidad restando las reservas `HOLD`, rechaza cantidades superiores con `QUANTITY_UNAVAILABLE` y persiste en la misma transacción `OfferReservation(HOLD)`, `SwapRecord(SUBMITTED)` y el estado `RESERVED` del bid. No hace `commit` ni llama a la wallet dentro de ese bloqueo. [`seller_swap_dispatch.py`](../../master/app/services/seller_swap_dispatch.py) reclama las intenciones pendientes mediante `SKIP LOCKED` y lease, libera la transacción antes del HTTP y reutiliza la misma `Idempotency-Key`. Un HTTP `202` no provoca por sí solo `bid-accepted`; el evento `swap-proposed` es el hito necesario. La cantidad `remaining` se actualiza al confirmar los efectos correspondientes, no al registrar el `HOLD`.
+
+**Prueba y resultado disponible.** [`test_bids_concurrentes.py`](../../master/tests/test_bids_concurrentes.py) ejercita el ingreso FastAPI y sesiones PostgreSQL concurrentes. El registro versionado [`datos_e2069/RESUMEN_E2_069.md`](../../datos_e2069/RESUMEN_E2_069.md) documenta **13 escenarios locales aprobados** el 30 de octubre de 2026. En el caso de oferta de 100 KWH y dos bids de 80 KWH separados aproximadamente 40 ms, quedó un `HOLD` por 80, un rechazo con `available=20` y ninguna segunda intención de swap. También se documentan ráfagas, duplicados por `idpk`, rollback y un bloqueo sostenido 120 ms. La wallet usada en uno de los escenarios es un doble local: registró un POST y ningún `INSUFFICIENT_ASSET` simulado. El protocolo y el alcance están en [`E2-069`](../qa/E2-069-ad4-bids-40ms.md).
+
+**Tradeoff observado.** El bloqueo por oferta y la reserva durable añaden estados (`PENDING`, `RESERVED`, `HOLD`, `SUBMITTED`, entre otros) y trabajo de recuperación, pero reducen la exposición a doble compromiso entre sesiones PostgreSQL. El segundo bid puede esperar el bloqueo del primero. Al no mantener el lock durante el HTTP, el costo de red no retiene la fila de la oferta. Este equilibrio respalda la alternativa 3 para el escenario local ensayado, no demuestra ausencia de rechazos por `INSUFFICIENT_ASSET` de la wallet oficial.
+
+**Divergencias y límites.** No se adjunta una prueba de dos réplicas desplegadas simultáneamente ni una reproducción con dos compradores reales y wallet central. La separación de 40 ms es nominal, no un límite de latencia ni un orden fijo de adquisición de locks. El resultado oficial exigido por la medida del ADR requiere observar eventos de wallet de un mercado real; por ahora solo existe evidencia local controlada. La decisión se **mantiene**, con esa validación externa pendiente.

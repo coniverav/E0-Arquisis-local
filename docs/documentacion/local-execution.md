@@ -84,6 +84,8 @@ MASTER_OUTBOUND_DISPATCH_URL
 CYCLE_REPORT_WINDOW_SECONDS
 CYCLE_SCHEDULER_POLL_SECONDS
 OUTBOUND_POLL_SECONDS
+AUTONOMOUS_BUY_INTERVAL_SECONDS
+SWAP_TIMEOUT_GRACE_SECONDS
 
 CONNECTOR_RETRY_SECONDS
 HTTP_RETRY_SECONDS
@@ -99,10 +101,19 @@ AUTH_ISSUER
 
 NEW_RELIC_LICENSE_KEY
 NEW_RELIC_APP_NAME
+NEW_RELIC_CONNECTOR_APP_NAME
+NEW_RELIC_WORKER_APP_NAME
 NEW_RELIC_MONITOR_MODE
 NEW_RELIC_LOG
 NEW_RELIC_INFRA_DISPLAY_NAME
 ```
+
+Estas cuatro variables adicionales existen en `.env.example` y controlan comportamientos de E2:
+
+- `AUTONOMOUS_BUY_INTERVAL_SECONDS`: intervalo entre intentos de compra autónoma del scheduler.
+- `SWAP_TIMEOUT_GRACE_SECONDS`: margen antes de expirar un swap y liberar sus retenciones.
+- `NEW_RELIC_CONNECTOR_APP_NAME`: entidad APM separada del connector.
+- `NEW_RELIC_WORKER_APP_NAME`: entidad APM separada del cycle-scheduler.
 
 Para desarrollo local, la configuración de referencia utiliza:
 
@@ -273,15 +284,30 @@ npm run build
 
 Con backend y frontend activos:
 
-1. Abrir `http://localhost:5173`.
-2. Iniciar sesión mediante Auth0 cuando corresponda.
-3. Verificar que el historial de ciclos cargue información desde la API real.
-4. Abrir el detalle de un ciclo y revisar su ledger.
-5. Revisar la vista de conectividad.
-6. Revisar la creación y seguimiento de negociaciones voluntarias.
-7. Revisar la vista de anomalías y auditoría de mensajes.
+1. Abrir `http://localhost:5173` e iniciar sesión mediante Auth0.
+2. Verificar que el historial de ciclos cargue información desde la API real.
+3. Abrir el detalle de un ciclo y revisar oferta, bids, swaps, ledger y último efecto.
+4. Revisar el libro de ofertas: precio nominal, `remaining`, transporte, precio efectivo y
+   rutas deshabilitadas.
+5. Revisar la vista de swaps en curso: distinguir HTTP 202, `swap-proposed`, `settled`,
+   `rejected` y `expired`/`cancelled`.
+6. Revisar la configuración de estrategia: guardar `span`, precio o política y comprobar que
+   la nueva versión queda auditada y aplica desde el siguiente ciclo, sin redeploy.
+7. Revisar la vista comparativa del experimento de `span` y las métricas por ciclo.
+8. Revisar la vista de anomalías y auditoría de mensajes (duplicados, descartes,
+   `IDENTITY_MISMATCH`, NACK).
+9. Comprobar en la pestaña **Network** que las llamadas de la SPA usan la API JSON y que las
+   rutas protegidas exigen JWT.
 
-La pestaña **Network** de las herramientas de desarrollo del navegador permite comprobar las llamadas HTTP realizadas por la SPA.
+Para comprobar el ciclo autónomo y el reporte:
+
+```bash
+curl -s http://localhost:8001/cycles
+docker compose logs -f cycle-scheduler
+```
+
+Los ciclos deben cerrarse cada 20 minutos y el `negotiation-report` debe emitirse dentro de
+la ventana `[reportOpensAt, validUntil)`. El estado `reported` del ciclo permite verificarlo.
 
 ---
 

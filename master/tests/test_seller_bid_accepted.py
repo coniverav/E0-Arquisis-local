@@ -232,6 +232,92 @@ def test_wallet_http_body_v3_has_expires_at_and_no_counterpart(scenario):
     assert not _messages(scenario['cycle'])
 
 
+def test_http_202_without_swap_id_stays_indeterminate_and_keeps_hold(scenario):
+    """Respuesta 202 malformada: registrar causa sin inventar swapId."""
+    from unittest.mock import patch
+    import httpx
+    from app.services.wallet_client import WalletClient
+    from app.services.swap_timeouts import expire_stale_swaps
+
+    bid = _incoming(scenario)
+    wallet = WalletClient(base_url='https://wallet.test/v1', api_key='test-api-key')
+    with patch('app.services.wallet_client.ObservedWalletAsyncClient') as mocked:
+        post = mocked.return_value.__aenter__.return_value.post
+        post.return_value = httpx.Response(202, json={'status': 'accepted'})
+        result = asyncio.run(dispatch_swap_proposals(client=wallet, limit=1))
+
+    record = _record(bid['idpk'])
+    assert result['accepted_202'] == 1
+    assert record.status == 'SUBMITTED'
+    assert record.swap_id is None
+    assert record.proposal_http_accepted_at is not None
+    assert record.proposal_last_error == 'HTTP_202_MISSING_SWAP_ID'
+    assert record.idempotency_key == bid['idpk']
+    assert _reservation(bid['idpk']).status == 'HOLD'
+    assert post.call_count == 1
+
+    with Session(engine) as session:
+        stats = asyncio.run(expire_stale_swaps(
+            session, now=record.proposal_expires_at + timedelta(seconds=1),
+            client=object(),
+        ))
+        session.commit()
+    assert stats['indeterminate'] == 1
+    assert stats['released_holds'] == 0
+    assert _record(bid['idpk']).status == 'SUBMITTED'
+    assert _reservation(bid['idpk']).status == 'HOLD'
+
+
+def test_http_200_replay_recovers_proposal_without_new_key(scenario):
+    """Un POST repetido devuelve SwapState y conserva el HOLD hasta evento."""
+    from app.services.wallet_client import WalletSwapWriteResponse
+
+    bid = _incoming(scenario)
+    wallet = FakeWallet([WalletSwapWriteResponse(
+        status_code=200, data={'swapId': 'swp-replay', 'status': 'proposed'},
+        idempotency_key=bid['idpk'], accepted_for_processing=False,
+    )])
+    result = asyncio.run(dispatch_swap_proposals(client=wallet, limit=1))
+
+    record = _record(bid['idpk'])
+    assert result['recovered'] == 1
+    assert result['accepted_202'] == 0
+    assert wallet.calls[0]['idempotency_key'] == bid['idpk']
+    assert record.idempotency_key == bid['idpk']
+    assert record.swap_id == 'swp-replay'
+    assert record.status == 'PROPOSED'
+    assert _reservation(bid['idpk']).status == 'HOLD'
+    assert not _messages(scenario['cycle'])
+
+
+def test_http_200_replay_rejected_releases_hold_with_official_reason(scenario):
+    """La respuesta repetida puede traer el rechazo definitivo de Wallet."""
+    from app.services.wallet_client import WalletSwapWriteResponse
+
+    bid = _incoming(scenario)
+    wallet = FakeWallet([WalletSwapWriteResponse(
+        status_code=200,
+        data={
+            'swapId': 'swp-replay-rejected', 'status': 'rejected',
+            'lastEvent': {
+                'type': 'swap-rejected', 'reason': 'INSUFFICIENT_ASSET',
+                'code': 402,
+                'data': {'idpk': bid['idpk'], 'operation': 'propose',
+                         'message': 'KWH insuficientes'},
+            },
+        },
+        idempotency_key=bid['idpk'], accepted_for_processing=False,
+    )])
+    result = asyncio.run(dispatch_swap_proposals(client=wallet, limit=1))
+
+    record = _record(bid['idpk'])
+    assert result['recovered'] == 1
+    assert wallet.calls[0]['idempotency_key'] == bid['idpk']
+    assert record.status == 'REJECTED'
+    assert record.rejection_reason == 'INSUFFICIENT_ASSET'
+    assert _reservation(bid['idpk']).status == 'RELEASED'
+
+
 def test_two_concurrent_swap_proposed_envelopes_create_one_reply(scenario):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier

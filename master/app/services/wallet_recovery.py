@@ -51,19 +51,37 @@ async def inspect_known_swap(client: Any, swap_id: str | None) -> WalletObservat
         logger.warning("E2-068: consulta wallet incierta swap=%s code=%s",
                        swap_id, exc.status_code)
         return None
+    observation = observation_from_swap_state(response, expected_swap_id=swap_id)
+    if observation is None:
+        logger.warning("E2-068: GET wallet devolvió un estado o identidad inválidos")
+    return observation
+
+
+def observation_from_swap_state(
+    response: Any, *, expected_swap_id: str | None = None,
+) -> WalletObservation | None:
+    """Lee el cuerpo oficial de GET /swaps/{id} o de un POST repetido (200)."""
     if not isinstance(response, dict):
         return None
-    identity = response.get("swapId", response.get("id"))
-    if identity is not None and identity != swap_id:
-        logger.warning("E2-068: GET wallet devolvió una identidad distinta")
+    identity = response.get("swapId")
+    if not isinstance(identity, str) or not identity:
+        return None
+    if expected_swap_id is not None and identity != expected_swap_id:
         return None
     status = response.get("status")
     if not isinstance(status, str) or status.lower() not in WALLET_STATES:
         return None
-    reason = response.get("reason")
-    token = response.get("token")
+    last_event = response.get("lastEvent")
+    last_event = last_event if isinstance(last_event, dict) else {}
+    event_data = last_event.get("data")
+    event_data = event_data if isinstance(event_data, dict) else {}
+    # SwapState v3 coloca reason en lastEvent, como en el envelope AMQP.
+    reason = (last_event.get("reason") if status.lower() == "rejected"
+              and last_event.get("type") == "swap-rejected" else None)
+    token = (event_data.get("token") if status.lower() == "proposed"
+             and last_event.get("type") == "swap-proposed" else None)
     return WalletObservation(
-        swap_id=swap_id,
+        swap_id=identity,
         status=status.lower(),
         reason=reason if isinstance(reason, str) else None,
         token=token if isinstance(token, str) and token else None,

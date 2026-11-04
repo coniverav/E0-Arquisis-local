@@ -81,6 +81,39 @@ def test_get_unknown_status_is_not_terminal():
     assert asyncio.run(inspect_known_swap(client, 'swp-e2068')) is None
 
 
+def test_get_rejected_reads_reason_from_official_last_event():
+    client = QueryWallet({
+        'swapId': 'swp-e2068', 'status': 'rejected',
+        'lastEvent': {
+            'type': 'swap-rejected', 'reason': 'INSUFFICIENT_ASSET',
+            'code': 402, 'data': {'idpk': str(uuid4()),
+                                 'operation': 'propose', 'message': 'sin KWH'},
+        },
+    })
+    observation = asyncio.run(inspect_known_swap(client, 'swp-e2068'))
+    assert observation.reason == 'INSUFFICIENT_ASSET'
+
+
+def test_recovered_rejection_passes_official_reason_to_event_handler(monkeypatch):
+    from app.services import wallet_recovery
+    calls = []
+
+    class FakeService:
+        def process_swap_event(self, session, *, event_type, data):
+            calls.append((event_type, data))
+
+    monkeypatch.setattr(wallet_recovery, 'WalletService', FakeService)
+    record = _record(role='PROPOSER')
+    observation = WalletObservation('swp-e2068', 'rejected',
+                                    reason='INSUFFICIENT_ASSET')
+    assert apply_wallet_observation(_session(), record=record,
+                                    observation=observation)
+    assert calls == [('swap-rejected', {
+        'swapId': 'swp-e2068', 'idpk': record.idpk,
+        'reason': 'INSUFFICIENT_ASSET',
+    })]
+
+
 def test_get_404_is_indeterminate_not_proof_of_no_post():
     client = QueryWallet(error=WalletError('404',status_code=404))
     assert asyncio.run(inspect_known_swap(client, 'swp-e2068')) is None

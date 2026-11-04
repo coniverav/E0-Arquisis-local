@@ -404,3 +404,72 @@ class SwapEventIngressTests(unittest.TestCase):
             ).one()
             self.assertEqual(offer.remaining_quantity, 12700)
         self.assertEqual(len(self._snapshots()), 1)
+
+    def test_swap_rejected_preserves_top_level_reason_and_replay_is_idempotent(self):
+        """El contrato ubica reason fuera de data; otro msgId no repite efectos."""
+        self._seed()
+        rejected = {
+            "idpk": self.envelope_idpk,
+            "msgId": self.msg_id,
+            "type": "swap-rejected",
+            "timestamp": self.now.isoformat().replace("+00:00", "Z"),
+            "sender": "central",
+            "reason": "INSUFFICIENT_ASSET",
+            "code": 402,
+            "data": {
+                "swapId": self.swap_id,
+                "idpk": self.swap_idpk,
+                "operation": "propose",
+                "message": "KWH insuficientes",
+                "asset": "KWH",
+                "available": 0,
+                "required": 7300,
+            },
+        }
+        # Mismo reparto de campos que el fixture oficial v3.0.2:
+        # reason/code en el envelope; data solo identifica la operación.
+        self.assertNotIn("reason", rejected["data"])
+
+        response = self._post(rejected)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(select(SwapRecord).where(
+                SwapRecord.idpk == self.swap_idpk)).one()
+            reservation = session.exec(select(OfferReservation).where(
+                OfferReservation.bid_idpk == self.swap_idpk)).one()
+            self.assertEqual(record.status, "REJECTED")
+            self.assertEqual(record.rejection_reason, "INSUFFICIENT_ASSET")
+            self.assertEqual(reservation.status, "RELEASED")
+
+        replay = deepcopy(rejected)
+        replay["msgId"] = str(uuid4())
+        self.assertEqual(self._post(replay).json()["status"], "duplicate")
+        with Session(engine) as session:
+            record = session.exec(select(SwapRecord).where(
+                SwapRecord.idpk == self.swap_idpk)).one()
+            reservation = session.exec(select(OfferReservation).where(
+                OfferReservation.bid_idpk == self.swap_idpk)).one()
+            self.assertEqual(record.rejection_reason, "INSUFFICIENT_ASSET")
+            self.assertEqual(reservation.status, "RELEASED")
+
+            # Simular una fila histórica creada antes de corregir reason.
+            record.rejection_reason = "UNKNOWN_REJECTION"
+            session.add(record)
+            session.commit()
+
+        new_envelope = deepcopy(rejected)
+        new_envelope["idpk"] = str(uuid4())
+        new_envelope["msgId"] = str(uuid4())
+        self.extra_envelope_idpks.append(new_envelope["idpk"])
+        self.assertEqual(self._post(new_envelope).json()["status"], "ok")
+        with Session(engine) as session:
+            record = session.exec(select(SwapRecord).where(
+                SwapRecord.idpk == self.swap_idpk)).one()
+            reservation = session.exec(select(OfferReservation).where(
+                OfferReservation.bid_idpk == self.swap_idpk)).one()
+            offer = session.exec(select(MarketOffer).where(
+                MarketOffer.offer_id == self.offer_id)).one()
+            self.assertEqual(record.rejection_reason, "INSUFFICIENT_ASSET")
+            self.assertEqual(reservation.status, "RELEASED")
+            self.assertEqual(offer.remaining_quantity, 20000)

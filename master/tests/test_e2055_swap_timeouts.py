@@ -138,6 +138,85 @@ def test_proposal_never_sent_expires_without_wallet_call():
         ).one().status == "RELEASED"
 
 
+def test_wallet_identity_mismatch_cannot_release_hold():
+    """Un GET ajeno no prueba que nuestro swap haya expirado."""
+    now = datetime.now(timezone.utc)
+    cycle_id = f"e2055-{uuid4()}"
+    offer_id = f"KLD-{cycle_id}"
+    bid_idpk = str(uuid4())
+
+    class WrongSwapWallet:
+        async def get_swap(self, swap_id):
+            return {"swapId": "otro-swap", "status": "expired"}
+
+    with Session(engine) as session:
+        _context(session, cycle_id=cycle_id, offer_id=offer_id, now=now)
+        _proposer(
+            session, cycle_id=cycle_id, offer_id=offer_id,
+            bid_idpk=bid_idpk, now=now, swap_id="swp-correcto",
+            status="PROPOSED",
+            proposal_expires_at=now - timedelta(seconds=1),
+        )
+        stats = asyncio.run(expire_stale_swaps(
+            session, now=now, client=WrongSwapWallet(),
+        ))
+        session.commit()
+
+        assert stats["indeterminate"] == 1
+        assert stats["released_holds"] == 0
+        assert session.exec(select(SwapRecord).where(
+            SwapRecord.idpk == bid_idpk)).one().status == "PROPOSED"
+        assert session.exec(select(OfferReservation).where(
+            OfferReservation.bid_idpk == bid_idpk)).one().status == "HOLD"
+
+
+def test_wallet_get_rejected_preserves_reason_and_releases_hold_once():
+    """GET terminal conserva REJECTED y el motivo oficial de lastEvent."""
+    now = datetime.now(timezone.utc)
+    cycle_id = f"e2055-{uuid4()}"
+    offer_id = f"KLD-{cycle_id}"
+    bid_idpk = str(uuid4())
+
+    class RejectedWallet:
+        async def get_swap(self, swap_id):
+            return {
+                "swapId": swap_id, "status": "rejected",
+                "lastEvent": {
+                    "type": "swap-rejected", "reason": "INSUFFICIENT_ASSET",
+                    "code": 402,
+                    "data": {"idpk": bid_idpk, "operation": "propose",
+                             "message": "KWH insuficientes"},
+                },
+            }
+
+    with Session(engine) as session:
+        _context(session, cycle_id=cycle_id, offer_id=offer_id, now=now)
+        _proposer(
+            session, cycle_id=cycle_id, offer_id=offer_id,
+            bid_idpk=bid_idpk, now=now, swap_id="swp-rechazado",
+            status="PROPOSED",
+            proposal_expires_at=now - timedelta(seconds=1),
+        )
+        wallet = RejectedWallet()
+        first = asyncio.run(expire_stale_swaps(session, now=now, client=wallet))
+        session.commit()
+        second = asyncio.run(expire_stale_swaps(session, now=now, client=wallet))
+        session.commit()
+
+        record = session.exec(select(SwapRecord).where(
+            SwapRecord.idpk == bid_idpk)).one()
+        reservation = session.exec(select(OfferReservation).where(
+            OfferReservation.bid_idpk == bid_idpk)).one()
+        offer = session.exec(select(MarketOffer).where(
+            MarketOffer.offer_id == offer_id)).one()
+        assert first["released_holds"] == 1
+        assert second["released_holds"] == 0
+        assert record.status == "REJECTED"
+        assert record.rejection_reason == "INSUFFICIENT_ASSET"
+        assert reservation.status == "RELEASED"
+        assert offer.remaining_quantity == 1000
+
+
 def test_wallet_evidence_expires_and_pending_bid_after_last_bid():
     now = datetime.now(timezone.utc)
     cycle_id = f"e2055-{uuid4()}"

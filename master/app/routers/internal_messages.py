@@ -675,6 +675,8 @@ def ingest_protocol_message(
                 session,
                 event_type=payload.type,
                 data=payload.data,
+                rejection_reason=(getattr(payload, "reason", None)
+                                  if payload.type == "swap-rejected" else None),
             )
 
             if record is None:

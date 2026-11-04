@@ -25,7 +25,8 @@ from sqlmodel import Session, select
 from ..config import CITY_ID, WALLET_TIMEOUT_SECONDS
 from ..database import engine as default_engine
 from ..models import MarketBid, MarketOffer, OfferReservation, SwapRecord
-from .wallet_recovery import (inspect_known_swap, apply_wallet_observation, TERMINAL_STATES)  # E2-068
+from .wallet_recovery import (inspect_known_swap, observation_from_swap_state,
+                              apply_wallet_observation, TERMINAL_STATES)  # E2-068
 from .wallet_client import (
     WalletClient, WalletError, WalletRateLimitError,
     WalletTimeoutError, WalletSwapWriteResponse,
@@ -143,7 +144,7 @@ def _finish(session: Session, attempt: ProposalAttempt, *, now: datetime,
         record.proposal_claim_token = None
         record.proposal_lease_until = None
         record.proposal_retry_at = None
-        if outcome == 'ACCEPTED':
+        if outcome in {'ACCEPTED', 'REPLAYED'}:
             record.proposal_http_accepted_at = now
         session.add(record)
         session.flush()
@@ -154,11 +155,12 @@ def _finish(session: Session, attempt: ProposalAttempt, *, now: datetime,
     record.proposal_last_error = error_code
     if confirmed_swap_id and not record.swap_id:
         record.swap_id = confirmed_swap_id
-    if outcome == 'ACCEPTED':
+    if outcome in {'ACCEPTED', 'REPLAYED'}:
         record.proposal_http_accepted_at = now
         record.proposal_retry_at = None
         record.proposal_blocked_at = None
-        # NO cambiar SwapRecord.status: HTTP 202 no implica swap-proposed.
+        # NO cambiar SwapRecord.status aquí: la observación del 200 o el
+        # evento Wallet determinan si ya fue propuesta o liquidada.
     elif outcome == 'RECOVERED':
         record.proposal_retry_at = None
     elif outcome == 'BLOCKED':
@@ -234,6 +236,7 @@ async def dispatch_swap_proposals(
         error_code = None
         retry_after = None
         confirmed_swap_id = None
+        replay_observation = None
         try:
             response: WalletSwapWriteResponse = await wallet.propose_swap(
                 idempotency_key=attempt.idempotency_key,
@@ -251,6 +254,23 @@ async def dispatch_swap_proposals(
                     candidate = response.data.get('swapId')
                     if isinstance(candidate, str) and candidate:
                         confirmed_swap_id = candidate
+                if confirmed_swap_id is None:
+                    # El contrato de 202 exige swapId. El POST puede haberse
+                    # procesado: conservar HOLD, llave y estado indeterminado.
+                    error_code = 'HTTP_202_MISSING_SWAP_ID'
+                    logger.warning(
+                        'Wallet respondió 202 sin swapId para propuesta idpk=%s',
+                        attempt.idpk,
+                    )
+            elif response.status_code == 200:
+                # El contrato devuelve SwapState al repetir exactamente la
+                # misma Idempotency-Key. El 200 confirma la operación anterior.
+                replay_observation = observation_from_swap_state(response.data)
+                if replay_observation is not None:
+                    outcome = 'REPLAYED'
+                    confirmed_swap_id = replay_observation.swap_id
+                else:
+                    error_code = 'MALFORMED_WALLET_REPLAY'
             else:
                 error_code = f'UNEXPECTED_HTTP_{response.status_code}'
         except WalletRateLimitError as exc:
@@ -273,10 +293,22 @@ async def dispatch_swap_proposals(
             _finish(session, attempt, now=_aware(now or datetime.now(timezone.utc)),
                     outcome=outcome, error_code=error_code, retry_after=retry_after,
                     confirmed_swap_id=confirmed_swap_id)
+            if replay_observation is not None:
+                current = session.exec(select(SwapRecord).where(
+                    SwapRecord.idpk == attempt.idpk,
+                ).with_for_update()).first()
+                if (current is not None
+                        and current.swap_id == replay_observation.swap_id):
+                    apply_wallet_observation(
+                        session, record=current,
+                        observation=replay_observation, now=reference,
+                    )
             session.commit()
 
         if outcome == 'ACCEPTED':
             totals['accepted_202'] += 1
+        elif outcome == 'REPLAYED':
+            totals['recovered'] += 1
         elif outcome == 'RETRY':
             totals['retry'] += 1
         else:

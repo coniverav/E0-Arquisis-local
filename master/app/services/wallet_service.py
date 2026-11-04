@@ -169,6 +169,7 @@ class WalletService:
         *,
         event_type: str,
         data: dict[str, Any],
+        rejection_reason: str | None = None,
     ) -> Optional[SwapRecord]:
         """
         Procesa eventos de wallet de RabbitMQ (E2-021):
@@ -224,6 +225,14 @@ class WalletService:
         # E2-029: un mismo swap terminal no debe descontar la oferta dos veces
         # aunque el evento llegue con otro envelope (o se reprocese).
         if record.status in {"SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}:
+            if (record.status == "REJECTED" and event_type == "swap-rejected"
+                    and rejection_reason
+                    and record.rejection_reason in {None, "UNKNOWN_REJECTION"}):
+                # Un replay con envelope nuevo puede reparar una razón que la
+                # versión anterior perdió, sin repetir el efecto económico.
+                record.rejection_reason = rejection_reason
+                session.add(record)
+                session.flush()
             # E2-055: un `swap-settled` tardío es un hecho económico real.
             # Se registra en el ledger, pero NO se recompromete una reserva
             # ya liberada: la diferencia queda para conciliación.
@@ -278,7 +287,11 @@ class WalletService:
         elif event_type in ("swap-rejected", "swap-expired", "swap-cancelled"):
             if event_type == "swap-rejected":
                 record.status = "REJECTED"
-                record.rejection_reason = data.get("reason", "UNKNOWN_REJECTION")
+                # En AMQP v3 reason es hermano de data. El fallback mantiene
+                # los callers internos que recuperan un estado desde Wallet.
+                record.rejection_reason = (
+                    rejection_reason or data.get("reason") or "UNKNOWN_REJECTION"
+                )
             elif event_type == "swap-expired":
                 record.status = "EXPIRED"
             else:

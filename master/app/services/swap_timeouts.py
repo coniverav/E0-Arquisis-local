@@ -282,6 +282,14 @@ async def expire_stale_swaps(
             stats["indeterminate"] += 1
             continue
 
+        # GET /swaps/{id} debe devolver el mismo swapId. Un estado terminal
+        # de otra operación no autoriza liberar nuestro HOLD ni aplicar ledger.
+        if (not isinstance(wallet_swap, dict)
+                or wallet_swap.get("swapId") != record.swap_id):
+            logger.warning("GET Wallet sin identidad coincidente para swap %s", record.swap_id)
+            stats["indeterminate"] += 1
+            continue
+
         status = str((wallet_swap or {}).get("status") or "").lower()
 
         if status == "settled":
@@ -296,14 +304,25 @@ async def expire_stale_swaps(
             continue
 
         if status in TERMINAL_WALLET_STATUSES:
-            if _expire_record(
+            # Con swapId coincidente, el estado terminal de Wallet es la
+            # evidencia. Conservar REJECTED/CANCELLED/EXPIRED y la razón del
+            # lastEvent, usando la misma ruta idempotente que el evento AMQP.
+            last_event = wallet_swap.get("lastEvent")
+            last_event = last_event if isinstance(last_event, dict) else {}
+            reason = (last_event.get("reason") if status == "rejected"
+                      and last_event.get("type") == "swap-rejected" else None)
+            WalletService().process_swap_event(
                 session,
-                record=record,
-                reason=f"WALLET_{status.upper()}",
-            ):
-                stats["expired_swaps"] += 1
-                if record.memo:
-                    stats["released_holds"] += 1
+                event_type=WALLET_TERMINAL_EVENT[status],
+                data={"swapId": record.swap_id, "idpk": record.idpk},
+                rejection_reason=reason if isinstance(reason, str) else None,
+            )
+            bid_idpk = (record.idpk if record.role == "PROPOSER"
+                        else record.source_bid_idpk)
+            _set_bid_expired(session, idpk=bid_idpk)
+            stats["expired_swaps"] += 1
+            if record.memo:
+                stats["released_holds"] += 1
             continue
 
         if status in {"proposed", "accepted"}:

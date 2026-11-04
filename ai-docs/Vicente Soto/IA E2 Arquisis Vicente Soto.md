@@ -620,4 +620,50 @@ La revisión del contrato v3.0.2 mostró que `swap-rejected.reason` viaja en el 
 
 En `seller_swap_dispatch.py`, el HTTP `202` sin `swapId` exigido por el contrato deja una señal `HTTP_202_MISSING_SWAP_ID`, pero conserva el estado `SUBMITTED`, la `Idempotency-Key` y el `HOLD`. El HTTP `200` de una escritura repetida con la misma llave se interpreta como estado del swap anterior. `swap_timeouts.py` exige identidad `swapId` coincidente antes de actuar y conserva `REJECTED`, `CANCELLED` o `EXPIRED` según la respuesta terminal de Wallet. No se automatizó la liberación de las cuatro reservas indeterminadas.
 
-Se probaron el ingreso HTTP del rechazo, replay, recuperación, reservas y timeouts con PostgreSQL temporal, broker/Wallet simulados: 81 pruebas relacionadas de Master y 7 pruebas contractuales pasaron; `git diff --check` también pasó. Los conteos de 341 eventos y cuatro swaps fueron informados en el prompt y no se comprobaron en producción. Para corregir registros históricos se debe contrastar `inbound_messages` con cada `SwapRecord`; para los cuatro casos sin `swapId` hace falta evidencia de Wallet Central por la llave original. La corrección quedó en el commit `72f9fd5` y se abrió la PR #91 hacia `develop`, pendiente de revisión al redactar esta entrada.
+Se probaron el ingreso HTTP del rechazo, replay, recuperación, reservas y timeouts con PostgreSQL temporal, broker/Wallet simulados: 81 pruebas relacionadas de Master y 7 pruebas contractuales pasaron; `git diff --check` también pasó. Los conteos de 341 eventos y cuatro swaps fueron informados en el prompt y no se comprobaron en producción. Para corregir registros históricos se debe contrastar `inbound_messages` con cada `SwapRecord`; para los cuatro casos sin `swapId` hace falta evidencia de Wallet Central por la llave original. La corrección quedó en el commit `72f9fd5`; la PR #91 se integró en `develop` mediante `5372515`.
+
+---
+
+# E2-093 - Precisión de la tarifa punitiva en Frontend
+
+### Prompt relevante
+
+> "Actualmente `MarketBookView.jsx` muestra la tarifa punitiva de rutas deshabilitadas con solo dos decimales, lo que impide comprobar correctamente el cálculo del precio efectivo."
+
+> "La PR hay que abrirla para develop, todo en develop."
+
+### Resumen de la respuesta y utilidad
+
+El commit `e8b54f2` ajustó únicamente `src/components/MarketBookView.jsx`: la tarifa punitiva de rutas deshabilitadas se muestra con cuatro decimales, mientras precios y costos conservan el formato de dos decimales. No se cambió el cálculo del precio efectivo, el Backend ni los contratos. La PR de Frontend #22 se dirigió a `develop` y quedó integrada mediante `9660975`.
+
+El cambio permite leer la precisión de la tarifa que la interfaz mostraba redondeada. El commit no agregó pruebas nuevas y este registro no conserva una salida de tests, lint o build atribuible a esa PR; por eso no se consigna un resultado numérico.
+
+---
+
+# Sincronización de `main` y `develop` en Frontend y Contracts
+
+### Prompt relevante
+
+> "necesito que develop y main de ambos repos queden consistentes. como lo hago? me ayudas?"
+
+### Resumen de la respuesta y utilidad
+
+Se reconciliaron ambas ramas sin perder los cambios que habían llegado por separado. En Frontend, el merge `dfb6c18` incorporó a `develop` las vistas de historial de ciclos y swaps presentes en `main`, conservando las vistas de estrategia, anomalías, mercado y experimento que ya estaban en `develop`. Las PR #23 y #24 integraron esa reconciliación en `develop` y `main`, respectivamente. En Contracts, `51ad71c` resolvió la documentación de `README.md` manteniendo los contratos oficiales v3.0.2 como referencia vigente, y las PR #14 y #15 sincronizaron ambas ramas.
+
+Al revisar este registro, `git diff --stat origin/develop main` no mostró diferencias de archivos en ninguno de los dos repositorios. Eso verifica igualdad del contenido local de esas referencias, no el estado desplegado. No se reejecutaron suites para redactar esta entrada.
+
+---
+
+# Borrador del informe de experimento span, no integrado
+
+### Prompt relevante
+
+> "Revisa y amplía el informe de E2-084 — Experimento span, porque actualmente es demasiado superficial y desaprovecha evidencia disponible."
+
+> "No haría referencias a tarjetas E, recuerda que eso es organización de nosotros, y lo otro, recuerda que sea más narrativo y al grano, pero no obviando los reusltados importantes"
+
+### Resumen de la respuesta y utilidad
+
+Se preparó un borrador de informe con los resultados suministrados: 259 ciclos, 227 `FINAL`, compras concentradas en 60 s, comparación de baseline y costo real, y la interrupción de Wallet observada desde el 1 de noviembre alrededor de las 05:13 UTC. El texto separó observaciones de hipótesis y evitó declarar un span óptimo. No se consultó nuevamente producción ni se modificó código funcional.
+
+La PR de Backend #92 se cerró sin merge porque el resultado no convenció. Después se eliminaron sus ramas local y remota. Por tanto, el informe **no forma parte de `develop`** ni se presenta aquí como entregable final. Las últimas ediciones sin commit se conservaron en un stash antes de borrar la rama.

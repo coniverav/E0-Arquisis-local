@@ -603,3 +603,21 @@ La revisión visual utilizó un servidor HTTP sintético local: mostró 53 anoma
 La revisión visual con tres ofertas sintéticas mostró una ruta deshabilitada y una oferta incierta. Al cambiar la tarifa en el mock local, el precio efectivo visible de HGW pasó de 225,03 a 225,06 CR/KWH, mientras la ruta deshabilitada conservó su tarifa punitiva. Esto verifica actualización y presentación de datos simulados, no la llegada real de `distance-table` ni la completitud del feed del broker. Los commits de E2-080 fueron `97471ef`, `37f6ca8` y `fe4ca26`.
 
 La validación final compartida de Frontend pasó con `npm test` (6 archivos de pruebas), `npm run lint` y `npm run build`. La PR #21 se integró en `develop` mediante `fb4ae7e`. El servidor mock y su cambio de `.gitignore` se excluyeron de la PR; las correcciones de interfaz surgidas durante la revisión visual sí se conservaron. Queda validar las vistas contra Backend, broker y Wallet desplegados.
+
+---
+
+# Corrección de conciliación de swaps Wallet (E2-068/AD5)
+
+### Prompt relevante
+
+> "Revisa y corrige los problemas identificados en el flujo de swaps de EnergyShark:"
+
+> "Propón una solución segura para los casos indeterminados, respetando E2-068: no duplicar operaciones, no crear nuevas llaves de idempotencia ni liberar reservas sin evidencia suficiente."
+
+### Resumen de la respuesta y utilidad
+
+La revisión del contrato v3.0.2 mostró que `swap-rejected.reason` viaja en el nivel superior del envelope, mientras Master lo buscaba dentro de `data`. Se corrigió el paso del motivo desde `master/app/routers/internal_messages.py` hacia `wallet_service.py`, incluida la recuperación de `lastEvent.reason` desde Wallet. Un rechazo repetido con envelope nuevo puede reparar `UNKNOWN_REJECTION` sin volver a liberar la reserva ni aplicar efectos económicos.
+
+En `seller_swap_dispatch.py`, el HTTP `202` sin `swapId` exigido por el contrato deja una señal `HTTP_202_MISSING_SWAP_ID`, pero conserva el estado `SUBMITTED`, la `Idempotency-Key` y el `HOLD`. El HTTP `200` de una escritura repetida con la misma llave se interpreta como estado del swap anterior. `swap_timeouts.py` exige identidad `swapId` coincidente antes de actuar y conserva `REJECTED`, `CANCELLED` o `EXPIRED` según la respuesta terminal de Wallet. No se automatizó la liberación de las cuatro reservas indeterminadas.
+
+Se probaron el ingreso HTTP del rechazo, replay, recuperación, reservas y timeouts con PostgreSQL temporal, broker/Wallet simulados: 81 pruebas relacionadas de Master y 7 pruebas contractuales pasaron; `git diff --check` también pasó. Los conteos de 341 eventos y cuatro swaps fueron informados en el prompt y no se comprobaron en producción. Para corregir registros históricos se debe contrastar `inbound_messages` con cada `SwapRecord`; para los cuatro casos sin `swapId` hace falta evidencia de Wallet Central por la llave original. La corrección quedó en el commit `72f9fd5` y se abrió la PR #91 hacia `develop`, pendiente de revisión al redactar esta entrada.

@@ -1,31 +1,13 @@
-# Informe del experimento de span
+# Experimento de span
 
-## Objetivo y metodología
+Queríamos observar cómo cambiaban las compras de energía al esperar distintos tiempos desde la apertura del mercado. Agrupamos los ciclos de producción según el `span` configurado —20, 60 o 120 segundos— y miramos cuántos llegaron a estado `FINAL`, si hubo compras y qué resultado económico se comunicó frente al costo estimado de no participar en el mercado (`baseline`). Son observaciones de ejecuciones reales en condiciones diferentes, no una comparación controlada.
 
-Se compararon ciclos de producción agrupados por el tiempo de espera antes de intentar comprar energía (`span`). Se observaron los ciclos registrados, los que llegaron a estado `FINAL`, las compras y el ahorro frente al costo estimado de no participar en el mercado.
+Con **20 segundos** se registraron 134 ciclos y 124 llegaron a `FINAL`. No se comunicaron compras en este grupo. Eso no significa que su costo haya sido cero: un ciclo puede terminar con costos de desbalance o liquidación aunque no compre energía.
 
-## Valores probados y ciclos
+Con **60 segundos** se registraron 119 ciclos, de los cuales 103 llegaron a `FINAL`. Hubo compras en 15 ciclos, por un total comunicado de **109.624 kWh**. El ahorro acumulado informado fue **−7.004.796,58 CR**. Si ese ahorro se calculó como `baseline − costo real` sobre los mismos ciclos, el signo negativo indica que el costo real superó al baseline por ese monto. No tenemos las sumas separadas de ambos costos ni el detalle por ciclo para verificar el cálculo o atribuir la diferencia al tiempo de espera.
 
-| Span | Ciclos registrados | Ciclos `FINAL` | Ciclos con compras | Energía comprada | Ahorro acumulado comunicado |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 s | 134 | 124 | 0 | 0 kWh | No informado |
-| 60 s | 119 | 103 | 15 | 109.624 kWh | −7.004.796,58 CR |
-| 120 s | 6 | 0 | No informado | No informado | No calculable con ciclos `FINAL` |
+Con **120 segundos** se registraron apenas 6 ciclos y ninguno llegó a `FINAL`. Por eso no hay un resultado económico final comparable para este valor. En conjunto, los tres grupos reúnen 259 ciclos registrados y 227 `FINAL`, pero sus tamaños son muy distintos. Tampoco contamos con el déficit de cada ciclo: los kWh comprados en el grupo de 60 segundos no permiten calcular cuánta demanda quedó efectivamente cubierta.
 
-Se registraron 259 ciclos en total y 227 llegaron a `FINAL`. No se proporcionaron identificadores individuales, fechas de cada grupo ni el detalle de las políticas aplicadas en cada ciclo. Los seis ciclos de 120 s no permiten comparar costos finales.
+Wallet presentó problemas de disponibilidad durante parte del experimento. Esa es la observación disponible sobre su funcionamiento; no contamos con mediciones de latencia, duración de la incidencia, errores ni liquidaciones desglosadas por span. En consecuencia, no podemos cuantificar cuánto afectó Wallet a cada grupo ni contrastar aquí las compras comunicadas con resultados finales individuales de Wallet.
 
-## Observaciones económicas y de cobertura
-
-Las compras comunicadas se concentraron en 15 ciclos del grupo de 60 s. No se informó el déficit de esos ciclos ni su cobertura efectiva; los kWh comprados no equivalen necesariamente a kWh de déficit cubierto. Tampoco se entregaron las sumas separadas de costo real y costo estimado sin mercado (*baseline*) para ninguno de los spans.
-
-El ahorro acumulado comunicado para 60 s fue negativo. Si se calculó como `baseline − costo real` sobre los mismos ciclos, significa que el costo real superó al baseline en 7.004.796,58 CR. Sin el desglose por ciclo y los criterios usados para incluirlos, no es posible verificar ese agregado ni atribuirlo al span. La ausencia de compras en 20 s tampoco implica costo real cero: puede haber costos de desbalance o liquidación.
-
-## Mediciones y disponibilidad de Wallet
-
-Durante parte del experimento se reportaron problemas de disponibilidad de Wallet. No se entregaron mediciones de latencia, duración de la incidencia, tasas de error, resultados de conciliación ni eventos de liquidación desglosados por span. Por ello este informe **no asigna tiempos de respuesta ni fallos de Wallet a un grupo concreto** y no presenta las compras como verificadas independientemente contra su estado final en Wallet.
-
-## Hallazgos, limitaciones y conclusión
-
-En estos resultados hubo compras reportadas con 60 s, ninguna con 20 s y ningún ciclo `FINAL` con 120 s. Esto describe lo observado, pero **no demuestra que 60 s sea superior** ni que el span por sí solo explique las diferencias. Los grupos tienen tamaños muy distintos y fueron ejecutados bajo condiciones diferentes; la disponibilidad de Wallet también pudo influir.
-
-Otros grupos experimentaban simultáneamente. Sus decisiones sobre cuándo publicar o retirar ofertas, qué precios fijar y qué bids aceptar podían cambiar la oferta disponible para nuestra ciudad. No hay registros por ciclo que permitan medir ese efecto o separar su influencia de la del span. Sin esos datos, la cobertura por ciclo, el desglose de costos y las mediciones de Wallet, no puede hacerse una comparación causal ni elegir un span óptimo a partir de este experimento.
+También experimentaban otras ciudades al mismo tiempo. Sus decisiones de publicar o retirar ofertas, cambiar precios y aceptar bids pudieron alterar las oportunidades de compra de nuestra ciudad. No tenemos registros por ciclo que permitan separar ese efecto del span, ni sabemos que las condiciones de mercado y las demás políticas hayan sido equivalentes entre grupos. **Observamos compras con 60 segundos y ninguna con 20; no podemos concluir que 60 segundos sea mejor ni elegir un span óptimo con estos datos.**

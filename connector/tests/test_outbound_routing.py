@@ -198,6 +198,130 @@ def test_outbox_retries_on_same_exchange_and_never_declares_topology():
     asyncio.run(_outbox_retries_on_same_exchange_and_never_declares_topology())
 
 
+@pytest.mark.parametrize("publish_error,channel_closes", [
+    (TimeoutError("publish confirm timed out"), False),
+    (connector.aio_pika.exceptions.ChannelInvalidStateError("Channel closed"), False),
+    (RuntimeError("Channel closed"), True),
+])
+def test_outbox_reconnects_after_broker_publish_failure(publish_error, channel_closes):
+    async def run():
+        item = outbound("offer", {"offerId": "KLD-1", "quantity": 2,
+                                  "pricePerEnergy": 3},
+                        route="market.offer.KLD", exchange="market")
+        next_item = outbound("offer", {"offerId": "KLD-2", "quantity": 3,
+                                       "pricePerEnergy": 4},
+                             route="market.offer.KLD", exchange="market")
+        old_directed, old_market = AsyncMock(), AsyncMock()
+        new_directed, new_market = AsyncMock(), AsyncMock()
+        old_channel, new_channel = AsyncMock(), AsyncMock()
+        old_channel.is_closed = new_channel.is_closed = False
+
+        async def fail_publish(*_args, **_kwargs):
+            old_channel.is_closed = channel_closes
+            raise publish_error
+
+        old_market.publish.side_effect = fail_publish
+        old_channel.get_exchange.side_effect = [old_directed, old_market]
+        new_channel.get_exchange.side_effect = [new_directed, new_market]
+        old_connection, new_connection = AsyncMock(), AsyncMock()
+        for connection, channel in ((old_connection, old_channel),
+                                    (new_connection, new_channel)):
+            connection.is_closed = False
+            connection.__aenter__.return_value = connection
+            connection.channel.return_value = channel
+
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+        client.get.return_value = SimpleNamespace(
+            status_code=200, raise_for_status=lambda: None,
+            json=lambda: {"items": [item, next_item]},
+        )
+        client.post.return_value = SimpleNamespace(
+            status_code=200, raise_for_status=lambda: None,
+            json=lambda: {"allowed": True, "retryAfter": 0},
+        )
+        statuses = []
+
+        async def record(_client, _msg_id, *, status, error=None):
+            statuses.append(status)
+
+        with (
+            patch.object(connector.aio_pika, "connect", new_callable=AsyncMock,
+                         side_effect=[old_connection, new_connection]) as connect,
+            patch.object(connector.httpx, "AsyncClient", return_value=client),
+            patch.object(connector, "register_outbound_result", side_effect=record),
+            patch.object(connector.asyncio, "sleep", new_callable=AsyncMock,
+                         side_effect=[None, asyncio.CancelledError()]) as sleep,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await connector.publish_backend_outbox()
+
+        assert connect.await_count == 2
+        assert sleep.await_args_list[0].args == (connector.CONNECTOR_RETRY_SECONDS,)
+        assert statuses == ["FAILED", "PUBLISHED", "PUBLISHED"]
+        old_market.publish.assert_awaited_once()
+        assert new_market.publish.await_count == 2
+        old_message = old_market.publish.await_args.args[0]
+        new_message = new_market.publish.await_args_list[0].args[0]
+        assert old_message.body == new_message.body
+        assert old_message.user_id == new_message.user_id == "city.KLD"
+        assert json.loads(new_message.body)["msgId"] == item["msgId"]
+        assert json.loads(new_message.body)["idpk"] == item["idpk"]
+        assert json.loads(new_market.publish.await_args_list[1].args[0].body)["msgId"] == next_item["msgId"]
+        old_connection.__aexit__.assert_awaited_once()
+        for channel in (old_channel, new_channel):
+            channel.get_exchange.assert_any_await("energy.x", ensure=False)
+            channel.get_exchange.assert_any_await("market", ensure=False)
+            channel.declare_exchange.assert_not_awaited()
+            channel.declare_queue.assert_not_awaited()
+
+    asyncio.run(run())
+
+
+def test_outbox_reconnects_when_channel_closes_between_polls():
+    async def run():
+        first_channel, second_channel = AsyncMock(), AsyncMock()
+        first_channel.is_closed = False
+        second_channel.is_closed = False
+        first_channel.get_exchange.side_effect = [AsyncMock(), AsyncMock()]
+        second_market = AsyncMock()
+        second_channel.get_exchange.side_effect = [AsyncMock(), second_market]
+        first_connection, second_connection = AsyncMock(), AsyncMock()
+        for connection, channel in ((first_connection, first_channel),
+                                    (second_connection, second_channel)):
+            connection.is_closed = False
+            connection.__aenter__.return_value = connection
+            connection.channel.return_value = channel
+        client = AsyncMock()
+        client.__aenter__.return_value = client
+
+        async def get_dispatch(*_args, **_kwargs):
+            if client.get.await_count == 1:
+                first_channel.is_closed = True
+            return SimpleNamespace(
+                status_code=200, raise_for_status=lambda: None,
+                json=lambda: {"items": []},
+            )
+
+        client.get.side_effect = get_dispatch
+        with (
+            patch.object(connector.aio_pika, "connect", new_callable=AsyncMock,
+                         side_effect=[first_connection, second_connection]) as connect,
+            patch.object(connector.httpx, "AsyncClient", return_value=client),
+            patch.object(connector.asyncio, "sleep", new_callable=AsyncMock,
+                         side_effect=[None, None, asyncio.CancelledError()]),
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await connector.publish_backend_outbox()
+
+        assert connect.await_count == 2
+        assert client.get.await_count == 2
+        second_channel.get_exchange.assert_any_await("market", ensure=False)
+        second_market.publish.assert_not_awaited()
+
+    asyncio.run(run())
+
+
 async def _outbox_publishes_bid_and_request():
     bid = outbound("bid", {"offerId": "COR-1", "quantity": 2},
                    route="city.COR", exchange="energy.x")

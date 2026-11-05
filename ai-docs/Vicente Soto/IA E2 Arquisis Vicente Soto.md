@@ -667,3 +667,21 @@ Al revisar este registro, `git diff --stat origin/develop main` no mostró difer
 Se preparó un borrador de informe con los resultados suministrados: 259 ciclos, 227 `FINAL`, compras concentradas en 60 s, comparación de baseline y costo real, y la interrupción de Wallet observada desde el 1 de noviembre alrededor de las 05:13 UTC. El texto separó observaciones de hipótesis y evitó declarar un span óptimo. No se consultó nuevamente producción ni se modificó código funcional.
 
 La PR de Backend #92 se cerró sin merge porque el resultado no convenció. Después se eliminaron sus ramas local y remota. Por tanto, el informe **no forma parte de `develop`** ni se presenta aquí como entregable final. Las últimas ediciones sin commit se conservaron en un stash antes de borrar la rama.
+
+---
+
+# Corrección de reconexión del publicador RabbitMQ
+
+### Prompt relevante
+
+> "Revisa y corrige un posible problema de reconexión de RabbitMQ en `connector/connector.py`, específicamente en `publish_backend_outbox()`."
+
+> "Ahora quiero preparar una PR hacia `develop`."
+
+### Resumen de la respuesta y utilidad
+
+La revisión de `publish_backend_outbox()` y de `git blame` mostró que, desde el commit inicial `5afbac1`, el `except Exception` del lote registraba cualquier fallo de publicación y continuaba con el mismo canal. Tras un `TimeoutError` o el cierre del canal, esto podía repetir indefinidamente `Channel closed` aunque los consumidores se recuperaran mediante sus propias conexiones.
+
+En `connector/connector.py` se añadió detección de conexión o canal cerrado antes de cada sondeo. Si durante una publicación ocurre un timeout o un error de conexión/canal, se intenta registrar el mensaje como `FAILED` y se sale al bucle exterior: después de la espera configurada se crean una conexión, un canal y referencias a ambos exchanges nuevos. Los fallos individuales con canal utilizable conservan el manejo anterior. El outbox reintenta el mismo payload, `msgId` e `idpk`; no se cambió la topología ni los contratos.
+
+`connector/tests/test_outbound_routing.py` simula timeout de confirmación, cierre de canal durante la publicación, cierre entre sondeos y recuperación con más mensajes pendientes. La suite completa del Connector pasó con **74 tests y 12 subtests**, y `git diff --check` pasó. El cambio quedó en `e6b0fdf`; la PR #93 se integró en `develop` mediante `fbfddc7`. No se probó contra RabbitMQ productivo. Si el timeout ocurrió después de que el broker aceptara el mensaje, aún puede haber un reintento con los mismos identificadores; esa ambigüedad debe observarse en el despliegue.

@@ -346,6 +346,9 @@ async def publish_backend_outbox() -> None:
                 ) as client:
 
                     while True:
+                        if connection.is_closed is True or channel.is_closed is True:
+                            raise ConnectionError("Conexión o canal de outbox cerrado")
+
                         try:
                             response = await client.get(
                                 MASTER_OUTBOUND_DISPATCH_URL
@@ -374,6 +377,7 @@ async def publish_backend_outbox() -> None:
                             if expires_at and datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at.replace("Z", "+00:00")):
                                 continue
 
+                            publishing = False
                             try:
                                 exchange_name, routing_key = select_outbound_destination(
                                     item,
@@ -389,6 +393,7 @@ async def publish_backend_outbox() -> None:
                                     quota.raise_for_status()
                                     if not quota.json()["allowed"]:
                                         continue  # Outbox conserva intención y próximo instante.
+                                publishing = True
                                 await publish_protocol_message(
                                     exchange=(
                                         market_exchange if exchange_name == RABBITMQ_MARKET_EXCHANGE
@@ -400,6 +405,16 @@ async def publish_backend_outbox() -> None:
                                 )
 
                             except Exception as exc:
+                                broker_unavailable = publishing and (
+                                    isinstance(exc, (
+                                        TimeoutError,
+                                        ConnectionError,
+                                        aio_pika.exceptions.ChannelInvalidStateError,
+                                        aio_pika.exceptions.ChannelClosed,
+                                    ))
+                                    or connection.is_closed is True
+                                    or channel.is_closed is True
+                                )
                                 logger.warning(
                                     "Falló publicación outbound %s: %s",
                                     msg_id,
@@ -419,6 +434,11 @@ async def publish_backend_outbox() -> None:
                                         "para outbound %s",
                                         msg_id,
                                     )
+
+                                if broker_unavailable:
+                                    # Salir del lote: la siguiente conexión obtiene
+                                    # canales y exchanges nuevos para el mismo outbox.
+                                    raise
 
                                 continue
 

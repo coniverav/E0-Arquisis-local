@@ -1,44 +1,31 @@
 # Post-mortem AD6: Estrategia versionada y experimento de span
 
-**Revisión retrospectiva:** 17 de noviembre de 2026. Este post-mortem revisa [AD6](../ADR-006-estrategia-configuracion.md) usando el experimento realizado por KLD durante E2. La intención no es elegir retrospectivamente una estrategia ganadora, sino establecer qué se demostró y qué no permiten concluir los datos.
+**Revisión retrospectiva:** 17 de noviembre de 2026. Se compara [AD6](../ADR-006-estrategia-configuracion.md) con el experimento de KLD y la evidencia disponible en el repositorio. El análisis no declara un span ganador cuando los ciclos no son comparables.
 
-## Escenario prometido
+### Decisión y resultado de E2
 
-AD6 propuso que la política comercial fuera una configuración versionada en PostgreSQL, editable sin redeploy y activada al inicio del ciclo siguiente. Así, un ciclo abierto conserva la versión que le corresponde y es posible atribuir a esa versión el `span`, la cobertura del déficit, los bids rechazados y los costos del mercado.
+AD6 eligió estrategias versionadas en PostgreSQL, activadas al comienzo del siguiente ciclo. Un cambio de precio, cantidad, política o `span` debía quedar pendiente durante el ciclo abierto, sin redeploy y sin mezclar políticas dentro de un mismo resultado.
 
-El escenario era editar, por ejemplo, el `span` a mitad de un ciclo. La edición debía quedar pendiente, no alterar el ciclo ya abierto y aplicarse de forma consistente al siguiente, aun con más de una instancia del backend.
+[`strategy_config.py`](../../../master/app/services/strategy_config.py) guarda la versión pendiente y la asocia al ciclo al recibir el `status-statement`. [`market_api.py`](../../../master/app/routers/market_api.py) expone edición, consulta y auditoría; la edición usa `expectedVersion` para evitar escrituras simultáneas. Las métricas guardan versión de estrategia y `span` efectivo junto con los resultados del ciclo.
 
-## Qué ocurrió en E2
+### Evidencia disponible
 
-La versión efectiva de la estrategia quedó fijada por ciclo. La edición crea una versión pendiente y el siguiente `status-statement` la asocia al ciclo nuevo; la interfaz muestra qué configuración está activa y cuál está pendiente. Las pruebas cubren edición concurrente, conflicto de versión, llegada tardía de `status-statement`, conservación de la estrategia del ciclo abierto y registro de métricas por versión.
+- [`test_strategy_config_ad6.py`](../../../master/tests/test_strategy_config_ad6.py) cubre activación en el siguiente ciclo, inmutabilidad de la versión ya aplicada y llegada tardía de `status-statement`.
+- [`test_e2062_strategy_edit.py`](../../../master/tests/test_e2062_strategy_edit.py) comprueba edición concurrente, `409` por versión obsoleta, auditoría y conservación de la estrategia del ciclo abierto.
+- [`test_e2065_cycle_metrics.py`](../../../master/tests/test_e2065_cycle_metrics.py) cubre persistencia de `span`, versión, cobertura, baseline y costo real cuando existe liquidación.
+- **Experimento del 4 de noviembre:** se aplicaron 20, 60 y 120 segundos a dos ciclos por configuración. Los spans 20 s (249881–249882) y 120 s (249885–249886) no tuvieron déficit. Con 60 s, el ciclo 249884 tuvo déficit de 4.216 KWH y no registró compra; los seis ciclos estaban `AWAITING_SETTLEMENT` al revisarlos. La configuración fue aplicada sin redeploy, pero no hubo costo real final ni baseline cerrado comparable.
+- **Revisión del 5 de noviembre:** el ciclo 249932 tuvo déficit de 2.736 KWH y una oferta visible de COR, sin compra registrada. Wallet informó `cr_available = -74.457.539,53 CR` y `credit_line = 310.804,12 CR`, dejando capacidad neta de compra negativa. Los movimientos históricos contenían cargos de desbalance importantes.
 
-El experimento del 4 de noviembre aplicó 20, 60 y 120 segundos a dos ciclos por configuración. Las seis configuraciones entraron en vigor, lo que sí confirma el aspecto operativo central de AD6: fue posible cambiar el `span` sin redeploy y luego identificar el valor usado por cada grupo de ciclos.
+El detalle y las limitaciones del experimento están en [`informe-experimento-span.md`](../../qa/informe-experimento-span.md). No hay latencias de Wallet correlacionadas con los seis ciclos, ni una cantidad de bids rechazados que permita comparar los grupos.
 
-| Span | Ciclos | Déficit observado | Compras | Estado al revisar |
-| ---: | --- | ---: | ---: | --- |
-| 20 s | 249881–249882 | 0 KWH | 0 KWH | `AWAITING_SETTLEMENT` |
-| 60 s | 249883–249884 | 4.216 KWH, sólo en 249884 | 0 KWH | `AWAITING_SETTLEMENT` |
-| 120 s | 249885–249886 | 0 KWH | 0 KWH | `AWAITING_SETTLEMENT` |
+### Tradeoff y divergencias
 
-Hubo un único déficit dentro de los seis ciclos y su cobertura fue 0 de 4.216 KWH. Los otros cinco no permiten medir el efecto de esperar para comprar porque no requirieron energía. Como ninguno de los seis contaba entonces con liquidación final de desbalance, no se obtuvo costo real final ni baseline cerrado comparable. Tampoco se registró una cantidad de bids rechazados suficiente para una comparación entre grupos.
+**La decisión de fijar una estrategia por ciclo se mantiene.** Permitió aplicar y luego identificar los spans sin reiniciar los servicios, y evitó cambiar una política mientras su ciclo estaba en curso. A cambio, una edición no tiene efecto inmediato y el análisis depende de que el ciclo alcance liquidación y cuente con condiciones económicas comparables.
 
-Una revisión posterior del 5 de noviembre encontró el ciclo 249932 con déficit de 2.736 KWH y una oferta visible de COR, también sin compras. En ese momento Wallet reportó `cr_available = -74.457.539,53 CR` y `credit_line = 310.804,12 CR`; la capacidad neta de compra era negativa. Los movimientos históricos mostraban cargos importantes por desbalance. Ese contexto explica por qué no basta con observar una oferta para esperar que ocurra una compra y por qué no es posible usar esos ciclos como una comparación limpia de spans.
+La principal divergencia entre el escenario deseado y los resultados observados fue la falta de transacciones útiles para comparar. Los spans se ejecutaron en momentos distintos de un mercado compartido: ofertas, precios, decisiones de otras ciudades y saldo de Wallet no fueron controlados. La capacidad de compra negativa observada después limita todavía más la posibilidad de atribuir una diferencia al tiempo de espera. También hubo degradación del publicador RabbitMQ durante el período, corregida posteriormente, pero no hay evidencia para asignarle causalidad sobre las liquidaciones pendientes o las compras ausentes.
 
-## Factores que limitaron la interpretación
+### Cierre y acciones pendientes
 
-El experimento fue observacional: los spans se aplicaron en momentos distintos y las ofertas, precios, saldos y decisiones de otras ciudades no fueron controlados. Wallet no entregó latencias correlacionadas con los seis ciclos, por lo que no hay una comparación de tiempos de respuesta entre spans. Durante el período hubo degradación del publicador RabbitMQ, corregida posteriormente, pero su coincidencia temporal no prueba que fuera la causa de las liquidaciones pendientes ni de la falta de compras.
+AD6 queda **conservada para E3**. La estrategia seguirá decidiendo qué oferta elegir, cuánto ofrecer y cuándo intentar comprar; la saga sólo ejecutará esa decisión. Cada ciclo debe conservar versión, `span`, ofertas candidatas, déficit, cobertura, bids rechazados, baseline, costo real y resultado de Wallet.
 
-Por estas razones, los datos no permiten declarar ganador a 20, 60 o 120 segundos, ni atribuir causalmente al span la ausencia de compras o el costo económico. Sí muestran que una configuración versionada permite registrar de forma honesta cuándo una comparación carece de condiciones suficientes.
-
-## Balance y cambios propuestos para E3
-
-La decisión de fijar una estrategia por ciclo se mantiene. Evitó mezclar una edición nueva con decisiones de un ciclo ya abierto y dejó una base para observar el resultado con sus parámetros reales. Su costo es que la edición no tiene efecto inmediato y que el análisis necesita esperar cierres y liquidaciones definitivas.
-
-En E3, AD6 seguirá fuera de la saga: la estrategia decide qué oferta elegir, cuánto ofrecer y cuándo intentar comprar; la saga ejecuta de forma durable esa decisión. Los datos por ciclo deberán incluir versión, `span`, ofertas candidatas, déficit, cobertura, bids rechazados, costos de baseline y costo real, junto con el resultado oficial de Wallet. Antes de comparar spans se debe confirmar capacidad de compra positiva y ciclos finalizados. Las conclusiones seguirán separando resultados de KLD de factores externos, en especial las decisiones de otras ciudades y la disponibilidad de Wallet.
-
-## Evidencia consultada
-
-- [`Informe del experimento de span`](../../qa/informe-experimento-span.md).
-- [`test_strategy_config_ad6.py`](../../../master/tests/test_strategy_config_ad6.py).
-- [`test_e2062_strategy_edit.py`](../../../master/tests/test_e2062_strategy_edit.py).
-- [`test_e2065_cycle_metrics.py`](../../../master/tests/test_e2065_cycle_metrics.py).
+Antes de comparar spans se requieren ciclos finalizados, capacidad de compra disponible y liquidaciones comprobables. Las conclusiones deberán seguir diferenciando los resultados de KLD de decisiones de otras ciudades y de la disponibilidad de Wallet; con la evidencia actual no corresponde declarar superior a 20, 60 o 120 segundos.

@@ -1,7 +1,5 @@
 # Post-mortem AD4: Serialización de la aceptación de bids
 
-**Revisión retrospectiva:** 17 de noviembre de 2026. Se contrasta [AD4](../ADR-004-serializacion-aceptacion-bids.md) con la evidencia local y operativa reunida durante E2, sin convertir una prueba controlada en una afirmación sobre Wallet Central.
-
 ### Decisión y resultado de E2
 
 AD4 eligió bloqueo transaccional por oferta y reservas persistidas para evitar que bids concurrentes comprometieran más que el `remaining`. El escenario comprometido era una oferta de 100 KWH con dos bids de 80 KWH iniciados con cerca de 40 ms de separación: debía quedar una reserva de 80 KWH, un rechazo `QUANTITY_UNAVAILABLE` con `available=20` y ninguna segunda intención de swap.

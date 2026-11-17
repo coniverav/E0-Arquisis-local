@@ -1,7 +1,5 @@
 # Post-mortem AD6: Estrategia versionada y experimento de span
 
-**Revisión retrospectiva:** 17 de noviembre de 2026. Se compara [AD6](../ADR-006-estrategia-configuracion.md) con el experimento de KLD y la evidencia disponible en el repositorio. El análisis no declara un span ganador cuando los ciclos no son comparables.
-
 ### Decisión y resultado de E2
 
 AD6 eligió estrategias versionadas en PostgreSQL, activadas al comienzo del siguiente ciclo. Un cambio de precio, cantidad, política o `span` debía quedar pendiente durante el ciclo abierto, sin redeploy y sin mezclar políticas dentro de un mismo resultado.

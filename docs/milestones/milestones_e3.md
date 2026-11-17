@@ -1,7 +1,5 @@
 # Plan de milestones — E3
 
-> Las fechas son una planificación interna basada en la propuesta del 15 de noviembre de 2026. El material disponible no fija fecha oficial de entrega; deberán ajustarse cuando el curso la confirme.
-
 ### Milestone 0: Continuidad, spec y decisiones 16–18 Nov
 
 * Auditar continuidad E1/E2 en producción: cloud, ambas colas, protocolo, ciclos, reportes, HTTPS, Auth0, Wallet, New Relic y AWS Budgets (E3-001).
@@ -48,28 +46,3 @@
 * Ensayar incidente guiado, recorrido UML y ronda individual; preparar preguntas técnicas (E3-090–093).
 * Confirmar budgets para Lambda/Step Functions, secretos, AI logs, revisiones y protección de ramas (E3-094–095).
 * Congelar release, validar rollback, conservar evidencias y coordinar la demo con el ayudante (E3-096–098).
-
-## Secuencia crítica
-
-```text
-continuidad + spec
-  → ADR7/ADR8
-  → task tokens + outbox + IaC
-  → seller/buyer + callbacks + relays
-  → despliegue serverless desde código
-  → swap productivo SETTLED
-  → recuperación y mediciones AD7/AD8
-  → gates, demo y release
-```
-
-Prowler, SSE, las cinco alertas, runbooks y regresión E1/E2 avanzan en paralelo, pero ninguno reemplaza los gates esenciales.
-
-## Gates y evidencia de cierre
-
-| Gate | Evidencia mínima |
-| --- | --- |
-| G01 | Aplicación completa disponible en cloud durante la revisión. |
-| G02 | Dos colas, protocolo, ciclo/reporte, HTTPS, auth, APM y budgets con Lambda/SFN. |
-| G03 | Swap real `SETTLED` por Step Functions Standard y Execution History visible. |
-| G04 | Reportes, ofertas e inicio de sagas recuperables mediante outbox/relay. |
-| G05 | Prowler inicial, tres reparaciones MEDIUM+ y reporte posterior. |

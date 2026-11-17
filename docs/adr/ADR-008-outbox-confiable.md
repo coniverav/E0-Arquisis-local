@@ -66,6 +66,5 @@ La validación de E3 debe cortar backend y broker después de un commit, demostr
 
 ## Referencias
 
-- [Enunciado E3, sección 3 y requisito AD8](../../../Enunciado%20E3%20Arquisis.pdf).
 - [AWS Prescriptive Guidance: Transactional outbox pattern](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html).
 - [PostgreSQL: locking clause (`SELECT ... FOR UPDATE SKIP LOCKED`)](https://www.postgresql.org/docs/16/sql-select.html).

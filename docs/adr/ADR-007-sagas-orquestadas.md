@@ -65,7 +65,6 @@ No se modifica la autoridad de la Wallet ni el ledger local. El resultado econó
 
 ## Referencias
 
-- [Enunciado E3, secciones 2 y 5](../../../Enunciado%20E3%20Arquisis.pdf).
 - [AWS Step Functions: StartExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartExecution.html).
 - [AWS Step Functions: callback con task token](https://docs.aws.amazon.com/step-functions/latest/dg/connect-to-resource.html).
 - [AWS Step Functions Pricing](https://aws.amazon.com/step-functions/pricing/).

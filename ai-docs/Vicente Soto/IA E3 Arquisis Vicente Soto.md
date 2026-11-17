@@ -35,3 +35,51 @@ La matriz de continuidad identifica riesgos de migración: pérdida de reportes,
 La spec E3 define objetivo, alcance, arquitectura, fronteras, supuestos, decisiones pendientes, cinco gates y criterios medibles para sagas, outbox, SSE, alertas, IaC y Prowler. `milestones_e3.md` resume las 98 tarjetas de la planificación en cinco fases, manteniendo las fechas como propuesta interna y no como plazo oficial del curso.
 
 Los documentos quedaron en la PR Backend **#97**, con tres commits separados para auditoría, spec y milestones. La validación documental incluyó referencias locales y `git diff --check`; no se ejecutaron pruebas funcionales porque no se modificó código.
+
+---
+
+# Inventario AWS heredado de E2
+
+### Prompt relevante
+
+> "En el repositorio backend de EnergyShark, crea una nueva rama `docs/e3-010-inventario-aws` a partir de la versión más reciente de `develop`. En esa rama, crea `docs/E3-010-inventario-aws.md` con un resumen breve del inventario AWS de E2."
+
+### Resumen de la respuesta y utilidad
+
+Se preparó un inventario conciso de la infraestructura heredada: EC2 y EBS, ECR, API Gateway, S3, CloudFront, IAM, CloudWatch, Budgets y el estado todavía no desplegado de Step Functions y Lambda. El documento diferencia el inventario entregado de una verificación operativa actual y deja New Relic expresamente pendiente de comprobación.
+
+También se registró la estimación preliminar de costos para E3 bajo el supuesto de 72 ciclos diarios y dos swaps por ciclo, junto con los elementos excluidos del cálculo. El volumen EBS sin cifrar y el acceso público a S3 quedaron identificados como posibles hallazgos para validar posteriormente con Prowler, sin presentar todavía una remediación.
+
+El cambio quedó en la PR Backend **#99**, commit `f885f26`. Solo se añadió documentación; no se ejecutaron comandos AWS ni se modificó infraestructura.
+
+---
+
+# Baseline inicial de Prowler
+
+### Prompt relevante
+
+> "Documenta la tarjeta E3-011 en `docs/E3-011-prowler-baseline.md`, con un Markdown breve y conciso. Incluye el escaneo inicial realizado el 17/11/2026 con Prowler 5.50.0, los resultados, la evidencia generada y tres candidatos de remediación."
+
+### Resumen de la respuesta y utilidad
+
+Se documentó la línea base informada para Prowler 5.50.0: 671 checks ejecutados, 258 hallazgos fallidos y 177 aprobados, con 4 críticos, 33 altos, 116 medios y 105 bajos. La ubicación de los reportes CSV, HTML y JSON OCSF se dejó como referencia local, sin incorporar esos archivos al repositorio para evitar exponer identificadores o detalles sensibles de AWS.
+
+El documento propone revisar el cifrado EBS predeterminado, MFA para el usuario IAM `grupo10` y el acceso público del bucket S3. Se aclaró que son candidatos y que todavía no se aplicaron correcciones. No se volvió a ejecutar Prowler ni se modificó infraestructura.
+
+El cambio quedó en la PR Backend **#100**, commit `7b42c7c`, limitado a un Markdown de 33 líneas.
+
+---
+
+# Baseline local de pruebas E2
+
+### Prompt relevante
+
+> "Documenta E3-012 — Baseline de pruebas E2 en `docs/E3-012-baseline-tests.md`. El documento debe ser muy breve, con una tabla de resultados para contratos, frontend, backend y connector, además de los comandos esenciales y las condiciones de aislamiento."
+
+### Resumen de la respuesta y utilidad
+
+Se consolidó la evidencia local informada para los tres repositorios: Contracts 15/15, Frontend 30/30 con lint y build correctos, Backend 525/525 más 3 subtests y Connector 74/74 más 12 subtests. El total registrado es de 644 tests y 15 subtests aprobados. Se fijaron como referencias `bbd8eae` para Contracts, `e9b7424` para Frontend y `22e9edd` para el `develop` del Backend.
+
+El documento incluye los comandos esenciales de reproducción y explica que el backend usó PostgreSQL temporal aislado, mientras las pruebas del Connector utilizaron RabbitMQ ficticio. También registra la advertencia no bloqueante de Vite y aclara que el resultado constituye evidencia local, no una validación de producción.
+
+El cambio quedó en la PR Backend **#101**, commit `0bb6d10`. No se modificó código funcional ni se incluyeron credenciales.

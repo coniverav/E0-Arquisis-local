@@ -43,6 +43,7 @@ def build_app(
     sagas = SagasStack(
         app,
         f"{settings.stack_prefix}-Sagas",
+        settings=settings,
         **common,
     )
     monitoring = MonitoringStack(

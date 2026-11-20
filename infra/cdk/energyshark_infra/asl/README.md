@@ -1,6 +1,6 @@
 # Definiciones ASL de sagas
 
-Estas definiciones describen máquinas AWS Step Functions **Standard**. En esta etapa se versiona y prueba el flujo; E3-019 declarará los recursos, logging e IAM en CDK y E3-020 incorporará las Lambdas.
+Estas definiciones describen máquinas AWS Step Functions **Standard**. CDK las carga, agrega el timeout total por ambiente, sustituye los ARN de las Lambdas y publica una versión detrás del alias `live`.
 
 El proceso que llama `StartExecution` debe usar `$.idpk` como nombre. Las Lambdas reciben siempre las llaves de idempotencia desde el input y no deben reemplazarlas al reintentar.
 
@@ -8,4 +8,4 @@ Las tareas `waitForTaskToken` deben persistir el token antes de invocar Wallet. 
 
 El `swapToken` permanece en PostgreSQL y las Lambdas lo recuperan mediante la saga o el `SwapRecord`; no se copia al input ni al historial de Step Functions.
 
-Los valores `${...FunctionArn}` son sustituciones que CDK resolverá al declarar las máquinas. No contienen cuentas, regiones, secretos ni ARNs productivos.
+Los valores `${...FunctionArn}` son sustituciones resueltas por CDK. No contienen cuentas, regiones, secretos ni ARN productivos. Los handlers declarados fallan de forma segura hasta que las tareas posteriores implementen los adaptadores Wallet y la persistencia token-antes-HTTP.

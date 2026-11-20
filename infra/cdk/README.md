@@ -1,27 +1,31 @@
-# Base IaC de EnergyShark
+# IaC de EnergyShark
 
-Se eligió AWS CDK v2 con Python para mantener IaC revisable y cercana al backend. Esta base solo define límites de stacks; no crea ni despliega recursos.
+Se usa AWS CDK v2 con Python. La infraestructura E2 y monitoreo conservan límites vacíos hasta su migración; el stack de sagas ya declara la parte serverless E3, pero todavía no se ha desplegado.
 
 ## Estructura
 
 - `app.py`: aplicación CDK y configuración común.
 - `energyshark_infra/config.py`: ambientes y nombres de stacks.
 - `stacks/existing_infrastructure.py`: recursos E2 existentes.
-- `stacks/sagas.py`: futuras Step Functions y Lambdas.
+- `stacks/sagas.py`: Step Functions Standard, Lambdas, logs e IAM.
+- `asl/`: definiciones seller/buyer versionadas.
+- `lambda_src/saga_task/`: artefacto común, sin dependencias externas.
 - `stacks/monitoring.py`: futuras métricas, alarmas y paneles.
 - `tests/`: valida límites y ausencia de recursos en la base.
 
 ## Estado y ambientes
 
-Los recursos E2 no están importados ni administrados por estos stacks. CloudFormation solo recibirá recursos después de una revisión e importación explícita. No existe un despliegue CDK de esta base.
+Los recursos E2 no están importados ni administrados por estos stacks. El stack de sagas crea dos máquinas Standard, versiones con alias `live`, 13 Lambdas y roles mínimos. Los handlers fallan de forma segura hasta implementar los adaptadores Wallet y persistencia de las tareas posteriores.
 
-Los ambientes soportados son `dev`, `staging` y `prod`, seleccionados con contexto CDK `environment`. Cuenta y región se resuelven desde `CDK_DEFAULT_ACCOUNT` y `CDK_DEFAULT_REGION`; no se guardan identificadores en Git. Producción activa protección contra eliminación.
+`dev`, `staging` y `prod` parametrizan nombres, timeout total, memoria, timeout Lambda y retención de logs. Cuenta y región provienen de `CDK_DEFAULT_ACCOUNT` y `CDK_DEFAULT_REGION`; producción activa protección contra eliminación.
 
 ## Secretos y despliegue
 
-Las credenciales y secretos permanecen fuera de Git. Los recursos futuros deben referenciarlos desde Secrets Manager o SSM Parameter Store, sin incluir valores en código, contexto ni CloudFormation.
+El despliegue exige los parámetros `DatabaseSecretArn`, `WalletSecretArn` y `BrokerSecretArn`. Solo sus ARN llegan al entorno Lambda; cada rol puede leer exclusivamente los secretos que requiere. No se guardan valores en Git, contexto o CloudFormation.
 
-La estrategia es ejecutar tests, `cdk synth` y `cdk diff`, revisar la plantilla, importar recursos existentes por separado y desplegar primero en `dev`. Sagas y monitoreo se incorporarán en cambios pequeños; producción requerirá aprobación manual y plan de rollback.
+El rol de Step Functions solo invoca sus Lambdas. El rol de Connector limita `StartExecution` a ambos alias. `SendTaskSuccess/Failure` y las APIs de entrega de CloudWatch Logs usan `Resource: *` porque AWS no admite delimitarlas por ARN; no hay permisos administrativos.
+
+La estrategia sigue siendo tests, `cdk synth`, `cdk diff`, revisión y despliegue inicial en `dev`. Producción requiere aprobación y rollback. Esta rama no ejecuta `cdk deploy`.
 
 ## Validación local
 

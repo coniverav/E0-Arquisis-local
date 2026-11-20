@@ -101,3 +101,25 @@ La configuración admite `dev`, `staging` y `prod`, resuelve cuenta y región de
 La validación se realizó en un entorno virtual temporal con `aws-cdk-lib` 2.277.0. Pasaron 2/2 pruebas y se sintetizaron tres plantillas sin recursos AWS. No se ejecutó `cdk deploy` ni se accedió a una cuenta AWS.
 
 La implementación quedó en la PR Backend **#102**, commit `180d1e0`, limitada a `infra/cdk/`.
+
+---
+
+# Persistencia y diseño de sagas de compra y venta
+
+### Prompt relevante
+
+> "Implementa E3-015, E3-016, E3-017 y E3-018 según el enunciado E3 y AD7. Hay PRs pendientes: revisa las ramas existentes y crea una nueva rama desde la de E3-014, conservando su estructura CDK. Implementa persistencia durable y correlación de task tokens, la migración Alembic aditiva y las máquinas Standard del vendedor y comprador."
+
+### Resumen de la respuesta y utilidad
+
+Se comprobó que AD7 existía en una rama documental pendiente, pero no era ancestro de la rama de E3-014. Para mantener la precedencia exigida sin mergear ninguna PR, se creó la rama de implementación directamente sobre `feat/e3-014-cdk-base` y se incorporó AD7 como su primer commit, antes de los cambios funcionales.
+
+Para la persistencia se añadieron ejecuciones de saga y task tokens correlacionables por `idpk`, `swapId`, rol, ARN de ejecución y timeout. El servicio conserva reintentos idempotentes, detecta correlaciones ambiguas o incompatibles, permite completar cada callback una sola vez y expira esperas sin inferir un resultado económico. El token se guarda porque Step Functions lo necesita para completar el callback, pero se protege mediante exclusión de serialización y un hash único para búsquedas y deduplicación.
+
+La migración Alembic es aditiva: crea únicamente las tablas, restricciones e índices de sagas. Una prueba parte del último head de E2, inserta un swap sintético, migra a E3 y comprueba que el registro anterior se conserva. No se modificaron ni eliminaron tablas históricas de E2.
+
+También se versionaron las definiciones ASL Standard para ambos roles. La saga seller reserva energía, propone el swap con callback, reconcilia resultados inciertos y compensa solamente cuando Wallet confirma rechazo, expiración o cancelación. La saga buyer valida el JWT, comprueba el plazo, acepta con una llave de idempotencia estable, espera callbacks y reconcilia timeouts. Ninguna definición transporta `swapToken`; las futuras Lambdas deberán recuperarlo desde PostgreSQL.
+
+La suite completa de Master terminó con **530 tests y 3 subtests aprobados**. Las pruebas enfocadas de persistencia y migración aprobaron 5/5; CDK/ASL aprobó 11/11; `alembic upgrade head`, `alembic check` y `git diff --check` también resultaron correctos. La prueba de migración utilizó PostgreSQL temporal aislado. No se desplegaron recursos AWS ni se accedió a servicios productivos.
+
+Los cambios quedaron en la PR Backend **#103**, apilada sobre la rama de E3-014 y no sobre `develop`. La creación efectiva de State Machines, Lambdas, permisos IAM y callbacks del Connector se dejó para las tareas posteriores, evitando presentar el diseño ASL como infraestructura ya desplegada.

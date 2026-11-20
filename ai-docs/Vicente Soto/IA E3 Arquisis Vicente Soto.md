@@ -83,3 +83,21 @@ Se consolidó la evidencia local informada para los tres repositorios: Contracts
 El documento incluye los comandos esenciales de reproducción y explica que el backend usó PostgreSQL temporal aislado, mientras las pruebas del Connector utilizaron RabbitMQ ficticio. También registra la advertencia no bloqueante de Vite y aclara que el resultado constituye evidencia local, no una validación de producción.
 
 El cambio quedó en la PR Backend **#101**, commit `0bb6d10`. No se modificó código funcional ni se incluyeron credenciales.
+
+---
+
+# Estructura base de infraestructura como código
+
+### Prompt relevante
+
+> "Implementa E3-014 — Definir estructura IaC en `E0-Arquisis-local`. Usa AWS CDK con Python. Inicializa una estructura mínima en `infra/cdk/`, separando infraestructura existente, sagas (Step Functions/Lambda) y monitoreo."
+
+### Resumen de la respuesta y utilidad
+
+Se creó una aplicación AWS CDK v2 con Python y tres límites de stack independientes: infraestructura E2 existente, futuras sagas con Step Functions/Lambda y monitoreo. Los stacks quedaron deliberadamente vacíos para que esta base no cree, importe ni modifique recursos AWS antes de revisar el estado de CloudFormation y definir una estrategia segura de adopción.
+
+La configuración admite `dev`, `staging` y `prod`, resuelve cuenta y región desde el entorno y activa protección contra eliminación en producción. No se incorporaron identificadores, credenciales ni secretos; la documentación establece que los valores futuros deben referenciar Secrets Manager o SSM Parameter Store. También se registró una estrategia incremental basada en tests, síntesis, `cdk diff`, revisión, importación explícita y aprobación manual para producción.
+
+La validación se realizó en un entorno virtual temporal con `aws-cdk-lib` 2.277.0. Pasaron 2/2 pruebas y se sintetizaron tres plantillas sin recursos AWS. No se ejecutó `cdk deploy` ni se accedió a una cuenta AWS.
+
+La implementación quedó en la PR Backend **#102**, commit `180d1e0`, limitada a `infra/cdk/`.

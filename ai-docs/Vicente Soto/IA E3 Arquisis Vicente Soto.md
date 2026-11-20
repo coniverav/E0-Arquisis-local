@@ -123,3 +123,23 @@ También se versionaron las definiciones ASL Standard para ambos roles. La saga 
 La suite completa de Master terminó con **530 tests y 3 subtests aprobados**. Las pruebas enfocadas de persistencia y migración aprobaron 5/5; CDK/ASL aprobó 11/11; `alembic upgrade head`, `alembic check` y `git diff --check` también resultaron correctos. La prueba de migración utilizó PostgreSQL temporal aislado. No se desplegaron recursos AWS ni se accedió a servicios productivos.
 
 Los cambios quedaron en la PR Backend **#103**, apilada sobre la rama de E3-014 y no sobre `develop`. La creación efectiva de State Machines, Lambdas, permisos IAM y callbacks del Connector se dejó para las tareas posteriores, evitando presentar el diseño ASL como infraestructura ya desplegada.
+
+---
+
+# Infraestructura serverless e IAM de las sagas
+
+### Prompt relevante
+
+> "Implementa E3-019, E3-020 y E3-021 según el enunciado E3, AD7 y RNF02. Declara en CDK las dos máquinas Step Functions Standard, las Lambdas necesarias con configuración por ambiente y empaquetado reproducible, e IAM de mínimo privilegio. No despliegues AWS y abre una PR hacia la rama de E3-015–018."
+
+### Resumen de la respuesta y utilidad
+
+Se creó una rama apilada sobre E3-015–018 para reutilizar las definiciones ASL y la estructura CDK sin duplicar cambios de las PR pendientes. El stack de sagas ahora declara dos máquinas Step Functions Standard, una seller y otra buyer, con timeout total parametrizable, logs de nivel `ALL` sin incluir payloads, versiones CloudFormation y alias estable `live`.
+
+Se declararon 13 Lambdas separadas por responsabilidad, usando Python 3.12 y un artefacto común sin dependencias externas cuyo hash determina el paquete CDK. Memoria, timeout y retención de logs se configuran por ambiente. Los handlers quedan deliberadamente en modo seguro: registran solamente identificadores de correlación y fallan explícitamente hasta que las tareas posteriores implementen Wallet y el orden token-antes-HTTP; no simulan lógica de negocio inexistente.
+
+Los secretos se reciben como ARN mediante parámetros CloudFormation `NoEcho`. Cada Lambda tiene un rol propio y solo puede leer los secretos de base, Wallet o broker que necesita. Las máquinas solo pueden invocar sus funciones exactas. El rol e instance profile para EC2 limita `StartExecution` a los alias seller y buyer. Los únicos recursos comodín corresponden a `SendTaskSuccess/Failure` y a las APIs de entrega de CloudWatch Logs, que AWS no permite restringir por ARN.
+
+La validación aprobó **18/18 pruebas** de CDK, ASL, configuración, IAM y protección del logging. También pasaron la compilación Python, `git diff --check` y `cdk synth EnergySharkDev-Sagas`. La síntesis se ejecutó localmente sin credenciales ni despliegue; solo se observó una advertencia no bloqueante porque la instalación local de `npx` disponible utiliza Node 20, ya fuera de soporte para la CLI actual.
+
+La implementación quedó en la PR Backend **#104**, commit `824ae43`, dirigida a `feat/e3-015-018-saga-foundation`. No se ejecutó `cdk deploy`, no se modificó producción y la asociación efectiva del instance profile a EC2 continúa pendiente del despliegue IaC.

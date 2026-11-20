@@ -1,0 +1,9 @@
+# Definiciones ASL de sagas
+
+Estas definiciones describen máquinas AWS Step Functions **Standard**. En esta etapa se versiona y prueba el flujo; E3-019 declarará los recursos, logging e IAM en CDK y E3-020 incorporará las Lambdas.
+
+El proceso que llama `StartExecution` debe usar `$.idpk` como nombre. Las Lambdas reciben siempre las llaves de idempotencia desde el input y no deben reemplazarlas al reintentar.
+
+Las tareas `waitForTaskToken` deben persistir el token antes de invocar Wallet. Un timeout conduce a reconciliación; solo un resultado autoritativo permite liquidar o compensar. Un resultado desconocido falla de forma visible y no libera reservas por suposición.
+
+Los valores `${...FunctionArn}` son sustituciones que CDK resolverá al declarar las máquinas. No contienen cuentas, regiones, secretos ni ARNs productivos.

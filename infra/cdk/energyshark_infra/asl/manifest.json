@@ -1,0 +1,8 @@
+{
+  "seller": {
+    "definition": "seller.asl.json",
+    "executionNamePath": "$.idpk",
+    "role": "SELLER",
+    "type": "STANDARD"
+  }
+}

@@ -112,7 +112,7 @@ La implementación quedó en la PR Backend **#102**, commit `180d1e0`, limitada 
 
 ### Resumen de la respuesta y utilidad
 
-Se comprobó que AD7 existía en una rama documental pendiente, pero no era ancestro de la rama de E3-014. Para mantener la precedencia exigida sin mergear ninguna PR, se creó la rama de implementación directamente sobre `feat/e3-014-cdk-base` y se incorporó AD7 como su primer commit, antes de los cambios funcionales.
+Se comprobó que AD7 ya estaba documentado en la PR Backend #96, aunque todavía no era ancestro de la rama de E3-014. La rama de implementación se creó directamente sobre `feat/e3-014-cdk-base` y la PR dejó explícita su dependencia documental: AD7 debe integrarse antes, sin duplicar su commit ni mergear anticipadamente las PR pendientes.
 
 Para la persistencia se añadieron ejecuciones de saga y task tokens correlacionables por `idpk`, `swapId`, rol, ARN de ejecución y timeout. El servicio conserva reintentos idempotentes, detecta correlaciones ambiguas o incompatibles, permite completar cada callback una sola vez y expira esperas sin inferir un resultado económico. El token se guarda porque Step Functions lo necesita para completar el callback, pero se protege mediante exclusión de serialización y un hash único para búsquedas y deduplicación.
 

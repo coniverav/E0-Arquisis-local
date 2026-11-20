@@ -1009,7 +1009,11 @@ class SagaTaskToken(SQLModel, table=True):
     )
     # El valor completo es necesario para SendTaskSuccess/Failure, pero nunca
     # debe registrarse en logs ni exponerse por API.
-    task_token: str = Field(sa_column=Column(Text, nullable=False))
+    task_token: str = Field(
+        sa_column=Column(Text, nullable=False),
+        repr=False,
+        exclude=True,
+    )
     task_token_hash: str = Field(
         sa_column=Column(String(64), nullable=False)
     )

@@ -96,5 +96,60 @@ class SellerSagaDefinitionTest(unittest.TestCase):
         self.assertIn("Wallet.RateLimited", retry_errors)
 
 
+class BuyerSagaDefinitionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.manifest = _load("manifest.json")
+        self.buyer = _load("buyer.asl.json")
+
+    def test_buyer_is_standard_and_named_by_bid_accepted_idpk(self) -> None:
+        metadata = self.manifest["buyer"]
+        self.assertEqual(metadata["type"], "STANDARD")
+        self.assertEqual(metadata["role"], "BUYER")
+        self.assertEqual(metadata["executionNamePath"], "$.idpk")
+
+    def test_buyer_graph_is_closed_and_reachable(self) -> None:
+        _assert_closed_graph(self, self.buyer)
+
+    def test_buyer_validates_token_deadline_and_reconciles_timeout(self) -> None:
+        states = self.buyer["States"]
+        self.assertEqual(self.buyer["StartAt"], "ValidateSwapToken")
+        self.assertIn("CheckBuyerDeadline", states)
+        self.assertIn("ReconcileBuyerSwap", states)
+        acceptance = states["AcceptSwapAndWait"]
+        self.assertTrue(acceptance["Resource"].endswith("waitForTaskToken"))
+        self.assertIn("TimeoutSecondsPath", acceptance)
+        timeout_targets = {
+            handler["Next"]
+            for handler in acceptance["Catch"]
+            if "States.Timeout" in handler["ErrorEquals"]
+        }
+        self.assertEqual(timeout_targets, {"ReconcileBuyerSwap"})
+
+    def test_buyer_retries_use_same_acceptance_key_and_hide_swap_token(self) -> None:
+        acceptance = self.buyer["States"]["AcceptSwapAndWait"]
+        payload = acceptance["Parameters"]["Payload"]
+        self.assertEqual(
+            payload["idempotencyKey.$"],
+            "$.swap.acceptIdempotencyKey",
+        )
+        retry_errors = acceptance["Retry"][0]["ErrorEquals"]
+        self.assertIn("Wallet.Retryable", retry_errors)
+        self.assertIn("Wallet.RateLimited", retry_errors)
+        self.assertNotIn("swapToken", json.dumps(self.buyer))
+
+    def test_buyer_has_explicit_terminal_states(self) -> None:
+        states = self.buyer["States"]
+        for name in (
+            "BuyerSettled",
+            "BuyerRejected",
+            "BuyerTimedOut",
+            "BuyerReconciliationFailed",
+            "BuyerFailed",
+        ):
+            self.assertIn(name, states)
+        self.assertEqual(states["BuyerSettled"]["Type"], "Succeed")
+        self.assertEqual(states["BuyerReconciliationFailed"]["Type"], "Fail")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,4 +6,6 @@ El proceso que llama `StartExecution` debe usar `$.idpk` como nombre. Las Lambda
 
 Las tareas `waitForTaskToken` deben persistir el token antes de invocar Wallet. Un timeout conduce a reconciliación; solo un resultado autoritativo permite liquidar o compensar. Un resultado desconocido falla de forma visible y no libera reservas por suposición.
 
+El `swapToken` permanece en PostgreSQL y las Lambdas lo recuperan mediante la saga o el `SwapRecord`; no se copia al input ni al historial de Step Functions.
+
 Los valores `${...FunctionArn}` son sustituciones que CDK resolverá al declarar las máquinas. No contienen cuentas, regiones, secretos ni ARNs productivos.

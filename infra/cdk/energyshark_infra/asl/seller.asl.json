@@ -55,7 +55,7 @@
       },
       "ResultPath": null,
       "TimeoutSeconds": 30,
-      "Next": "SellerRejected"
+      "Next": "FinalizeSellerRejected"
     },
     "ProposeSwapAndWait": {
       "Type": "Task",
@@ -195,7 +195,6 @@
       "Type": "Pass",
       "Parameters": {
         "swapId.$": "$.proposal.swapId",
-        "swapToken.$": "$.proposal.swapToken",
         "expiresAt.$": "$.proposal.expiresAt"
       },
       "ResultPath": "$.proposalDetails",
@@ -205,7 +204,6 @@
       "Type": "Pass",
       "Parameters": {
         "swapId.$": "$.proposalReconciliation.Payload.swapId",
-        "swapToken.$": "$.proposalReconciliation.Payload.swapToken",
         "expiresAt.$": "$.proposalReconciliation.Payload.expiresAt"
       },
       "ResultPath": "$.proposalDetails",
@@ -220,7 +218,6 @@
           "bidIdpk.$": "$.idpk",
           "cycleId.$": "$.cycleId",
           "swapId.$": "$.proposalDetails.swapId",
-          "swapToken.$": "$.proposalDetails.swapToken",
           "expiresAt.$": "$.proposalDetails.expiresAt",
           "sagaExecutionId.$": "$.sagaExecutionId"
         }
@@ -478,6 +475,21 @@
       "ResultPath": null,
       "TimeoutSeconds": 30,
       "Next": "SellerSettled"
+    },
+    "FinalizeSellerRejected": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FinalizeSagaFunctionArn}",
+        "Payload": {
+          "role": "SELLER",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "status": "REJECTED"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Next": "SellerRejected"
     },
     "SellerSettled": {
       "Type": "Succeed"

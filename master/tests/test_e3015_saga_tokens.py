@@ -228,5 +228,7 @@ def test_callback_and_terminal_transitions_are_applied_once():
         stored_executions = session.exec(select(SagaExecution)).all()
         assert len(stored_tokens) == 1
         assert stored_tokens[0].callback_idpk == "event-idpk"
+        assert "callback-token" not in repr(stored_tokens[0])
+        assert "task_token" not in stored_tokens[0].model_dump()
         assert len(stored_executions) == 1
         assert stored_executions[0].status == "SETTLED"

@@ -40,6 +40,12 @@ def _assert_closed_graph(test: unittest.TestCase, definition: dict) -> None:
         visited.add(name)
         pending.extend(_targets(states[name]))
     test.assertEqual(set(states) - visited, set())
+    for name, state in states.items():
+        if state["Type"] == "Task":
+            test.assertTrue(
+                "TimeoutSeconds" in state or "TimeoutSecondsPath" in state,
+                f"La tarea {name} no tiene timeout",
+            )
 
 
 class SellerSagaDefinitionTest(unittest.TestCase):
@@ -67,6 +73,7 @@ class SellerSagaDefinitionTest(unittest.TestCase):
             "ReconcileSellerSwap",
             "CancelProposedSwap",
             "CompensateReservation",
+            "FinalizeSellerRejected",
             "FinalizeSellerSettled",
         ):
             self.assertIn(name, states)
@@ -94,6 +101,7 @@ class SellerSagaDefinitionTest(unittest.TestCase):
         ]
         self.assertIn("Wallet.Retryable", retry_errors)
         self.assertIn("Wallet.RateLimited", retry_errors)
+        self.assertNotIn("swapToken", json.dumps(self.seller))
 
 
 class BuyerSagaDefinitionTest(unittest.TestCase):

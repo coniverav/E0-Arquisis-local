@@ -17,6 +17,7 @@ from ..config import CITY_ID
 from ..models import Cycle, MarketBid, MarketCycle, MarketOffer, OfferReservation, SwapRecord
 from .incoming_bids import _send_rejection
 from .seller_bid_rejections import available_kwh
+from .seller_saga_start import enqueue_seller_saga_on_reserve
 
 CENT = Decimal("0.01")
 
@@ -171,6 +172,9 @@ def reserve_incoming_bid(
     bid.status = "RESERVED"  # pendiente del evento wallet: NO es bid-accepted
     session.add(bid)
     session.flush()
+    # E3-027: estado económico y StartExecution se confirman en un COMMIT.
+    # Esta función no llama AWS y el caller es dueño del commit/rollback.
+    enqueue_seller_saga_on_reserve(session, bid_idpk=bid.idpk, now=now)
     return {"status": "RESERVED", "duplicate": False,
             "swapIdpk": bid.idpk, "idempotencyKey": bid.idpk,
             "availableAfter": available - bid.quantity}

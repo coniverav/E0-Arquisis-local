@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from app.config import CITY_ID
 from app.models import Cycle, MarketCycle, MarketOffer, OutboundMessage
+from app.services.market_outbox import enqueue_market_envelope
 
 CENT = Decimal("0.01")
 MARKET_OFFER_TYPES = frozenset({"offer", "offer-updated", "offer-withdrawn"})
@@ -52,17 +53,16 @@ def _enqueue(session: Session, offer: MarketOffer, message_type: str, now: datet
         "timestamp": now.isoformat().replace("+00:00", "Z"),
         "cycleId": offer.cycle_id, "cityId": CITY_ID, "data": data,
     }
-    outbound = OutboundMessage(
-        msg_id=msg_id, idpk=idpk, message_type=message_type,
-        cycle_id=offer.cycle_id, payload=payload,
-        exchange_name="market", routing_key=f"market.offer.{CITY_ID}",
-        status="PENDING", attempt_count=0, dispatch_required=True,
-        available_at=now, expires_at=cycle.market_last_offer_at,
-        created_at=now,
+    # El llamador ya modificó MarketOffer; aquí NO se hace commit.
+    return enqueue_market_envelope(
+        session,
+        envelope=payload,
+        exchange_name="market",
+        routing_key=f"market.offer.{CITY_ID}",
+        available_at=now,
+        expires_at=cycle.market_last_offer_at,
+        now=now,
     )
-    session.add(outbound)
-    session.flush()
-    return outbound
 
 
 def enqueue_confirmed_offer_update(

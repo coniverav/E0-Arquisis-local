@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 from ..models import Cycle, NegotiationReport, OutboundMessage
 from .budget_carryover import lock_city_ledger
 from .negotiation_report import generate_negotiation_report, latest_report
+from .market_outbox import enqueue_market_envelope
 
 
 def _outbounds(session, report):
@@ -82,12 +83,15 @@ def enqueue_due_negotiation_reports(
             old_report = session.exec(select(NegotiationReport).where(NegotiationReport.idpk == old.idpk)).first()
             if old_report is not None and old_report.status in {"PENDING", "DEFERRED"}:
                 old_report.status = "SUPERSEDED"
-        session.add(OutboundMessage(
-            msg_id=report.msg_id, idpk=report.idpk, message_type="negotiation-report",
-            cycle_id=cycle.cycle_id, payload=report.payload, routing_key=routing_key,
-            status="PENDING", created_at=now, dispatch_required=True,
-            available_at=cycle.report_window_opens_at, expires_at=cycle.valid_until,
-        ))
+        enqueue_market_envelope(
+            session,
+            envelope=report.payload,
+            exchange_name="energy.x",
+            routing_key=routing_key,
+            available_at=cycle.report_window_opens_at,
+            expires_at=cycle.valid_until,
+            now=now,
+        )
         enqueued += 1
     session.flush()
     return enqueued
@@ -141,12 +145,17 @@ def process_report_error(session: Session, payload, *, now: datetime | None = No
             msg_id = str(uuid4())
             retry_payload = {**report.payload, "msgId": msg_id,
                              "timestamp": now.isoformat().replace("+00:00", "Z")}
-            session.add(OutboundMessage(
-                msg_id=msg_id, idpk=report.idpk, message_type="negotiation-report",
-                cycle_id=cycle.cycle_id, payload=retry_payload, routing_key=target.routing_key,
-                status="PENDING", created_at=now, dispatch_required=True,
-                available_at=cycle.report_window_opens_at, expires_at=cycle.valid_until,
-            ))
+            # Nuevo intento de NEGOCIO autorizado por REPORT_TOO_EARLY:
+            # nuevo msgId, MISMO idpk, sin modificar el envelope previo.
+            enqueue_market_envelope(
+                session,
+                envelope=retry_payload,
+                exchange_name="energy.x",
+                routing_key=target.routing_key,
+                available_at=cycle.report_window_opens_at,
+                expires_at=cycle.valid_until,
+                now=now,
+            )
     else:
         report.status = "REJECTED"
     session.flush()

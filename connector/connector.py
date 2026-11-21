@@ -12,6 +12,12 @@ from observability import (
     record_consumer_heartbeat,
     register_connector_application,
 )
+from outbox_relay import (
+    broker_relay_enabled,
+    broker_relay_forever,
+    saga_relay_enabled,
+    saga_relay_forever,
+)
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
 from protocol.publisher import (
@@ -811,29 +817,35 @@ async def main() -> None:
     market_task = asyncio.create_task(
         consume_market_forever()
     )
-    outbox_task = asyncio.create_task(
-        publish_backend_outbox()
-    )
+    if broker_relay_enabled():
+        outbox_task = asyncio.create_task(broker_relay_forever(
+            rabbitmq_url=RABBITMQ_URL,
+            city_id=CITY_ID,
+            directed_exchange_name=RABBITMQ_OUTBOUND_EXCHANGE,
+            market_exchange_name=RABBITMQ_MARKET_EXCHANGE,
+            central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
+            http_timeout=HTTP_TIMEOUT_SECONDS,
+            reconnect_seconds=CONNECTOR_RETRY_SECONDS,
+        ))
+    else:
+        # Camino E2 vigente hasta realizar el cutover controlado de AD8.
+        outbox_task = asyncio.create_task(publish_backend_outbox())
+
+    tasks = [consumer_task, market_task, outbox_task]
+    if saga_relay_enabled():
+        tasks.append(asyncio.create_task(saga_relay_forever(
+            http_timeout=HTTP_TIMEOUT_SECONDS,
+            reconnect_seconds=CONNECTOR_RETRY_SECONDS,
+        )))
 
     try:
-        await asyncio.gather(
-            consumer_task,
-            market_task,
-            outbox_task,
-        )
+        await asyncio.gather(*tasks)
     finally:
         heartbeat_task.cancel()
-        consumer_task.cancel()
-        market_task.cancel()
-        outbox_task.cancel()
+        for task in tasks:
+            task.cancel()
 
-        await asyncio.gather(
-            heartbeat_task,
-            consumer_task,
-            market_task,
-            outbox_task,
-            return_exceptions=True,
-        )
+        await asyncio.gather(heartbeat_task, *tasks, return_exceptions=True)
         for signum in installed_signals:
             loop.remove_signal_handler(signum)
 

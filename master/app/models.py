@@ -615,6 +615,8 @@ class OutboundMessage(SQLModel, table=True):
         Index("ix_outbound_relay_claim", "status", "available_at", "lease_until", "id",
               postgresql_where=text("dispatch_required = true")),
         Index("ix_outbound_swap_id", "swap_id"),
+        Index("uq_outbound_execution_arn", "execution_arn", unique=True,
+              postgresql_where=text("execution_arn IS NOT NULL")),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -643,6 +645,9 @@ class OutboundMessage(SQLModel, table=True):
     state_machine_arn: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     execution_name: Optional[str] = Field(default=None, max_length=80)
     execution_input: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Resultado autoritativo de StartExecution; no forma parte de la intención
+    # inmutable y se fija únicamente al completar un claim STEP_FUNCTIONS.
+    execution_arn: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     swap_id: Optional[str] = Field(default=None)
     lease_owner: Optional[str] = Field(default=None)
     claim_token: Optional[str] = Field(default=None)
@@ -651,7 +656,7 @@ class OutboundMessage(SQLModel, table=True):
     completed_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
-    # PENDING / PUBLISHED / FAILED
+    # PENDING / CLAIMED / PUBLISHED / STARTED / FAILED
     status: str = Field(index=True, nullable=False)
 
     attempt_count: int = Field(default=0, nullable=False)

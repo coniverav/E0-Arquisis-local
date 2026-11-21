@@ -41,7 +41,12 @@ def add_broker(session, *, kind="offer", cycle="cycle-e3026", expires_at=None):
 def test_business_and_outbox_commit_are_atomic():
     cycle_id = f"e3026-{uuid4()}"
     with Session(engine) as session:
-        session.add(Cycle(cycle_id=cycle_id))
+        session.add(
+            Cycle(
+                cycle_id=cycle_id,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
         row = add_broker(session, cycle=cycle_id)
         saved_id = row.id
         session.rollback()
@@ -50,7 +55,12 @@ def test_business_and_outbox_commit_are_atomic():
         assert session.get(OutboundMessage, saved_id) is None
 
     with Session(engine) as session:
-        session.add(Cycle(cycle_id=cycle_id))
+        session.add(
+            Cycle(
+                cycle_id=cycle_id,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
         row = add_broker(session, cycle=cycle_id)
         saved_id = row.id
         session.commit()

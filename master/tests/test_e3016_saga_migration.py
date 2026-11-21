@@ -36,7 +36,7 @@ def test_additive_saga_migration_preserves_e2_swap(monkeypatch):
         alembic_config = Config(
             str(Path(__file__).resolve().parents[1] / "alembic.ini")
         )
-        command.upgrade(alembic_config, "e2073directoffer")
+        command.upgrade(alembic_config, "e3026outboxclaims")
 
         old_idpk = str(uuid4())
         with isolated_engine.begin() as connection:

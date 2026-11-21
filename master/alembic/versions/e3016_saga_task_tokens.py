@@ -1,7 +1,7 @@
 """Persistencia durable de sagas y callbacks de Step Functions.
 
 Revision ID: e3016sagatokens
-Revises: e2073directoffer
+Revises: e3026outboxclaims
 """
 
 from alembic import op
@@ -10,7 +10,7 @@ import sqlmodel
 
 
 revision = "e3016sagatokens"
-down_revision = "e2073directoffer"
+down_revision = "e3026outboxclaims"
 branch_labels = None
 depends_on = None
 

@@ -143,3 +143,23 @@ Los secretos se reciben como ARN mediante parámetros CloudFormation `NoEcho`. C
 La validación aprobó **18/18 pruebas** de CDK, ASL, configuración, IAM y protección del logging. También pasaron la compilación Python, `git diff --check` y `cdk synth EnergySharkDev-Sagas`. La síntesis se ejecutó localmente sin credenciales ni despliegue; solo se observó una advertencia no bloqueante porque la instalación local de `npx` disponible utiliza Node 20, ya fuera de soporte para la CLI actual.
 
 La implementación quedó en la PR Backend **#104**, commit `824ae43`, dirigida a `feat/e3-015-018-saga-foundation`. No se ejecutó `cdk deploy`, no se modificó producción y la asociación efectiva del instance profile a EC2 continúa pendiente del despliegue IaC.
+
+---
+
+# Cliente Lambda Wallet y callbacks durables
+
+### Prompt relevante
+
+> "Implementa E3-022 y E3-023 de EnergyShark, respetando el enunciado E3 y AD7. Implementa el cliente Lambda para Wallet, usando X-Api-Key desde Secrets Manager, claves de idempotencia estables, manejo de 200/202, 429 con Retry-After, reintentos 5xx con backoff y límites de cuota. Implementa la persistencia durable y correlación del task token antes de invocar Wallet, contemplando la carrera en que el evento llega antes de la respuesta HTTP."
+
+### Resumen de la respuesta y utilidad
+
+Se revisó el `develop` actualizado y se comprobó que las dependencias de persistencia, migración, ASL, Lambdas e IAM habían quedado integradas entre ramas feature, pero todavía no estaban en `develop`. La nueva rama partió del head actual e incorporó esos commits una sola vez. La migración de task tokens se encadenó al head vigente del outbox unificado para evitar dos heads de Alembic.
+
+El cliente Lambda obtiene la configuración Wallet mediante Secrets Manager y envía `X-Api-Key` sin registrarla. Cada escritura exige una `Idempotency-Key` recibida desde la operación y la conserva en timeouts, HTTP 429 y respuestas 5xx. Un HTTP 202 solo representa recepción; un HTTP 200 puede recuperar un estado ya conocido. Los errores 401, 404 y `IDEMPOTENCY_MISMATCH` se clasifican como permanentes. Los cupos de 120 escrituras y 300 lecturas por minuto se coordinan mediante la tabla PostgreSQL ya existente, incluida la propagación de `Retry-After` entre instancias.
+
+Para los pasos con callback, la Lambda guarda y confirma el task token, la ejecución, el rol y las claves `idpk`/`swapId` antes de reservar cuota o abrir la conexión HTTP. Un replay de un token ya completado no vuelve a llamar a Wallet. La prueba de carrera usa una segunda sesión PostgreSQL para simular que el evento Wallet encuentra y completa el token mientras la respuesta HTTP todavía está pendiente.
+
+El artefacto común de las Lambdas pasó a una imagen reproducible de Python 3.12 con `psycopg` fijado. Se comprobó localmente la construcción e importación de esa imagen. La validación incluyó **632 pruebas y 3 subtests de Master**, **160 pruebas y 12 subtests de Connector**, **26 pruebas de CDK/Lambda** y **8 pruebas focalizadas** de migración, cuota, persistencia y carrera. También pasaron `alembic upgrade head`, `alembic check`, la síntesis CDK y `git diff --check`, usando PostgreSQL temporal aislado.
+
+Los cambios quedaron en la PR Backend **#109**, con los commits `253688a` y `24f928c`. No se desplegó AWS ni se activaron sagas; el feature flag seller permanece desactivado por defecto. Antes del despliegue falta resolver la conectividad privada entre Lambda y PostgreSQL, alinear el input seller actual con el ASL e implementar el relay de callbacks posterior.

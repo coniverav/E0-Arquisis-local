@@ -183,3 +183,25 @@ El flujo quedó protegido por `E3_SAGA_CALLBACKS_ENABLED=false` tanto en Master/
 La validación aprobó **637 pruebas y 3 subtests de Master**, **167 pruebas y 12 subtests de Connector**, **23 regresiones focalizadas** de ledger, replay y task tokens, y **6 pruebas de CDK/IAM**. También pasaron `alembic check`, ambos Docker Compose, `git diff --check` y la construcción local de la imagen Connector con `boto3`. Todo se ejecutó con PostgreSQL temporal aislado y servicios AWS simulados; no hubo despliegue ni conexión a producción.
 
 Los cambios quedaron en la PR Backend **#111**, commit `5f49cd7`, dirigida a `feat/e3-015-023-wallet-lambda`. Antes de activar el flag falta desplegar las máquinas Standard, asociar el instance profile a EC2 y validar el callback real en AWS.
+
+---
+
+# Relays confiables de RabbitMQ y Step Functions
+
+### Prompt relevante
+
+> "Implementa E3-029, E3-030 y E3-031 de EnergyShark, respetando el enunciado E3 y AD8. Implementa el relay RabbitMQ con publisher confirms, el relay StartExecution con nombre basado en idpk y reutiliza claims, leases, fencing y SKIP LOCKED para varios relays. Separa BROKER y STEP_FUNCTIONS, agrega pruebas y mantén los feature flags apagados."
+
+### Resumen de la respuesta y utilidad
+
+La implementación partió del `origin/develop` actualizado, que ya contenía el outbox unificado y los claims concurrentes de E3-025/026. Se comprobó que la infraestructura de E3-019–021 todavía no forma parte de `develop`; esto no impide probar localmente los relays apagados, pero sí impide activarlos hasta integrar las máquinas y ampliar el rol del Connector con `states:DescribeExecution`.
+
+El relay Broker reclama únicamente filas `BROKER`, publica el envelope persistido con su `msgId` e `idpk` originales y exige un publisher confirm `Basic.Ack` antes de marcarlo como `PUBLISHED`. Un NACK, canal cerrado o confirmación perdida deja la intención recuperable con backoff. El nuevo camino conserva cuotas, vigencia y orden de ofertas, además del estado observable de `negotiation-report`. El publicador E2 y el relay nuevo son alternativas excluyentes controladas por un flag para evitar doble despacho durante el cutover.
+
+El relay de sagas reclama solo filas `STEP_FUNCTIONS` y llama `StartExecution` usando `execution_name = idpk` y el input serializado almacenado. Si AWS informa `ExecutionAlreadyExists`, deriva el ARN y usa `DescribeExecution` para adoptar únicamente una ejecución con la misma máquina, nombre e input. Master persiste el ARN confirmado y rechaza un ARN que no corresponda a la intención original.
+
+Ambos relays reutilizan `SELECT FOR UPDATE SKIP LOCKED`, leases y claim tokens con fencing. Las pruebas verifican lotes disjuntos entre workers, recuperación de leases, callbacks tardíos rechazados, reintentos con identidades estables y separación estricta de destinos. Los flags `E3_BROKER_OUTBOX_RELAY_ENABLED` y `E3_SAGA_OUTBOX_RELAY_ENABLED` permanecen en `false`.
+
+La validación aprobó **629 pruebas y 3 subtests de Master** y **167 pruebas y 12 subtests de Connector**. Después del endurecimiento final aprobaron además **34 pruebas focalizadas de Master** y **7 del Connector**. También pasaron `alembic upgrade head`, `alembic check`, una actualización desde el head previo conservando una fila sintética, ambos Docker Compose, la construcción/importación de la imagen Connector y `git diff --check`. No se accedió a AWS ni RabbitMQ reales.
+
+Los cambios quedaron en la PR Backend **#112**, commit `12d2982`, dirigida a `develop`. Antes de activar los relays sigue pendiente integrar E3-019–021, conceder `states:DescribeExecution` con mínimo privilegio y ejecutar un cutover coordinado que no mantenga simultáneamente el publicador E2 y el relay Broker.

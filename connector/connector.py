@@ -26,6 +26,7 @@ from protocol.outbound import (
     select_outbound_destination,
 )
 from protocol.routing import select_master_url
+from saga_callbacks import handle_wallet_saga_callback
 
 import aio_pika
 import httpx
@@ -52,6 +53,10 @@ MASTER_OUTBOUND_DISPATCH_URL = os.getenv(
     "MASTER_OUTBOUND_DISPATCH_URL",
     f"{MASTER_OUTBOUND_AUDIT_URL}/dispatch",
 )
+MASTER_SAGA_CALLBACK_RESULT_URL = os.getenv(
+    "MASTER_SAGA_CALLBACK_RESULT_URL",
+    "http://master:8000/internal/saga-callbacks/result",
+)
 
 OUTBOUND_POLL_SECONDS = float(
     os.getenv(
@@ -73,6 +78,15 @@ RABBITMQ_CENTRAL_ROUTING_KEY = os.environ["RABBITMQ_CENTRAL_ROUTING_KEY"]
 HEARTBEAT = Path("/tmp/energyshark_connector_heartbeat")
 
 
+class MasterForwardResult(str):
+    """Compatible con los strings históricos y conserva JSON interno seguro."""
+
+    def __new__(cls, value: str, payload: dict | None = None):
+        instance = super().__new__(cls, value)
+        instance.payload = payload
+        return instance
+
+
 async def heartbeat() -> None:
     """Mantiene evidencia de que el proceso principal sigue vivo para HEALTHCHECK."""
     while True:
@@ -90,10 +104,17 @@ async def forward_to_master(
         response = await client.post(url, json=payload)
     except httpx.HTTPError as exc:
         logger.warning("master no disponible: %s", exc)
-        return "retry"
+        return MasterForwardResult("retry")
 
     if 200 <= response.status_code < 300:
-        return "ack"
+        try:
+            response_payload = response.json()
+        except (ValueError, AttributeError):
+            response_payload = None
+        return MasterForwardResult(
+            "ack",
+            response_payload if isinstance(response_payload, dict) else None,
+        )
 
     # Un 4xx indica que el JSON recibido no cumple el contrato esperado.
     # Reencolarlo infinitamente solo bloquearía la cola.
@@ -103,10 +124,10 @@ async def forward_to_master(
             response.status_code,
             response.text[:500],
         )
-        return "drop"
+        return MasterForwardResult("drop")
 
     logger.warning("master respondió %s; se reintentará", response.status_code)
-    return "retry"
+    return MasterForwardResult("retry")
 
 def audit_text(payload: dict | None, key: str) -> str | None:
     #La metadata inválida no debe impedir conservar el mensaje original.
@@ -671,6 +692,16 @@ async def consume_forever() -> None:
                             )
 
                             if result == "ack":
+                                callback_result = await handle_wallet_saga_callback(
+                                    client,
+                                    protocol_payload=payload,
+                                    master_payload=getattr(result, "payload", None),
+                                    result_url=MASTER_SAGA_CALLBACK_RESULT_URL,
+                                )
+                                if callback_result == "retry":
+                                    await message.reject(requeue=True)
+                                    await asyncio.sleep(HTTP_RETRY_SECONDS)
+                                    continue
                                 await complete_successful_message(
                                     handling=handling,
                                     message=message,

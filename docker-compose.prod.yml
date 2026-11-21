@@ -63,6 +63,7 @@ services:
       WALLET_BASE_URL: ${WALLET_BASE_URL}
       WALLET_JWKS_URL: ${WALLET_JWKS_URL:-}
       WALLET_API_KEY: ${WALLET_API_KEY}
+      E3_SAGA_CALLBACKS_ENABLED: ${E3_SAGA_CALLBACKS_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -103,6 +104,7 @@ services:
       WALLET_BASE_URL: ${WALLET_BASE_URL}
       WALLET_JWKS_URL: ${WALLET_JWKS_URL:-}
       WALLET_API_KEY: ${WALLET_API_KEY}
+      E3_SAGA_CALLBACKS_ENABLED: ${E3_SAGA_CALLBACKS_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -179,6 +181,9 @@ services:
       HTTP_RETRY_SECONDS: ${HTTP_RETRY_SECONDS}
       HTTP_TIMEOUT_SECONDS: ${HTTP_TIMEOUT_SECONDS}
       MASTER_OUTBOUND_DISPATCH_URL: ${MASTER_OUTBOUND_DISPATCH_URL}
+      MASTER_SAGA_CALLBACK_RESULT_URL: ${MASTER_SAGA_CALLBACK_RESULT_URL:-http://master:8000/internal/saga-callbacks/result}
+      E3_SAGA_CALLBACKS_ENABLED: ${E3_SAGA_CALLBACKS_ENABLED:-false}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-}
       OUTBOUND_POLL_SECONDS: ${OUTBOUND_POLL_SECONDS}
     depends_on:
       master:

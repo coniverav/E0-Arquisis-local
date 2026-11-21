@@ -65,6 +65,7 @@ from ..services.negotiation_payments import (
 from ..services.wallet_service import WalletService
 from ..services.seller_bid_accepted import enqueue_bid_accepted_after_swap_proposed
 from ..services.trade_events import process_wallet_fact
+from ..services.saga_callbacks import callbacks_enabled, resolve_wallet_callback
 
 
 SWAP_EVENT_TYPES = {
@@ -114,6 +115,29 @@ def _decimal(value) -> Decimal:
     Decimal(str(...)) conserva mejor el valor recibido.
     """
     return Decimal(str(value))
+
+
+def _with_saga_callback(
+    session: Session,
+    payload: ProtocolMessageIn,
+    response: dict,
+) -> dict:
+    """Resuelve el callback después del commit del efecto Wallet."""
+
+    if not callbacks_enabled() or payload.type not in SWAP_EVENT_TYPES:
+        return response
+    callback = resolve_wallet_callback(
+        session,
+        envelope_idpk=str(payload.idpk),
+        event_type=payload.type,
+        data=payload.data,
+        rejection_reason=(getattr(payload, "reason", None)
+                          if payload.type == "swap-rejected" else None),
+    )
+    if callback is not None:
+        session.commit()
+        response["sagaCallback"] = callback
+    return response
 
 
 def _require_cycle_id(
@@ -235,11 +259,11 @@ def ingest_protocol_message(
 
                 session.commit()
 
-                return {
+                return _with_saga_callback(session, payload, {
                     "status": "duplicate" if is_same_operation else "not_processed",
                     "type": payload.type,
                     "cycleId": payload.cycleId,
-                }
+                })
 
         # Si llega un mensaje asociado a un ciclo antes de recibir
         # su status-statement, se solicita el estado faltante.
@@ -763,12 +787,12 @@ def ingest_protocol_message(
                         metrics_cycle_id,
                     )
 
-        return {
+        return _with_saga_callback(session, payload, {
             "status": response_status,
             "type": payload.type,
             "cycleId": payload.cycleId,
             "reason": audit_reason,
-        }
+        })
 
     except Exception as exc:
         session.rollback()

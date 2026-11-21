@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any, Optional
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Numeric, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Numeric, UniqueConstraint, CheckConstraint, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -593,7 +593,7 @@ class MarketEventClaim(SQLModel, table=True):
 
 class OutboundMessage(SQLModel, table=True):
     """
-    Evidencia e intención durable de publicaciones hacia RabbitMQ.
+    Intención durable para RabbitMQ y AWS Step Functions (ADR-008).
 
     Esta tabla sirve como base para el mecanismo outbox definido en AD1.
     """
@@ -601,10 +601,20 @@ class OutboundMessage(SQLModel, table=True):
     __tablename__ = "outbound_messages"
 
     __table_args__ = (
-        UniqueConstraint(
-            "msg_id",
-            name="uq_outbound_message_msg_id",
+        UniqueConstraint("msg_id", name="uq_outbound_message_msg_id"),
+        CheckConstraint("delivery_kind IN ('BROKER', 'STEP_FUNCTIONS')",
+                        name="ck_outbound_delivery_kind"),
+        CheckConstraint(
+            "delivery_kind <> 'STEP_FUNCTIONS' OR "
+            "(state_machine_arn IS NOT NULL AND execution_name IS NOT NULL AND "
+            "execution_name = idpk AND execution_input IS NOT NULL AND message_type = 'SAGA_START')",
+            name="ck_outbound_step_destination",
         ),
+        Index("uq_outbound_saga_execution", "state_machine_arn", "execution_name",
+              unique=True, postgresql_where=text("delivery_kind = 'STEP_FUNCTIONS'")),
+        Index("ix_outbound_relay_claim", "status", "available_at", "lease_until", "id",
+              postgresql_where=text("dispatch_required = true")),
+        Index("ix_outbound_swap_id", "swap_id"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -627,6 +637,19 @@ class OutboundMessage(SQLModel, table=True):
     routing_key: Optional[str] = Field(default=None)
 
     exchange_name: str = Field(default="energy.x", nullable=False)
+
+    # E3-025/026: destinos y correlaciones para broker o StartExecution.
+    delivery_kind: str = Field(default="BROKER", nullable=False)
+    state_machine_arn: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    execution_name: Optional[str] = Field(default=None, max_length=80)
+    execution_input: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    swap_id: Optional[str] = Field(default=None)
+    lease_owner: Optional[str] = Field(default=None)
+    claim_token: Optional[str] = Field(default=None)
+    lease_until: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    completed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
     # PENDING / PUBLISHED / FAILED
     status: str = Field(index=True, nullable=False)

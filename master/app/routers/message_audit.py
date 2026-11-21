@@ -263,6 +263,9 @@ def list_outbound_dispatch(
         .where(
             OutboundMessage.dispatch_required.is_(True)
         )
+        # El dispatcher E2 nunca debe interpretar una intención de saga como
+        # envelope AMQP. El relay E3 reclama STEP_FUNCTIONS por otra ruta.
+        .where(OutboundMessage.delivery_kind == "BROKER")
         .where(
             OutboundMessage.status.in_(
                 [

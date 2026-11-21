@@ -159,9 +159,15 @@ def test_crash_after_commit_new_process_can_claim_original_intent(seller_config,
         relay_session.commit()
     with Session(engine) as session:
         assert not finish_claim(session, row_id=stored[0], claim_token=token,
-                                outcome='STARTED', now=moment + timedelta(seconds=32))
+                                outcome='STARTED', execution_arn=(
+                                    'arn:aws:states:us-east-1:123456789012:execution:'
+                                    f'energyshark-seller-e3:{key}'
+                                ), now=moment + timedelta(seconds=32))
         assert finish_claim(session, row_id=stored[0], claim_token=next_token,
-                            outcome='STARTED', now=moment + timedelta(seconds=32))
+                            outcome='STARTED', execution_arn=(
+                                'arn:aws:states:us-east-1:123456789012:execution:'
+                                f'energyshark-seller-e3:{key}'
+                            ), now=moment + timedelta(seconds=32))
         session.commit()
     with Session(engine) as session:
         row = session.get(OutboundMessage, stored[0])

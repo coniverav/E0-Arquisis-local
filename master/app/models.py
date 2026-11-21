@@ -4,7 +4,17 @@ from datetime import datetime
 from typing import Any, Optional
 from decimal import Decimal
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, Numeric, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -911,6 +921,116 @@ class SwapRecord(SQLModel, table=True):
     proposal_last_error: Optional[str] = Field(default=None)
 
     settled_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class SagaExecution(SQLModel, table=True):
+    """Correlación durable de una ejecución Standard con una operación local."""
+
+    __tablename__ = "saga_executions"
+
+    __table_args__ = (
+        UniqueConstraint("idpk", name="uq_saga_executions_idpk"),
+        UniqueConstraint("swap_id", name="uq_saga_executions_swap_id"),
+        UniqueConstraint(
+            "execution_arn",
+            name="uq_saga_executions_execution_arn",
+        ),
+        Index(
+            "ix_saga_executions_status_timeout_at",
+            "status",
+            "timeout_at",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # También es el nombre estable usado por StartExecution.
+    idpk: str = Field(index=True, nullable=False)
+    swap_id: Optional[str] = Field(default=None, index=True)
+    cycle_id: Optional[str] = Field(default=None, index=True)
+    # SELLER / BUYER desde la perspectiva de nuestra ciudad.
+    role: str = Field(index=True, nullable=False)
+    execution_arn: Optional[str] = Field(default=None, index=True)
+    # PENDING_START / RUNNING / WAITING / SETTLED / REJECTED /
+    # COMPENSATED / TIMED_OUT / FAILED.
+    status: str = Field(default="PENDING_START", index=True, nullable=False)
+    timeout_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    updated_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    terminal_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+
+class SagaTaskToken(SQLModel, table=True):
+    """Token de callback y claves que permiten reanudar una saga sin adivinar."""
+
+    __tablename__ = "saga_task_tokens"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "task_token_hash",
+            name="uq_saga_task_tokens_token_hash",
+        ),
+        Index(
+            "ix_saga_task_tokens_saga_status",
+            "saga_execution_id",
+            "status",
+        ),
+        Index(
+            "ix_saga_task_tokens_status_correlation_idpk",
+            "status",
+            "correlation_idpk",
+        ),
+        Index(
+            "ix_saga_task_tokens_status_swap_id",
+            "status",
+            "swap_id",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    saga_execution_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("saga_executions.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    # El valor completo es necesario para SendTaskSuccess/Failure, pero nunca
+    # debe registrarse en logs ni exponerse por API.
+    task_token: str = Field(
+        sa_column=Column(Text, nullable=False),
+        repr=False,
+        exclude=True,
+    )
+    task_token_hash: str = Field(
+        sa_column=Column(String(64), nullable=False)
+    )
+    # PROPOSAL / TERMINAL, u otra espera explícita de la definición ASL.
+    wait_type: str = Field(index=True, nullable=False)
+    correlation_idpk: Optional[str] = Field(default=None, index=True)
+    swap_id: Optional[str] = Field(default=None, index=True)
+    # WAITING / SUCCEEDED / FAILED / EXPIRED / SUPERSEDED.
+    status: str = Field(default="WAITING", index=True, nullable=False)
+    timeout_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    callback_idpk: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    completed_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )

@@ -1,0 +1,1 @@
+# Sin dependencias externas: el artefacto usa únicamente la biblioteca estándar.

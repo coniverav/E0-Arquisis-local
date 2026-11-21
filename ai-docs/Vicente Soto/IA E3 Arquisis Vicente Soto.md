@@ -163,3 +163,23 @@ Para los pasos con callback, la Lambda guarda y confirma el task token, la ejecu
 El artefacto común de las Lambdas pasó a una imagen reproducible de Python 3.12 con `psycopg` fijado. Se comprobó localmente la construcción e importación de esa imagen. La validación incluyó **632 pruebas y 3 subtests de Master**, **160 pruebas y 12 subtests de Connector**, **26 pruebas de CDK/Lambda** y **8 pruebas focalizadas** de migración, cuota, persistencia y carrera. También pasaron `alembic upgrade head`, `alembic check`, la síntesis CDK y `git diff --check`, usando PostgreSQL temporal aislado.
 
 Los cambios quedaron en la PR Backend **#109**, con los commits `253688a` y `24f928c`. No se desplegó AWS ni se activaron sagas; el feature flag seller permanece desactivado por defecto. Antes del despliegue falta resolver la conectividad privada entre Lambda y PostgreSQL, alinear el input seller actual con el ASL e implementar el relay de callbacks posterior.
+
+---
+
+# Callback de Step Functions desde Connector
+
+### Prompt relevante
+
+> "Implementa E3-024 — Callback Step Functions desde Connector, respetando el enunciado E3, AD5 y AD7. Al recibir eventos Wallet, el Connector debe aplicar el evento al ledger exactamente una vez, localizar el task token por idpk o swapId y reanudar la ejecución mediante SendTaskSuccess o SendTaskFailure. Debe tolerar duplicados, eventos tardíos, desorden y fallas de callback sin corromper el ledger ni la saga."
+
+### Resumen de la respuesta y utilidad
+
+La implementación se realizó en una rama apilada sobre E3-022/023 para reutilizar la persistencia durable y el IAM ya declarados. Master conserva la responsabilidad económica: primero procesa el evento Wallet, confirma el ledger y la auditoría, y solo entonces resuelve el token pendiente. La correlación usa `idpk` como clave preferida y `swapId` como fallback, pero además exige que coincidan el rol seller/buyer y el tipo de espera proposal/terminal; una coincidencia ambigua no reanuda una ejecución al azar.
+
+Connector conserva la respuesta JSON interna de Master sin romper los resultados históricos `ack`, `drop` y `retry`. Con el callback habilitado, entrega a Step Functions el resultado de negocio mediante `SendTaskSuccess`; también soporta `SendTaskFailure` para fallas técnicas. El resultado se registra durablemente en Master usando el hash del token antes de confirmar el mensaje a RabbitMQ. Una falla transitoria de AWS o del registro interno provoca redelivery; el replay vuelve a encontrar el token pendiente sin repetir el asiento del ledger. Los tokens vencidos o ya terminados no reabren la saga, y nunca se escriben tokens completos en logs.
+
+El flujo quedó protegido por `E3_SAGA_CALLBACKS_ENABLED=false` tanto en Master/Master2 como en Connector. También se añadió la región AWS de ejecución y se mantuvo el uso del instance profile, sin credenciales estáticas. Con el flag apagado, la ruta E2 no ejecuta consultas ni callbacks adicionales.
+
+La validación aprobó **637 pruebas y 3 subtests de Master**, **167 pruebas y 12 subtests de Connector**, **23 regresiones focalizadas** de ledger, replay y task tokens, y **6 pruebas de CDK/IAM**. También pasaron `alembic check`, ambos Docker Compose, `git diff --check` y la construcción local de la imagen Connector con `boto3`. Todo se ejecutó con PostgreSQL temporal aislado y servicios AWS simulados; no hubo despliegue ni conexión a producción.
+
+Los cambios quedaron en la PR Backend **#111**, commit `5f49cd7`, dirigida a `feat/e3-015-023-wallet-lambda`. Antes de activar el flag falta desplegar las máquinas Standard, asociar el instance profile a EC2 y validar el callback real en AWS.

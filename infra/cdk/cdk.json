@@ -4,13 +4,28 @@
     "environment": "dev",
     "environments": {
       "dev": {
-        "stackPrefix": "EnergySharkDev"
+        "stackPrefix": "EnergySharkDev",
+        "sellerSagaTimeoutSeconds": 1800,
+        "buyerSagaTimeoutSeconds": 1800,
+        "lambdaTimeoutSeconds": 25,
+        "lambdaMemoryMb": 256,
+        "logRetentionDays": 7
       },
       "staging": {
-        "stackPrefix": "EnergySharkStaging"
+        "stackPrefix": "EnergySharkStaging",
+        "sellerSagaTimeoutSeconds": 1800,
+        "buyerSagaTimeoutSeconds": 1800,
+        "lambdaTimeoutSeconds": 25,
+        "lambdaMemoryMb": 256,
+        "logRetentionDays": 14
       },
       "prod": {
-        "stackPrefix": "EnergySharkProd"
+        "stackPrefix": "EnergySharkProd",
+        "sellerSagaTimeoutSeconds": 1800,
+        "buyerSagaTimeoutSeconds": 1800,
+        "lambdaTimeoutSeconds": 25,
+        "lambdaMemoryMb": 256,
+        "logRetentionDays": 30
       }
     }
   }

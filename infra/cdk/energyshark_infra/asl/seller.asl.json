@@ -1,0 +1,514 @@
+{
+  "Comment": "Saga Standard del vendedor EnergyShark",
+  "StartAt": "ReserveEnergy",
+  "States": {
+    "ReserveEnergy": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReserveSellerFunctionArn}",
+        "Payload": {
+          "bidIdpk.$": "$.idpk",
+          "cycleId.$": "$.cycleId",
+          "offerId.$": "$.offerId",
+          "quantity.$": "$.quantity",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": "$.reservation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["Seller.InsufficientEnergy"],
+          "Next": "RejectBid"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SellerFailed"
+        }
+      ],
+      "Next": "ProposeSwapAndWait"
+    },
+    "RejectBid": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${RejectSellerBidFunctionArn}",
+        "Payload": {
+          "bidIdpk.$": "$.idpk",
+          "reason": "QUANTITY_UNAVAILABLE",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Next": "FinalizeSellerRejected"
+    },
+    "ProposeSwapAndWait": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${SellerProposalFunctionArn}",
+        "Payload": {
+          "taskToken.$": "$$.Task.Token",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "correlationIdpk.$": "$.swap.idempotencyKey",
+          "idempotencyKey.$": "$.swap.idempotencyKey",
+          "operation": "PROPOSE",
+          "swap.$": "$.swap",
+          "timeoutAt.$": "$.timeoutAt"
+        }
+      },
+      "ResultPath": "$.proposal",
+      "TimeoutSecondsPath": "$.timeouts.proposalSeconds",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "ReconcileProposal"
+        },
+        {
+          "ErrorEquals": [
+            "WalletIdempotencyMismatch",
+            "WalletUnauthorized"
+          ],
+          "Next": "SellerFailed"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReconcileProposal"
+        }
+      ],
+      "Next": "ProposalOutcome"
+    },
+    "ProposalOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.proposal.outcome",
+          "StringEquals": "PROPOSED",
+          "Next": "UseProposalCallback"
+        },
+        {
+          "Variable": "$.proposal.outcome",
+          "StringEquals": "REJECTED",
+          "Next": "CompensateReservation"
+        }
+      ],
+      "Default": "ReconcileProposal"
+    },
+    "ReconcileProposal": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReconcileSellerSwapFunctionArn}",
+        "Payload": {
+          "idempotencyKey.$": "$.swap.idempotencyKey",
+          "operation": "PROPOSE",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": "$.proposalReconciliation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SellerReconciliationFailed"
+        }
+      ],
+      "Next": "ProposalReconciliationOutcome"
+    },
+    "ProposalReconciliationOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.proposalReconciliation.Payload.status",
+          "StringEquals": "PROPOSED",
+          "Next": "UseProposalReconciliation"
+        },
+        {
+          "Variable": "$.proposalReconciliation.Payload.status",
+          "StringEquals": "SETTLED",
+          "Next": "FinalizeSellerSettled"
+        },
+        {
+          "Variable": "$.proposalReconciliation.Payload.status",
+          "StringEquals": "REJECTED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.proposalReconciliation.Payload.status",
+          "StringEquals": "EXPIRED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.proposalReconciliation.Payload.status",
+          "StringEquals": "CANCELLED",
+          "Next": "CompensateReservation"
+        }
+      ],
+      "Default": "SellerReconciliationFailed"
+    },
+    "UseProposalCallback": {
+      "Type": "Pass",
+      "Parameters": {
+        "swapId.$": "$.proposal.swapId",
+        "expiresAt.$": "$.proposal.expiresAt"
+      },
+      "ResultPath": "$.proposalDetails",
+      "Next": "PublishBidAccepted"
+    },
+    "UseProposalReconciliation": {
+      "Type": "Pass",
+      "Parameters": {
+        "swapId.$": "$.proposalReconciliation.Payload.swapId",
+        "expiresAt.$": "$.proposalReconciliation.Payload.expiresAt"
+      },
+      "ResultPath": "$.proposalDetails",
+      "Next": "PublishBidAccepted"
+    },
+    "PublishBidAccepted": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${PublishBidAcceptedFunctionArn}",
+        "Payload": {
+          "bidIdpk.$": "$.idpk",
+          "cycleId.$": "$.cycleId",
+          "swapId.$": "$.proposalDetails.swapId",
+          "expiresAt.$": "$.proposalDetails.expiresAt",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReconcileSellerSwap"
+        }
+      ],
+      "Next": "WaitForSellerTerminal"
+    },
+    "WaitForSellerTerminal": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${RegisterCallbackFunctionArn}",
+        "Payload": {
+          "taskToken.$": "$$.Task.Token",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "swapId.$": "$.proposalDetails.swapId",
+          "waitType": "TERMINAL",
+          "timeoutAt.$": "$.timeoutAt"
+        }
+      },
+      "ResultPath": "$.terminalEvent",
+      "TimeoutSecondsPath": "$.timeouts.terminalSeconds",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "ReconcileSellerSwap"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReconcileSellerSwap"
+        }
+      ],
+      "Next": "TerminalOutcome"
+    },
+    "TerminalOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.terminalEvent.outcome",
+          "StringEquals": "SETTLED",
+          "Next": "FinalizeSellerSettled"
+        },
+        {
+          "Variable": "$.terminalEvent.outcome",
+          "StringEquals": "REJECTED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.terminalEvent.outcome",
+          "StringEquals": "EXPIRED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.terminalEvent.outcome",
+          "StringEquals": "CANCELLED",
+          "Next": "CompensateReservation"
+        }
+      ],
+      "Default": "ReconcileSellerSwap"
+    },
+    "ReconcileSellerSwap": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReconcileSellerSwapFunctionArn}",
+        "Payload": {
+          "operation": "GET_SWAP",
+          "swapId.$": "$.proposalDetails.swapId",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": "$.terminalReconciliation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SellerReconciliationFailed"
+        }
+      ],
+      "Next": "TerminalReconciliationOutcome"
+    },
+    "TerminalReconciliationOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.terminalReconciliation.Payload.status",
+          "StringEquals": "SETTLED",
+          "Next": "FinalizeSellerSettled"
+        },
+        {
+          "Variable": "$.terminalReconciliation.Payload.status",
+          "StringEquals": "PROPOSED",
+          "Next": "CancelProposedSwap"
+        },
+        {
+          "Variable": "$.terminalReconciliation.Payload.status",
+          "StringEquals": "REJECTED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.terminalReconciliation.Payload.status",
+          "StringEquals": "EXPIRED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.terminalReconciliation.Payload.status",
+          "StringEquals": "CANCELLED",
+          "Next": "CompensateReservation"
+        }
+      ],
+      "Default": "SellerReconciliationFailed"
+    },
+    "CancelProposedSwap": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CancelSellerSwapFunctionArn}",
+        "Payload": {
+          "idempotencyKey.$": "$.swap.cancelIdempotencyKey",
+          "swapId.$": "$.proposalDetails.swapId",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": "$.cancellation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SellerReconciliationFailed"
+        }
+      ],
+      "Next": "CancellationOutcome"
+    },
+    "CancellationOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.cancellation.Payload.status",
+          "StringEquals": "SETTLED",
+          "Next": "FinalizeSellerSettled"
+        },
+        {
+          "Variable": "$.cancellation.Payload.status",
+          "StringEquals": "CANCELLED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.cancellation.Payload.status",
+          "StringEquals": "EXPIRED",
+          "Next": "CompensateReservation"
+        },
+        {
+          "Variable": "$.cancellation.Payload.status",
+          "StringEquals": "REJECTED",
+          "Next": "CompensateReservation"
+        }
+      ],
+      "Default": "SellerReconciliationFailed"
+    },
+    "CompensateReservation": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CompensateSellerFunctionArn}",
+        "Payload": {
+          "bidIdpk.$": "$.idpk",
+          "offerId.$": "$.offerId",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "SellerFailed"
+        }
+      ],
+      "Next": "SellerCompensated"
+    },
+    "FinalizeSellerSettled": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FinalizeSagaFunctionArn}",
+        "Payload": {
+          "role": "SELLER",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "status": "SETTLED"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Next": "SellerSettled"
+    },
+    "FinalizeSellerRejected": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FinalizeSagaFunctionArn}",
+        "Payload": {
+          "role": "SELLER",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "status": "REJECTED"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Next": "SellerRejected"
+    },
+    "SellerSettled": {
+      "Type": "Succeed"
+    },
+    "SellerRejected": {
+      "Type": "Succeed"
+    },
+    "SellerCompensated": {
+      "Type": "Succeed"
+    },
+    "SellerReconciliationFailed": {
+      "Type": "Fail",
+      "Error": "Seller.ReconciliationRequired",
+      "Cause": "Wallet no entregó evidencia suficiente para liquidar o liberar"
+    },
+    "SellerFailed": {
+      "Type": "Fail",
+      "Error": "Seller.SagaFailed",
+      "Cause": "La saga terminó sin un resultado económico inferido"
+    }
+  }
+}

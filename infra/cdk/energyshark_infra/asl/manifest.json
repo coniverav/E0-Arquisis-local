@@ -1,0 +1,14 @@
+{
+  "buyer": {
+    "definition": "buyer.asl.json",
+    "executionNamePath": "$.idpk",
+    "role": "BUYER",
+    "type": "STANDARD"
+  },
+  "seller": {
+    "definition": "seller.asl.json",
+    "executionNamePath": "$.idpk",
+    "role": "SELLER",
+    "type": "STANDARD"
+  }
+}

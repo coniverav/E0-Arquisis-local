@@ -1,0 +1,367 @@
+{
+  "Comment": "Saga Standard del comprador EnergyShark",
+  "StartAt": "ValidateSwapToken",
+  "States": {
+    "ValidateSwapToken": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ValidateBuyerTokenFunctionArn}",
+        "Payload": {
+          "expected.$": "$.expectedClaims",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "swapId.$": "$.swap.swapId",
+          "swapRecordId.$": "$.swapRecordId"
+        }
+      },
+      "ResultPath": "$.validation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "Buyer.InvalidToken",
+            "Buyer.ExpiredToken",
+            "Buyer.ClaimsMismatch"
+          ],
+          "Next": "SetInvalidTokenResult"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "BuyerFailed"
+        }
+      ],
+      "Next": "CheckBuyerDeadline"
+    },
+    "CheckBuyerDeadline": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${CheckBuyerDeadlineFunctionArn}",
+        "Payload": {
+          "closesAt.$": "$.closesAt",
+          "expiresAt.$": "$.swap.expiresAt",
+          "minimumRemainingSeconds.$": "$.timeouts.minimumRemainingSeconds",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": "$.deadline",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "BuyerFailed"
+        }
+      ],
+      "Next": "BuyerDeadlineOutcome"
+    },
+    "BuyerDeadlineOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.deadline.Payload.eligible",
+          "BooleanEquals": true,
+          "Next": "AcceptSwapAndWait"
+        }
+      ],
+      "Default": "SetDeadlineExpiredResult"
+    },
+    "AcceptSwapAndWait": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+      "Parameters": {
+        "FunctionName": "${BuyerAcceptanceFunctionArn}",
+        "Payload": {
+          "correlationIdpk.$": "$.swap.acceptIdempotencyKey",
+          "idempotencyKey.$": "$.swap.acceptIdempotencyKey",
+          "operation": "ACCEPT",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "swapId.$": "$.swap.swapId",
+          "swapRecordId.$": "$.swapRecordId",
+          "taskToken.$": "$$.Task.Token",
+          "timeoutAt.$": "$.timeoutAt"
+        }
+      },
+      "ResultPath": "$.acceptance",
+      "TimeoutSecondsPath": "$.timeouts.acceptSeconds",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "ReconcileBuyerSwap"
+        },
+        {
+          "ErrorEquals": ["WalletRejected"],
+          "Next": "SetWalletRejectedResult"
+        },
+        {
+          "ErrorEquals": [
+            "WalletIdempotencyMismatch",
+            "WalletUnauthorized",
+            "WalletNotFound"
+          ],
+          "Next": "BuyerFailed"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "ReconcileBuyerSwap"
+        }
+      ],
+      "Next": "BuyerAcceptanceOutcome"
+    },
+    "BuyerAcceptanceOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.acceptance.outcome",
+          "StringEquals": "SETTLED",
+          "Next": "SetBuyerSettledResult"
+        },
+        {
+          "Variable": "$.acceptance.outcome",
+          "StringEquals": "REJECTED",
+          "Next": "SetWalletRejectedResult"
+        },
+        {
+          "Variable": "$.acceptance.outcome",
+          "StringEquals": "EXPIRED",
+          "Next": "SetWalletRejectedResult"
+        },
+        {
+          "Variable": "$.acceptance.outcome",
+          "StringEquals": "CANCELLED",
+          "Next": "SetWalletRejectedResult"
+        }
+      ],
+      "Default": "ReconcileBuyerSwap"
+    },
+    "ReconcileBuyerSwap": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${ReconcileBuyerSwapFunctionArn}",
+        "Payload": {
+          "operation": "GET_SWAP",
+          "sagaExecutionId.$": "$.sagaExecutionId",
+          "swapId.$": "$.swap.swapId"
+        }
+      },
+      "ResultPath": "$.reconciliation",
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "WalletRetryable",
+            "WalletRateLimited"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 4,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "BuyerReconciliationFailed"
+        }
+      ],
+      "Next": "BuyerReconciliationOutcome"
+    },
+    "BuyerReconciliationOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.reconciliation.Payload.status",
+          "StringEquals": "SETTLED",
+          "Next": "SetBuyerSettledResult"
+        },
+        {
+          "Variable": "$.reconciliation.Payload.status",
+          "StringEquals": "REJECTED",
+          "Next": "SetReconciledRejectedResult"
+        },
+        {
+          "Variable": "$.reconciliation.Payload.status",
+          "StringEquals": "EXPIRED",
+          "Next": "SetReconciledRejectedResult"
+        },
+        {
+          "Variable": "$.reconciliation.Payload.status",
+          "StringEquals": "CANCELLED",
+          "Next": "SetReconciledRejectedResult"
+        },
+        {
+          "Variable": "$.reconciliation.Payload.status",
+          "StringEquals": "PROPOSED",
+          "Next": "SetBuyerTimedOutResult"
+        }
+      ],
+      "Default": "BuyerReconciliationFailed"
+    },
+    "SetInvalidTokenResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "REJECTED",
+        "reason": "INVALID_SWAP_TOKEN"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "SetDeadlineExpiredResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "REJECTED",
+        "reason": "DEADLINE_EXPIRED"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "SetWalletRejectedResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "REJECTED",
+        "reason": "WALLET_REJECTED"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "SetReconciledRejectedResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "REJECTED",
+        "reason": "WALLET_TERMINAL_STATE"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "SetBuyerTimedOutResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "TIMED_OUT",
+        "reason": "SWAP_STILL_PROPOSED_AFTER_TIMEOUT"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "SetBuyerSettledResult": {
+      "Type": "Pass",
+      "Result": {
+        "status": "SETTLED"
+      },
+      "ResultPath": "$.terminal",
+      "Next": "FinalizeBuyerTerminal"
+    },
+    "FinalizeBuyerTerminal": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "${FinalizeSagaFunctionArn}",
+        "Payload": {
+          "result.$": "$.terminal",
+          "role": "BUYER",
+          "sagaExecutionId.$": "$.sagaExecutionId"
+        }
+      },
+      "ResultPath": null,
+      "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "BuyerFailed"
+        }
+      ],
+      "Next": "BuyerTerminalOutcome"
+    },
+    "BuyerTerminalOutcome": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.terminal.status",
+          "StringEquals": "SETTLED",
+          "Next": "BuyerSettled"
+        },
+        {
+          "Variable": "$.terminal.status",
+          "StringEquals": "TIMED_OUT",
+          "Next": "BuyerTimedOut"
+        }
+      ],
+      "Default": "BuyerRejected"
+    },
+    "BuyerSettled": {
+      "Type": "Succeed"
+    },
+    "BuyerRejected": {
+      "Type": "Succeed"
+    },
+    "BuyerTimedOut": {
+      "Type": "Succeed"
+    },
+    "BuyerReconciliationFailed": {
+      "Type": "Fail",
+      "Error": "Buyer.ReconciliationRequired",
+      "Cause": "Wallet no entregó un estado autoritativo para el swap"
+    },
+    "BuyerFailed": {
+      "Type": "Fail",
+      "Error": "Buyer.SagaFailed",
+      "Cause": "La saga terminó sin inferir una liquidación"
+    }
+  }
+}

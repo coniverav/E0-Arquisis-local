@@ -27,14 +27,17 @@ class InfrastructureBaseTest(unittest.TestCase):
             "EnergySharkDev-Monitoring",
         )
 
-    def test_base_does_not_create_aws_resources(self) -> None:
+    def test_unmigrated_stack_boundaries_remain_empty(self) -> None:
         for stack in (
             self.stacks.existing,
-            self.stacks.sagas,
             self.stacks.monitoring,
         ):
             template = Template.from_stack(stack).to_json()
             self.assertEqual(template.get("Resources", {}), {})
+
+    def test_saga_stack_is_declared_separately(self) -> None:
+        template = Template.from_stack(self.stacks.sagas).to_json()
+        self.assertTrue(template.get("Resources"))
 
 
 if __name__ == "__main__":

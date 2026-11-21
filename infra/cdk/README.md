@@ -9,13 +9,13 @@ Se usa AWS CDK v2 con Python. La infraestructura E2 y monitoreo conservan límit
 - `stacks/existing_infrastructure.py`: recursos E2 existentes.
 - `stacks/sagas.py`: Step Functions Standard, Lambdas, logs e IAM.
 - `asl/`: definiciones seller/buyer versionadas.
-- `lambda_src/saga_task/`: artefacto común, sin dependencias externas.
+- `lambda_src/saga_task/`: imagen común reproducible para tareas de saga.
 - `stacks/monitoring.py`: futuras métricas, alarmas y paneles.
 - `tests/`: valida límites y ausencia de recursos en la base.
 
 ## Estado y ambientes
 
-Los recursos E2 no están importados ni administrados por estos stacks. El stack de sagas crea dos máquinas Standard, versiones con alias `live`, 13 Lambdas y roles mínimos. Los handlers fallan de forma segura hasta implementar los adaptadores Wallet y persistencia de las tareas posteriores.
+Los recursos E2 no están importados ni administrados por estos stacks. El stack de sagas crea dos máquinas Standard, versiones con alias `live`, 13 Lambdas y roles mínimos. Las tareas Wallet y de callbacks usan el adaptador durable; las demás fallan de forma segura hasta su implementación.
 
 `dev`, `staging` y `prod` parametrizan nombres, timeout total, memoria, timeout Lambda y retención de logs. Cuenta y región provienen de `CDK_DEFAULT_ACCOUNT` y `CDK_DEFAULT_REGION`; producción activa protección contra eliminación.
 

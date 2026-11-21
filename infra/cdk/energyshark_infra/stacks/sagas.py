@@ -193,9 +193,9 @@ class SagasStack(Stack):
             ),
         }
 
-    def _create_task_functions(self) -> dict[str, lambda_.Function]:
+    def _create_task_functions(self) -> dict[str, lambda_.DockerImageFunction]:
         source = Path(__file__).resolve().parents[2] / "lambda_src" / "saga_task"
-        functions: dict[str, lambda_.Function] = {}
+        functions: dict[str, lambda_.DockerImageFunction] = {}
         seen: set[str] = set()
 
         for task in SELLER_TASKS + BUYER_TASKS + SHARED_TASKS:
@@ -212,7 +212,7 @@ class SagasStack(Stack):
         self,
         task: SagaTask,
         source: Path,
-    ) -> lambda_.Function:
+    ) -> lambda_.DockerImageFunction:
         construct_name = "".join(part.title() for part in task.task_name.split("-"))
         function_name = f"energyshark-{self.settings.environment}-{task.task_name}"
         role = iam.Role(
@@ -232,6 +232,7 @@ class SagasStack(Stack):
 
         environment = {
             "ENERGYSHARK_ENV": self.settings.environment,
+            "CITY_ID": "KLD",
             "SAGA_TASK": task.task_name,
         }
         for secret_kind in task.secret_kinds:
@@ -246,15 +247,23 @@ class SagasStack(Stack):
                 )
             )
 
-        function = lambda_.Function(
+        if task.task_name in {"seller-proposal", "buyer-acceptance"}:
+            # Estas API sólo aceptan Resource:*; el task token es la capacidad
+            # efímera que delimita qué espera puede completar la Lambda.
+            role.add_to_policy(
+                iam.PolicyStatement(
+                    actions=["states:SendTaskSuccess"],
+                    resources=["*"],
+                )
+            )
+
+        function = lambda_.DockerImageFunction(
             self,
             f"{construct_name}Function",
             function_name=function_name,
             description=f"Adaptador de tarea de saga: {task.task_name}",
-            runtime=lambda_.Runtime.PYTHON_3_12,
             architecture=lambda_.Architecture.X86_64,
-            handler="handler.lambda_handler",
-            code=lambda_.Code.from_asset(str(source)),
+            code=lambda_.DockerImageCode.from_image_asset(str(source)),
             role=role,
             log_group=log_group,
             timeout=Duration.seconds(self.settings.lambda_timeout_seconds),

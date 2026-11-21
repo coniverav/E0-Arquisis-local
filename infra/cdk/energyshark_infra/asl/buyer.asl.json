@@ -116,8 +116,8 @@
             "Lambda.AWSLambdaException",
             "Lambda.SdkClientException",
             "Lambda.TooManyRequestsException",
-            "Wallet.Retryable",
-            "Wallet.RateLimited"
+            "WalletRetryable",
+            "WalletRateLimited"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,
@@ -130,14 +130,14 @@
           "Next": "ReconcileBuyerSwap"
         },
         {
-          "ErrorEquals": ["Wallet.Rejected"],
+          "ErrorEquals": ["WalletRejected"],
           "Next": "SetWalletRejectedResult"
         },
         {
           "ErrorEquals": [
-            "Wallet.IdempotencyMismatch",
-            "Wallet.Unauthorized",
-            "Wallet.NotFound"
+            "WalletIdempotencyMismatch",
+            "WalletUnauthorized",
+            "WalletNotFound"
           ],
           "Next": "BuyerFailed"
         },
@@ -194,8 +194,8 @@
             "Lambda.AWSLambdaException",
             "Lambda.SdkClientException",
             "Lambda.TooManyRequestsException",
-            "Wallet.Retryable",
-            "Wallet.RateLimited"
+            "WalletRetryable",
+            "WalletRateLimited"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,

@@ -1,7 +1,13 @@
 # Artefacto de tareas de saga
 
-CDK empaqueta este directorio por hash de contenido para todas las tareas. El
-handler actual falla de forma explícita y segura: E3-020 declara funciones,
-configuración e IAM, mientras los adaptadores Wallet y la persistencia previa
-al HTTP corresponden a E3-022 y E3-023. Nunca registra el evento completo ni
-task tokens, JWT, `swapToken` o valores recuperados desde Secrets Manager.
+CDK empaqueta este directorio como una imagen común e inmutable para las
+tareas. `seller-proposal`, `buyer-acceptance`, reconciliación y cancelación
+usan Wallet con secretos de Secrets Manager y cuota PostgreSQL compartida.
+Los callbacks registran el task token antes de cualquier llamada HTTP. El
+resto de tareas sigue fallando de forma explícita hasta su implementación.
+
+El secret Wallet contiene `baseUrl` HTTPS y `apiKey`; el de base de datos usa
+`DATABASE_URL` o los campos `host`, `port`, `username`, `password` y `dbname`.
+Nunca se registran secretos, cuerpos completos, task tokens, JWT ni
+`swapToken`. La imagen fija la versión de `psycopg-binary`; no se despliega en
+esta rama.

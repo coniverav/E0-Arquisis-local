@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -72,15 +73,13 @@ class ServerlessInfrastructureTest(unittest.TestCase):
         tasks = set()
         for function in functions.values():
             properties = function["Properties"]
-            self.assertEqual(properties["Runtime"], "python3.12")
-            self.assertEqual(properties["Handler"], "handler.lambda_handler")
+            self.assertEqual(properties["PackageType"], "Image")
             self.assertEqual(properties["Timeout"], 20)
             self.assertEqual(properties["MemorySize"], 384)
             variables = properties["Environment"]["Variables"]
             self.assertEqual(variables["ENERGYSHARK_ENV"], "dev")
             tasks.add(variables["SAGA_TASK"])
-            self.assertIn("S3Bucket", properties["Code"])
-            self.assertIn("S3Key", properties["Code"])
+            self.assertIn("ImageUri", properties["Code"])
 
         self.assertIn("seller-proposal", tasks)
         self.assertIn("buyer-acceptance", tasks)
@@ -102,6 +101,7 @@ class ServerlessInfrastructureTest(unittest.TestCase):
         allowed_wildcards = {
             frozenset(LOG_DELIVERY_ACTIONS),
             frozenset(("states:SendTaskSuccess", "states:SendTaskFailure")),
+            frozenset(("states:SendTaskSuccess",)),
         }
         policies = self.resources("AWS::IAM::Policy")
         self.assertTrue(policies)
@@ -159,12 +159,13 @@ class ServerlessInfrastructureTest(unittest.TestCase):
 class SagaTaskArtifactTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        handler_path = (
+        source = (
             Path(__file__).resolve().parents[1]
             / "lambda_src"
             / "saga_task"
-            / "handler.py"
         )
+        sys.path.insert(0, str(source))
+        handler_path = source / "handler.py"
         spec = importlib.util.spec_from_file_location("saga_task_handler", handler_path)
         assert spec and spec.loader
         cls.handler = importlib.util.module_from_spec(spec)
@@ -179,7 +180,7 @@ class SagaTaskArtifactTest(unittest.TestCase):
             "jwt": "sensitive-jwt",
         }
         context = type("Context", (), {"aws_request_id": "request-1"})()
-        with patch.dict(os.environ, {"SAGA_TASK": "seller-proposal"}, clear=False):
+        with patch.dict(os.environ, {"SAGA_TASK": "finalize-saga"}, clear=False):
             with self.assertLogs(self.handler.logger, level="INFO") as captured:
                 with self.assertRaises(self.handler.SagaTaskNotImplemented):
                     self.handler.lambda_handler(event, context)

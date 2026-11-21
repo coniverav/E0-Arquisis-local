@@ -99,8 +99,8 @@ class SellerSagaDefinitionTest(unittest.TestCase):
         retry_errors = states["ProposeSwapAndWait"]["Retry"][0][
             "ErrorEquals"
         ]
-        self.assertIn("Wallet.Retryable", retry_errors)
-        self.assertIn("Wallet.RateLimited", retry_errors)
+        self.assertIn("WalletRetryable", retry_errors)
+        self.assertIn("WalletRateLimited", retry_errors)
         self.assertNotIn("swapToken", json.dumps(self.seller))
 
 
@@ -141,8 +141,8 @@ class BuyerSagaDefinitionTest(unittest.TestCase):
             "$.swap.acceptIdempotencyKey",
         )
         retry_errors = acceptance["Retry"][0]["ErrorEquals"]
-        self.assertIn("Wallet.Retryable", retry_errors)
-        self.assertIn("Wallet.RateLimited", retry_errors)
+        self.assertIn("WalletRetryable", retry_errors)
+        self.assertIn("WalletRateLimited", retry_errors)
         self.assertNotIn("swapToken", json.dumps(self.buyer))
 
     def test_buyer_has_explicit_terminal_states(self) -> None:

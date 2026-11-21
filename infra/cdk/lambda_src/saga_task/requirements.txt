@@ -1,1 +1,3 @@
-# Sin dependencias externas: el artefacto usa únicamente la biblioteca estándar.
+psycopg==3.2.13
+psycopg-binary==3.2.13
+typing-extensions==4.16.0

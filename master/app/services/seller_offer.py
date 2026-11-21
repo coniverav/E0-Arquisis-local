@@ -12,6 +12,7 @@ from app.config import CITY_ID
 from app.database import engine
 from app.models import Cycle, MarketCycle, MarketOffer, OutboundMessage, StrategyConfig
 from app.services.wallet_client import WalletClient
+from app.services.market_outbox import enqueue_market_envelope
 
 
 CENT = Decimal("0.01")
@@ -220,23 +221,16 @@ async def enqueue_seller_offer(
                 )
             )
 
-            # Guardar el mensaje para publicación AMQP.
-            session.add(
-                OutboundMessage(
-                    msg_id=msg_id,
-                    idpk=idpk,
-                    message_type="offer",
-                    cycle_id=cycle_id,
-                    payload=payload,
-                    routing_key=f"market.offer.{CITY_ID}",
-                    exchange_name="market",
-                    status="PENDING",
-                    attempt_count=0,
-                    dispatch_required=True,
-                    available_at=cycle.market_opens_at,
-                    expires_at=cycle.market_last_offer_at,
-                    created_at=now,
-                )
+            # E3-028: oferta y envelope v3 en el mismo commit PostgreSQL.
+            # Reintentos del relay reutilizan este msgId e idpk inmutables.
+            enqueue_market_envelope(
+                session,
+                envelope=payload,
+                exchange_name="market",
+                routing_key=f"market.offer.{CITY_ID}",
+                available_at=cycle.market_opens_at,
+                expires_at=cycle.market_last_offer_at,
+                now=now,
             )
 
     # La transacción confirmó oferta + mensaje en conjunto.

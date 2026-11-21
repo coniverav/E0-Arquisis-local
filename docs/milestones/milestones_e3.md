@@ -1,6 +1,6 @@
 # Plan de milestones — E3
 
-### Milestone 0: Continuidad, spec y decisiones 16–18 Nov
+### Milestone 0: Continuidad, spec y decisiones 16–17 Nov
 
 * Auditar continuidad E1/E2 en producción: cloud, ambas colas, protocolo, ciclos, reportes, HTTPS, Auth0, Wallet, New Relic y AWS Budgets (E3-001).
 * Versionar spec E3, arquitectura objetivo, decisiones pendientes y criterios de aceptación medibles (E3-002).
@@ -9,7 +9,7 @@
 * Alinear Jira, milestones, dependencias, AI logs y política de revisión de PRs (E3-007–008).
 * Dibujar UML objetivo, inventariar AWS/costos, ejecutar Prowler inicial y fijar suite base/matriz de gates (E3-009–013).
 
-### Milestone 1: Cimientos de sagas, outbox e IaC 19–24 Nov
+### Milestone 1: Cimientos de sagas, outbox e IaC 18–20 Nov
 
 * Elegir Terraform o CDK y definir módulos, estado, ambientes, secretos y estrategia de despliegue (E3-014).
 * Diseñar y migrar almacenamiento durable de sagas, ejecución, `idpk`, `swapId`, task tokens y deadlines sin borrar historia E2 (E3-015–016).
@@ -19,7 +19,7 @@
 * Definir contrato de eventos SSE, endpoint autenticado y replay por `Last-Event-ID` (E3-032–034).
 * Probar ASL, callbacks, atomicidad del outbox y definir las métricas base de E3 (E3-035–037).
 
-### Milestone 2: Flujos completos e integración 25 Nov–01 Dic
+### Milestone 2: Flujos completos e integración 20–23 Nov
 
 * Integrar saga vendedora: reserva AD4, propuesta Wallet, espera, `bid-accepted`, terminales, compensación y actualización de oferta (E3-038–043).
 * Integrar saga compradora: inicio único, verificación ES256/plazos, aceptación, espera y reconciliación (E3-044–049).
@@ -28,7 +28,7 @@
 * Desplegar Step Functions, Lambda, IAM, relays y migraciones desde IaC con backup y rollback (E3-055–057).
 * Lograr un swap productivo `SETTLED` por saga, demostrar continuidad de ciclo/reporte y ejecutar integración seller/buyer y SSE (E3-058–062).
 
-### Milestone 3: Resiliencia, alertas y seguridad 02–08 Dic
+### Milestone 3: Resiliencia, alertas y seguridad 24–25 Nov
 
 * Configurar y probar cinco alertas: Wallet lenta, consumidores atrasados, delta ledger–Wallet, saga atascada y outbox atrasado (E3-063–069).
 * Escribir runbook por alerta con diagnóstico, primera acción segura y escalamiento (E3-070).
@@ -38,7 +38,7 @@
 * Medir AD7 y AD8: sagas/reservas al cierre, objetivos por ciclo y backlog recuperado en hasta 60 segundos (E3-080–082).
 * Ejecutar regresión E1/E2 y contratos v3.0.2 en CI (E3-083).
 
-### Milestone 4: Evidencia, documentación y entrega 09–13 Dic
+### Milestone 4: Evidencia, documentación y entrega 26–27 Nov
 
 * Completar ADR7/ADR8 con costos, métricas reales, duplicaciones y resultados de recuperación, preservando la decisión previa (E3-084–085).
 * Finalizar post-mortems AD4/AD6, UML E3 y runbook con enlaces operables (E3-086–088).

@@ -1,0 +1,17 @@
+{
+  "app": "python3 app.py",
+  "context": {
+    "environment": "dev",
+    "environments": {
+      "dev": {
+        "stackPrefix": "EnergySharkDev"
+      },
+      "staging": {
+        "stackPrefix": "EnergySharkStaging"
+      },
+      "prod": {
+        "stackPrefix": "EnergySharkProd"
+      }
+    }
+  }
+}

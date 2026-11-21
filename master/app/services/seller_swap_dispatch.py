@@ -24,7 +24,7 @@ from sqlmodel import Session, select
 
 from ..config import CITY_ID, WALLET_TIMEOUT_SECONDS
 from ..database import engine as default_engine
-from ..models import MarketBid, MarketOffer, OfferReservation, SwapRecord
+from ..models import MarketBid, MarketOffer, OfferReservation, SwapRecord, OutboundMessage
 from .wallet_recovery import (inspect_known_swap, observation_from_swap_state,
                               apply_wallet_observation, TERMINAL_STATES)  # E2-068
 from .wallet_client import (
@@ -69,6 +69,14 @@ def _claim_one(session: Session, *, now: datetime) -> ProposalAttempt | None:
         .where(
             SwapRecord.role == 'PROPOSER',
             SwapRecord.status == 'SUBMITTED',
+            # Nunca ejecutar el POST E2 si el swap es propiedad de la saga E3.
+            # Aun con outbox FAILED/CLAIMED la recuperación pertenece al relay.
+            ~SwapRecord.idpk.in_(
+                select(OutboundMessage.idpk).where(
+                    OutboundMessage.delivery_kind == 'STEP_FUNCTIONS',
+                    OutboundMessage.message_type == 'SAGA_START',
+                )
+            ),
             SwapRecord.give_asset == 'KWH',
             SwapRecord.take_asset == 'CR',
             SwapRecord.proposal_http_accepted_at.is_(None),

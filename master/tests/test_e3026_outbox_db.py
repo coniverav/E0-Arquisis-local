@@ -265,12 +265,35 @@ def test_start_saga_claim_only_finishes_as_started():
         token = claims[0].claim_token
         with pytest.raises(ValueError, match="PUBLISHED_ONLY_FOR_BROKER"):
             finish_claim(session, row_id=row_id, claim_token=token, outcome="PUBLISHED", now=T0)
-        assert finish_claim(session, row_id=row_id, claim_token=token, outcome="STARTED", now=T0)
+        with pytest.raises(ValueError, match="EXECUTION_ARN_DOES_NOT_MATCH_INTENT"):
+            finish_claim(
+                session,
+                row_id=row_id,
+                claim_token=token,
+                outcome="STARTED",
+                execution_arn=(
+                    "arn:aws:states:us-east-2:123456789012:execution:"
+                    f"other-machine:{bid_idpk}"
+                ),
+                now=T0,
+            )
+        assert finish_claim(
+            session,
+            row_id=row_id,
+            claim_token=token,
+            outcome="STARTED",
+            execution_arn=(
+                "arn:aws:states:us-east-2:123456789012:execution:"
+                f"energyshark-seller:{bid_idpk}"
+            ),
+            now=T0,
+        )
         session.commit()
     with Session(engine) as session:
         row = session.get(OutboundMessage, row_id)
         assert row.status == "STARTED" and row.dispatch_required is False
         assert row.completed_at == T0
+        assert row.execution_arn.endswith(bid_idpk)
 
 
 def test_retries_may_share_idpk_but_not_msg_id():

@@ -18,6 +18,24 @@ from ..models import OutboundMessage
 MARKET_TYPES = ("offer", "offer-updated", "offer-withdrawn")
 
 
+def _execution_arn(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not value.startswith("arn:aws:states:") or ":execution:" not in value:
+        raise ValueError("INVALID_EXECUTION_ARN")
+    return value
+
+
+def _expected_execution_arn(row: OutboundMessage) -> str:
+    prefix, separator, resource = (row.state_machine_arn or "").partition(
+        ":stateMachine:"
+    )
+    machine_name = resource.split(":", 1)[0]
+    if not separator or not machine_name or not row.execution_name:
+        raise ValueError("INVALID_SAGA_DESTINATION")
+    return f"{prefix}:execution:{machine_name}:{row.execution_name}"
+
+
 def _utc(now: datetime | None) -> datetime:
     value = now or datetime.now(timezone.utc)
     if value.tzinfo is None or value.utcoffset() is None:
@@ -95,6 +113,7 @@ def finish_claim(
     claim_token: str,
     outcome: str,
     error: str | None = None,
+    execution_arn: str | None = None,
     retry_at: datetime | None = None,
     now: datetime | None = None,
 ) -> bool:
@@ -109,6 +128,11 @@ def finish_claim(
         raise ValueError("INVALID_CLAIM_OUTCOME")
     if outcome == "FAILED" and not error:
         raise ValueError("FAILED_REQUIRES_ERROR")
+    execution_arn = _execution_arn(execution_arn)
+    if outcome == "STARTED" and execution_arn is None:
+        raise ValueError("STARTED_REQUIRES_EXECUTION_ARN")
+    if outcome != "STARTED" and execution_arn is not None:
+        raise ValueError("EXECUTION_ARN_ONLY_FOR_STARTED")
     if retry_at is not None:
         retry_at = _utc(retry_at)
     row = session.exec(select(OutboundMessage).where(OutboundMessage.id == row_id).with_for_update()).first()
@@ -120,6 +144,8 @@ def finish_claim(
         raise ValueError("PUBLISHED_ONLY_FOR_BROKER")
     if outcome == "STARTED" and row.delivery_kind != "STEP_FUNCTIONS":
         raise ValueError("STARTED_ONLY_FOR_SAGA")
+    if outcome == "STARTED" and execution_arn != _expected_execution_arn(row):
+        raise ValueError("EXECUTION_ARN_DOES_NOT_MATCH_INTENT")
     if outcome == "FAILED":
         row.status = "FAILED"
         row.last_error = str(error)[:2000]
@@ -131,6 +157,8 @@ def finish_claim(
         row.last_error = None
         if outcome == "PUBLISHED":
             row.published_at = now
+        else:
+            row.execution_arn = execution_arn
     row.lease_owner = None
     row.claim_token = None
     row.lease_until = None

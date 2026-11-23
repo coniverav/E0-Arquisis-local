@@ -168,6 +168,8 @@ class WalletClientTest(unittest.TestCase):
 
 class TokenBeforeWalletTest(unittest.TestCase):
     def test_token_is_visible_before_wallet_and_fast_event_wins_race(self):
+        from unittest.mock import patch
+
         order = []
 
         class Store:
@@ -181,7 +183,7 @@ class TokenBeforeWalletTest(unittest.TestCase):
 
         class Wallet:
             def propose(self, **kwargs):
-                self.assertion = order == ["token-committed"]
+                self.assertion = order == ["token-committed", "proposal-frozen"]
                 order.append("event-correlated")
                 store.status = "SUCCEEDED"
                 order.append("http-response")
@@ -190,19 +192,31 @@ class TokenBeforeWalletTest(unittest.TestCase):
         wallet = Wallet()
         event = {
             "taskToken": "opaque-token",
-            "sagaExecutionId": 1,
+            "sagaExecutionId": "key",
             "correlationIdpk": "key",
             "idempotencyKey": "key",
             "operation": "PROPOSE",
-            "swap": {"give": {"asset": "KWH", "amount": "1"}},
+            "swap": {"idpk": "key", "idempotencyKey": "key",
+                     "give": {"asset": "KWH", "amount": "1"}},
             "timeoutAt": "2099-01-01T00:00:00Z",
         }
         context = type("Context", (), {"get_remaining_time_in_millis": lambda self: 20000})()
-        result = handler._callback_wallet_task(
-            "seller-proposal", event, context, store, wallet
-        )
+        def freeze_proposal(_store, **kwargs):
+            self.assertEqual(order, ["token-committed"])
+            self.assertEqual(kwargs["saga_execution_id"], "key")
+            self.assertEqual(kwargs["idempotency_key"], "key")
+            order.append("proposal-frozen")
+            return {"give": {"asset": "KWH", "amount": 1},
+                    "take": {"asset": "CR", "amount": 1.0},
+                    "memo": "KLD-cycle", "expiresAt": "2099-01-01T00:00:00Z"}
+
+        with patch.object(handler, "prepare_seller_proposal", side_effect=freeze_proposal):
+            result = handler._callback_wallet_task(
+                "seller-proposal", event, context, store, wallet
+            )
         self.assertTrue(wallet.assertion)
-        self.assertEqual(order, ["token-committed", "event-correlated", "http-response"])
+        self.assertEqual(order, ["token-committed", "proposal-frozen",
+                                 "event-correlated", "http-response"])
         self.assertTrue(result["acceptedForProcessing"])
 
     def test_completed_token_replay_does_not_call_wallet_again(self):

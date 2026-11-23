@@ -9,6 +9,7 @@ from typing import Any, Mapping
 from postgres_store import PostgresStore, database_dsn
 from wallet_client import WalletClient, WalletConfig, WalletResult
 from seller_reservation import verify_seller_reservation, verify_seller_rejection
+from seller_proposal import prepare_seller_proposal
 
 
 logger = logging.getLogger()
@@ -165,9 +166,17 @@ def _callback_wallet_task(
         swap = event.get("swap")
         if not isinstance(swap, dict):
             raise ValueError("swap es obligatorio")
-        result = wallet.propose(
+        # E3-040: el callback ya está persistido. Congelar el cuerpo Wallet
+        # bajo lock antes del HTTP evita expiresAt nuevo en cada retry.
+        proposal_body = prepare_seller_proposal(
+            store,
+            saga_execution_id=event.get("sagaExecutionId"),
             idempotency_key=key,
             swap=swap,
+        )
+        result = wallet.propose(
+            idempotency_key=key,
+            swap=proposal_body,
             deadline_seconds=deadline,
         )
     elif task == "buyer-acceptance":

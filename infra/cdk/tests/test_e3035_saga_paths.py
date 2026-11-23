@@ -125,7 +125,7 @@ class SellerPathsTest(unittest.TestCase):
 
     def test_seller_no_capacity_rejects_without_wallet_write(self):
         path, outcome, _ = dry_run("seller.asl.json", errors={
-            "ReserveEnergy": "Seller.InsufficientEnergy"})
+            "ReserveEnergy": "SellerInsufficientEnergy"})
         self.assertEqual(outcome, "Succeed")
         self.assertEqual(path[-1], "SellerRejected")
         self.assertNotIn("ProposeSwapAndWait", path)

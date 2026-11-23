@@ -32,7 +32,7 @@
       ],
       "Catch": [
         {
-          "ErrorEquals": ["Seller.InsufficientEnergy"],
+          "ErrorEquals": ["SellerInsufficientEnergy"],
           "Next": "RejectBid"
         },
         {

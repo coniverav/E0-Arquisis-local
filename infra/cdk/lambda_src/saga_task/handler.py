@@ -17,6 +17,7 @@ from buyer_acceptance import (
     prepare_buyer_acceptance, complete_buyer_acceptance_attempt,
 )
 from buyer_terminal import finalize_buyer
+from swap_recovery import reconcile_swap, cancel_seller_and_recheck
 
 
 logger = logging.getLogger()
@@ -358,30 +359,22 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             task, event, context, store, _build_wallet(store)
         )
     if task in {"reconcile-seller-swap", "reconcile-buyer-swap"}:
-        swap_id = event.get("swapId")
-        if task == "reconcile-seller-swap":
-            saga_idpk = event.get("sagaExecutionId")
-            key = event.get("idempotencyKey") or saga_idpk
-            known = known_seller_swap_id(
-                store, saga_execution_id=saga_idpk, idempotency_key=key,
-            )
-            if swap_id is not None and swap_id != known:
-                raise SellerTerminalInconsistent("SELLER_RECONCILIATION_SWAP_ID_MISMATCH")
-            swap_id = known
-        if not isinstance(swap_id, str) or not swap_id:
-            raise ValueError("swapId es obligatorio")
-        return _wallet_result(_build_wallet(store).get_swap(
-            swap_id=swap_id,
-            deadline_seconds=_remaining_seconds(context),
-        ))
+        # Sólo consultar Wallet para el swap conocido de la saga. No enviar
+        # al historial de Step Functions cuerpos Wallet que contienen secretos.
+        role = "SELLER" if task == "reconcile-seller-swap" else "BUYER"
+        return reconcile_swap(
+            store, _build_wallet(store),
+            saga_execution_id=event.get("sagaExecutionId"), role=role,
+            swap_id=event.get("swapId"),
+            idempotency_key=(event.get("idempotencyKey") if role == "SELLER" else None),
+            remaining_seconds=lambda: _remaining_seconds(context),
+        )
     if task == "cancel-seller-swap":
-        swap_id = event.get("swapId")
-        key = event.get("idempotencyKey")
-        if not isinstance(swap_id, str) or not isinstance(key, str) or not key:
-            raise ValueError("swapId e idempotencyKey son obligatorios")
-        return _wallet_result(_build_wallet(store).cancel(
-            swap_id=swap_id,
-            idempotency_key=key,
-            deadline_seconds=_remaining_seconds(context),
-        ))
+        return cancel_seller_and_recheck(
+            store, _build_wallet(store),
+            saga_execution_id=event.get("sagaExecutionId"),
+            swap_id=event.get("swapId"),
+            idempotency_key=event.get("idempotencyKey"),
+            remaining_seconds=lambda: _remaining_seconds(context),
+        )
     raise AssertionError("Tarea soportada sin despacho")

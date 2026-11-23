@@ -29,10 +29,12 @@ from app.models import (
     MarketBid,
     OutboundMessage,
     SwapRecord,
+    SagaExecution,
 )
 from app.services.message_audit import INBOUND_PROCESSED
 from app.services.wallet_client import WalletClient, WalletError
 from app.services.wallet_service import WalletService
+from app.services.wallet_recovery import observation_from_swap_state, apply_wallet_observation
 
 logger = logging.getLogger(__name__)
 
@@ -332,24 +334,62 @@ async def expire_stale_swaps(
                 and _utc(record.expires_at) <= now
                 and record.swap_id
             ):
+                # E3-048: para sellers orquestados, mismo idempotencyKey que
+                # Step Functions; E2 legacy conserva su propia llave anterior.
+                seller_saga = (session.exec(select(SagaExecution).where(
+                    SagaExecution.idpk == record.idpk,
+                    SagaExecution.role == "SELLER",
+                )).first() if record.role == "PROPOSER" else None)
+                cancel_key = (str(uuid5(
+                    NAMESPACE_URL, f"energyshark:seller:cancel:{record.idpk}",
+                )) if seller_saga is not None else str(uuid5(
+                    NAMESPACE_URL,
+                    f"energyshark:cancel:{record.idempotency_key}:{record.swap_id}",
+                )))
                 try:
                     await client.cancel_swap(
-                        record.swap_id,
-                        # Cancelar es otra operación: una llave UUID estable,
-                        # distinta de la usada en POST /swaps, también tras reinicio.
-                        idempotency_key=str(uuid5(
-                            NAMESPACE_URL,
-                            f"energyshark:cancel:{record.idempotency_key}:{record.swap_id}",
-                        )),
+                        record.swap_id, idempotency_key=cancel_key,
                     )
                     stats["cancel_requested"] += 1
                 except WalletError as exc:
                     logger.warning(
-                        "No se pudo cancelar swap vencido %s: %s",
-                        record.swap_id,
-                        exc,
+                        "Cancelación Wallet incierta para swap %s: %s",
+                        record.swap_id, type(exc).__name__,
                     )
-                    stats["indeterminate"] += 1
+                    if seller_saga is None:
+                        stats["indeterminate"] += 1
+                        continue
+
+                if seller_saga is not None:
+                    # El POST/202 o un timeout no es un evento terminal. GET
+                    # posterior autoritativo; el mismo WalletService aplica
+                    # ledger/HOLD dentro del commit del scheduler.
+                    stats["wallet_checked"] += 1
+                    try:
+                        confirmed = await client.get_swap(record.swap_id)
+                    except WalletError as exc:
+                        logger.warning("GET tras cancelación incierto swap=%s code=%s",
+                                       record.swap_id, type(exc).__name__)
+                        stats["indeterminate"] += 1
+                        continue
+                    observation = observation_from_swap_state(
+                        confirmed, expected_swap_id=record.swap_id,
+                    )
+                    if observation is not None and observation.status in {
+                        "settled", "rejected", "expired", "cancelled",
+                    }:
+                        apply_wallet_observation(
+                            session, record=record, observation=observation,
+                        )
+                        if observation.status == "settled":
+                            stats["settled_from_wallet"] += 1
+                        else:
+                            _set_bid_expired(session, idpk=record.idpk)
+                            stats["expired_swaps"] += 1
+                            if record.memo:
+                                stats["released_holds"] += 1
+                    else:
+                        stats["indeterminate"] += 1
             continue
 
         stats["indeterminate"] += 1

@@ -10,6 +10,7 @@ from postgres_store import PostgresStore, database_dsn
 from wallet_client import WalletClient, WalletConfig, WalletResult
 from seller_reservation import verify_seller_reservation, verify_seller_rejection
 from seller_proposal import prepare_seller_proposal
+from seller_bid_accepted import verify_persisted_bid_accepted
 
 
 logger = logging.getLogger()
@@ -215,6 +216,7 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "reserve-seller",
         "reject-seller-bid",
         "seller-proposal",
+        "publish-bid-accepted",
         "buyer-acceptance",
         "reconcile-seller-swap",
         "reconcile-buyer-swap",
@@ -241,6 +243,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
     if task == "register-callback":
         return {"token": _register_callback(event, store)}
+    if task == "publish-bid-accepted":
+        return verify_persisted_bid_accepted(
+            store,
+            bid_idpk=event.get("bidIdpk"),
+            cycle_id=event.get("cycleId"),
+            swap_id=event.get("swapId"),
+            expires_at=event.get("expiresAt"),
+            saga_execution_id=event.get("sagaExecutionId"),
+        )
     if task in {"seller-proposal", "buyer-acceptance"}:
         return _callback_wallet_task(
             task, event, context, store, _build_wallet(store)

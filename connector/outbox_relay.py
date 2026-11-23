@@ -34,6 +34,13 @@ LEASE_SECONDS = int(os.getenv("E3_OUTBOX_RELAY_LEASE_SECONDS", "30"))
 BATCH_SIZE = int(os.getenv("E3_OUTBOX_RELAY_BATCH_SIZE", "20"))
 PUBLISH_TIMEOUT_SECONDS = float(os.getenv("E3_OUTBOX_PUBLISH_TIMEOUT_SECONDS", "10"))
 
+CALLBACK_CLAIM_URL = os.getenv(
+    "MASTER_SAGA_CALLBACK_CLAIM_URL", "http://master:8000/internal/saga-callbacks/claims"
+)
+CALLBACK_RESULT_URL = os.getenv(
+    "MASTER_SAGA_CALLBACK_RESULT_URL", "http://master:8000/internal/saga-callbacks"
+)
+
 class SagaIdentityMismatch(RuntimeError):
     """El nombre existe en AWS, pero no corresponde a la intención local."""
 
@@ -48,6 +55,10 @@ def broker_relay_enabled() -> bool:
 
 def saga_relay_enabled() -> bool:
     return _enabled("E3_SAGA_OUTBOX_RELAY_ENABLED")
+
+
+def buyer_callback_relay_enabled() -> bool:
+    return _enabled("E3_BUYER_CALLBACK_RELAY_ENABLED")
 
 
 def _worker_id(kind: str) -> str:
@@ -317,4 +328,83 @@ async def saga_relay_forever(*, http_timeout: float, reconnect_seconds: float) -
             raise
         except Exception as exc:
             logger.warning("Relay saga interrumpido (%s)", _safe_error(exc))
+            await asyncio.sleep(reconnect_seconds)
+
+
+async def claim_buyer_callback_items(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    response = await client.post(CALLBACK_CLAIM_URL, json={
+        "limit": BATCH_SIZE, "leaseSeconds": 15,
+    })
+    response.raise_for_status()
+    items = response.json().get("items")
+    if not isinstance(items, list) or any(not isinstance(x, dict) for x in items):
+        raise ValueError("MASTER_RETURNED_INVALID_CALLBACK_CLAIMS")
+    return items
+
+
+async def finish_buyer_callback_item(
+    client: httpx.AsyncClient, item: dict[str, Any], *,
+    outcome: Literal["SUCCEEDED", "RETRY", "AMBIGUOUS"],
+) -> bool:
+    response = await client.post(f"{CALLBACK_RESULT_URL}/{item['id']}/result", json={
+        "claimToken": item["claimToken"], "outcome": outcome, "retrySeconds": 2,
+    })
+    if response.status_code == 409:
+        return False  # claim perdido: otro worker adquirió un lease nuevo
+    response.raise_for_status()
+    return True
+
+
+def send_buyer_callback_once(item: dict[str, Any], *, stepfunctions=None) -> None:
+    """Enviar exclusivamente estado terminal persistido; jamás HTTP 202."""
+    if (not isinstance(item.get("taskToken"), str) or not item["taskToken"]
+            or not isinstance(item.get("claimToken"), str) or not item["claimToken"]
+            or not isinstance(item.get("swapId"), str) or not item["swapId"]
+            or item.get("outcome") not in {"SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}):
+        raise ValueError("INVALID_BUYER_CALLBACK_ITEM")
+    output = json.dumps({"outcome": item["outcome"], "swapId": item["swapId"]},
+                        separators=(",", ":"))
+    (stepfunctions or _stepfunctions_client()).send_task_success(
+        taskToken=item["taskToken"], output=output,
+    )
+
+
+async def buyer_callback_relay_forever(*, http_timeout: float,
+                                       reconnect_seconds: float) -> None:
+    """Relay opt-in en EC2, independiente de la transacción Wallet/ledger."""
+    stepfunctions = _stepfunctions_client()
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=http_timeout) as client:
+                while True:
+                    items = await claim_buyer_callback_items(client)
+                    for item in items:
+                        try:
+                            await asyncio.to_thread(send_buyer_callback_once, item,
+                                                    stepfunctions=stepfunctions)
+                        except Exception as exc:
+                            code = _aws_error_code(exc)
+                            # TaskDoesNotExist no prueba éxito: podría ser token
+                            # consumido O expirado. Queda para conciliación.
+                            kind = ("AMBIGUOUS" if code in {
+                                "TaskDoesNotExist", "TaskTimedOut", "InvalidToken"
+                            } else "RETRY")
+                            logger.warning("Callback buyer sin confirmar id=%s error=%s",
+                                           item.get("id"), _safe_error(exc))
+                            try:
+                                await finish_buyer_callback_item(client, item, outcome=kind)
+                            except Exception:
+                                logger.exception("No se pudo registrar callback buyer id=%s", item.get("id"))
+                        else:
+                            try:
+                                await finish_buyer_callback_item(client, item, outcome="SUCCEEDED")
+                            except Exception:
+                                # Lease permitirá detectar/reintentar; jamás
+                                # marcar localmente AWS confirmado sin ACK.
+                                logger.exception("Confirmación callback buyer perdida id=%s", item.get("id"))
+                    await asyncio.sleep(POLL_SECONDS)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Relay callback buyer interrumpido (%s)", _safe_error(exc))
             await asyncio.sleep(reconnect_seconds)

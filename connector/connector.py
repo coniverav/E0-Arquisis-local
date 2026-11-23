@@ -17,6 +17,8 @@ from outbox_relay import (
     broker_relay_forever,
     saga_relay_enabled,
     saga_relay_forever,
+    buyer_callback_relay_enabled,
+    buyer_callback_relay_forever,
 )
 from protocol.dispatch import dispatch_protocol_response
 from protocol.handler import plan_protocol_response
@@ -834,6 +836,11 @@ async def main() -> None:
     tasks = [consumer_task, market_task, outbox_task]
     if saga_relay_enabled():
         tasks.append(asyncio.create_task(saga_relay_forever(
+            http_timeout=HTTP_TIMEOUT_SECONDS,
+            reconnect_seconds=CONNECTOR_RETRY_SECONDS,
+        )))
+    if buyer_callback_relay_enabled():
+        tasks.append(asyncio.create_task(buyer_callback_relay_forever(
             http_timeout=HTTP_TIMEOUT_SECONDS,
             reconnect_seconds=CONNECTOR_RETRY_SECONDS,
         )))

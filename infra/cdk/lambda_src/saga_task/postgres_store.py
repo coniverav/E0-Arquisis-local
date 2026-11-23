@@ -98,9 +98,10 @@ class PostgresStore:
                 cursor.execute(
                     """
                     UPDATE saga_task_tokens
-                    SET status = 'SUPERSEDED', completed_at = %s
+                    SET status = 'SUPERSEDED', completed_at = %s,
+                        claim_token = NULL, claim_until = NULL
                     WHERE saga_execution_id = %s AND wait_type = %s
-                      AND status = 'WAITING'
+                      AND status IN ('WAITING', 'DISPATCHING')
                     """,
                     (now, execution_id, wait_type),
                 )

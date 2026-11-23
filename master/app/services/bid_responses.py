@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from ..models import MarketBid, OutboundMessage
 from ..services.message_audit import INBOUND_NOT_PROCESSED, INBOUND_PROCESSED
+from ..services.buyer_saga_start import enqueue_buyer_saga_on_acceptance
 
 REJECTIONS = {
     'QUANTITY_UNAVAILABLE': 409,
@@ -120,6 +121,10 @@ def process_bid_reply(session: Session, *, payload, now: datetime) -> tuple[str,
         bid.responded_at = now
 
     session.add(bid)
+    if payload.type == 'bid-accepted':
+        # E3-044: intención BUYER y SwapRecord en la MISMA transacción del
+        # ingreso, pero sin POST Wallet ni StartExecution desde este proceso.
+        enqueue_buyer_saga_on_acceptance(session, bid=bid, payload=payload, now=now)
     # Una respuesta terminal cancela reintentos aún no publicados: no se vuelve
     # a ofertar la misma compra después de conocer la decisión del vendedor.
     for attempt in session.exec(select(OutboundMessage).where(

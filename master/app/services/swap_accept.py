@@ -33,6 +33,7 @@ from app.models import (
     InboundMessage,
     MarketBid,
     OutboundMessage,
+    SagaExecution,
     SwapRecord,
 )
 from app.services.message_audit import INBOUND_PROCESSED
@@ -109,6 +110,12 @@ def _accept_work(session: Session, limit: int, now: datetime) -> list[SwapRecord
             SwapRecord.role == "ACCEPTOR",
             SwapRecord.source_bid_idpk.is_not(None),
             SwapRecord.accept_idempotency_key.is_not(None),
+            # E3-044: jamás coordinar mediante E2 un SwapRecord que ya tiene
+            # saga BUYER. No afecta operaciones antiguas sin SagaExecution.
+            ~exists(select(SagaExecution.id).where(
+                SagaExecution.idpk == SwapRecord.idpk,
+                SagaExecution.role == "BUYER",
+            )),
             or_(SwapRecord.accept_retry_at.is_(None), SwapRecord.accept_retry_at <= now),
             or_(
                 SwapRecord.status == "SUBMITTED",

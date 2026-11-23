@@ -18,6 +18,12 @@
       "TimeoutSeconds": 30,
       "Retry": [
         {
+          "ErrorEquals": ["BuyerJwksUnavailable"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        },
+        {
           "ErrorEquals": [
             "Lambda.ServiceException",
             "Lambda.AWSLambdaException",
@@ -32,9 +38,9 @@
       "Catch": [
         {
           "ErrorEquals": [
-            "Buyer.InvalidToken",
-            "Buyer.ExpiredToken",
-            "Buyer.ClaimsMismatch"
+            "BuyerInvalidToken",
+            "BuyerExpiredToken",
+            "BuyerClaimsMismatch"
           ],
           "Next": "SetInvalidTokenResult"
         },

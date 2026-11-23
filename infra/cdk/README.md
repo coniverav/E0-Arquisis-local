@@ -79,3 +79,17 @@ aws cloudformation validate-template \
 ```
 
 El template de sagas supera el límite de 51 200 bytes de `validate-template`; se valida con sus tests y un change set en una cuenta aislada (E3-078).
+
+Auditoría de permisos y secretos (E3-077), sin desplegar:
+
+```bash
+python3 ../../tools/iac_secrets_scan.py
+python3 ../../tools/iac_policy_audit.py \
+  cdk.out/EnergySharkDev-ExistingInfrastructure.template.json --profile <perfil>
+python3 ../../tools/iac_policy_audit.py \
+  cdk.out/EnergySharkDev-Sagas.template.json --profile <perfil>
+```
+
+## Permisos
+
+El rol de la instancia conserva `AmazonSSMManagedInstanceCore`, la política mínima de AWS para Session Manager, y una política en línea que acota métricas al namespace `EnergyShark/Host` y logs al grupo `/energyshark/host`. No hay acciones comodín ni políticas de administrador en ningún stack. Los recursos comodín que quedan están justificados por API en `docs/E3-077-permisos-minimos-secretos-iac.md`.

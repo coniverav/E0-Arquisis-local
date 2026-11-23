@@ -99,7 +99,9 @@ class ReproducibleStackTest(unittest.TestCase):
         roles = self.resources_of("AWS::IAM::Role")
         policies = json.dumps(roles)
         self.assertIn("AmazonSSMManagedInstanceCore", policies)
-        self.assertIn("CloudWatchAgentServerPolicy", policies)
+        # E3-077 reemplazó la política administrada del agente por una
+        # política en línea acotada al namespace de métricas y al log del host.
+        self.assertNotIn("CloudWatchAgentServerPolicy", policies)
 
     def test_bucket_is_private_encrypted_and_tls_only(self) -> None:
         bucket = self.single("AWS::S3::Bucket")
@@ -192,7 +194,15 @@ class ReproducibleStackTest(unittest.TestCase):
         self.assertIn("AccessLogSettings", stage)
         format_fields = json.loads(stage["AccessLogSettings"]["Format"])
         self.assertIn("requestId", format_fields)
-        self.assertEqual(len(self.resources_of("AWS::Logs::LogGroup")), 1)
+
+        log_groups = self.resources_of("AWS::Logs::LogGroup")
+        self.assertEqual(len(log_groups), 2)
+        names = {
+            group["Properties"].get("LogGroupName")
+            for group in log_groups.values()
+        }
+        self.assertIn("/energyshark/host", names)
+        self.assertIn("ApiAccessLogs", stage["AccessLogSettings"]["DestinationArn"]["Fn::GetAtt"][0])
 
     def test_monitoring_declares_alarms_topic_and_dashboard(self) -> None:
         template = Template.from_stack(self.stacks.monitoring).to_json()

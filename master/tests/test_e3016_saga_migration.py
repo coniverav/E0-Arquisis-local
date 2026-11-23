@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
@@ -66,6 +67,9 @@ def test_additive_saga_migration_preserves_e2_swap(monkeypatch):
         inspector = inspect(isolated_engine)
         assert "saga_executions" in inspector.get_table_names()
         assert "saga_task_tokens" in inspector.get_table_names()
+        assert "execution_arn" in {
+            column["name"] for column in inspector.get_columns("outbound_messages")
+        }
         saga_indexes = {
             index["name"] for index in inspector.get_indexes("saga_task_tokens")
         }
@@ -84,7 +88,7 @@ def test_additive_saga_migration_preserves_e2_swap(monkeypatch):
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
         assert preserved == (old_idpk, "cycle-e2-preserved", "SUBMITTED")
-        assert revision == "e3016sagatokens"
+        assert revision == ScriptDirectory.from_config(alembic_config).get_current_head()
     finally:
         isolated_engine.dispose()
         with admin_engine.connect() as connection:

@@ -230,6 +230,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "publish-bid-accepted",
         "compensate-seller",
         "finalize-saga",
+        "validate-buyer-token",
+        "check-buyer-deadline",
         "buyer-acceptance",
         "reconcile-seller-swap",
         "reconcile-buyer-swap",
@@ -240,7 +242,30 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             f"La tarea {task} permanece desactivada hasta su tarjeta funcional"
         )
 
+    if task == "check-buyer-deadline":
+        # No necesita credenciales ni DB; sólo valida instantes y margen.
+        from buyer_validation import check_buyer_deadline
+        return check_buyer_deadline(
+            closes_at=event.get("closesAt"),
+            expires_at=event.get("expiresAt"),
+            minimum_remaining_seconds=event.get("minimumRemainingSeconds"),
+            saga_execution_id=event.get("sagaExecutionId"),
+            now=datetime.now(timezone.utc),
+        )
+
     store = _build_store()
+    if task == "validate-buyer-token":
+        from buyer_validation import validate_buyer_token, jwks_settings
+        jwks_url, issuer = jwks_settings(_secret(_required_env("WALLET_SECRET_ARN")))
+        return validate_buyer_token(
+            store,
+            saga_execution_id=event.get("sagaExecutionId"),
+            swap_record_id=event.get("swapRecordId"),
+            swap_id=event.get("swapId"),
+            expected=event.get("expected"),
+            jwks_url=jwks_url,
+            issuer=issuer,
+        )
     if task == "reserve-seller":
         return verify_seller_reservation(
             store,

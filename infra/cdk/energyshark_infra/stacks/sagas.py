@@ -65,7 +65,7 @@ BUYER_TASKS = (
     SagaTask(
         "validate-buyer-token",
         "ValidateBuyerTokenFunctionArn",
-        ("database",),
+        ("database", "wallet"),
     ),
     SagaTask("check-buyer-deadline", "CheckBuyerDeadlineFunctionArn"),
     SagaTask(

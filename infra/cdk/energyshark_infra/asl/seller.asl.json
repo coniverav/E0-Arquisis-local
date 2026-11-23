@@ -457,6 +457,12 @@
           "IntervalSeconds": 2,
           "MaxAttempts": 3,
           "BackoffRate": 2.0
+        },
+        {
+          "ErrorEquals": ["SellerTerminalPending"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 1.5
         }
       ],
       "Catch": [
@@ -480,6 +486,14 @@
       },
       "ResultPath": null,
       "TimeoutSeconds": 30,
+      "Retry": [
+        {
+          "ErrorEquals": ["SellerTerminalPending"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 5,
+          "BackoffRate": 1.5
+        }
+      ],
       "Next": "SellerSettled"
     },
     "FinalizeSellerRejected": {

@@ -11,6 +11,7 @@ from wallet_client import WalletClient, WalletConfig, WalletResult
 from seller_reservation import verify_seller_reservation, verify_seller_rejection
 from seller_proposal import prepare_seller_proposal
 from seller_bid_accepted import verify_persisted_bid_accepted
+from seller_terminal import compensate_seller, finalize_seller, known_seller_swap_id, SellerTerminalInconsistent
 
 
 logger = logging.getLogger()
@@ -97,12 +98,22 @@ def _register_callback(event: Mapping[str, Any], store: PostgresStore) -> dict[s
 
 
 def _wallet_result(result: WalletResult) -> dict[str, Any]:
-    return {
+    response = {
         "statusCode": result.status_code,
         "acceptedForProcessing": result.accepted_for_processing,
         "idempotencyKey": result.idempotency_key,
         "wallet": result.data,
     }
+    # La ASL compara $.<reconciliation>.Payload.status. HTTP 202 no es
+    # una evidencia económica y NUNCA se transforma en un estado terminal.
+    if result.status_code == 200:
+        status = str(result.data.get("status") or "").upper()
+        if status in {"PROPOSED", "ACCEPTED", "SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}:
+            response["status"] = status
+            for field in ("swapId", "expiresAt"):
+                if result.data.get(field) is not None:
+                    response[field] = result.data[field]
+    return response
 
 
 def _known_outcome(result: WalletResult) -> dict[str, Any] | None:
@@ -217,6 +228,8 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         "reject-seller-bid",
         "seller-proposal",
         "publish-bid-accepted",
+        "compensate-seller",
+        "finalize-saga",
         "buyer-acceptance",
         "reconcile-seller-swap",
         "reconcile-buyer-swap",
@@ -241,6 +254,18 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         return verify_seller_rejection(
             store, bid_idpk=event.get("bidIdpk"), reason=event.get("reason")
         )
+    if task == "compensate-seller":
+        return compensate_seller(
+            store, bid_idpk=event.get("bidIdpk"), offer_id=event.get("offerId"),
+            saga_execution_id=event.get("sagaExecutionId"),
+        )
+    if task == "finalize-saga":
+        if event.get("role") != "SELLER":
+            raise SagaTaskNotImplemented("finalize-saga BUYER pendiente de E3-046")
+        return finalize_seller(
+            store, saga_execution_id=event.get("sagaExecutionId"),
+            status=event.get("status"),
+        )
     if task == "register-callback":
         return {"token": _register_callback(event, store)}
     if task == "publish-bid-accepted":
@@ -258,6 +283,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
         )
     if task in {"reconcile-seller-swap", "reconcile-buyer-swap"}:
         swap_id = event.get("swapId")
+        if task == "reconcile-seller-swap":
+            saga_idpk = event.get("sagaExecutionId")
+            key = event.get("idempotencyKey") or saga_idpk
+            known = known_seller_swap_id(
+                store, saga_execution_id=saga_idpk, idempotency_key=key,
+            )
+            if swap_id is not None and swap_id != known:
+                raise SellerTerminalInconsistent("SELLER_RECONCILIATION_SWAP_ID_MISMATCH")
+            swap_id = known
         if not isinstance(swap_id, str) or not swap_id:
             raise ValueError("swapId es obligatorio")
         return _wallet_result(_build_wallet(store).get_swap(

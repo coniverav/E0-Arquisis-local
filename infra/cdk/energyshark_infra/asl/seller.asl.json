@@ -392,7 +392,8 @@
             "Lambda.SdkClientException",
             "Lambda.TooManyRequestsException",
             "WalletRetryable",
-            "WalletRateLimited"
+            "WalletRateLimited",
+            "SagaRecoveryPending"
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,

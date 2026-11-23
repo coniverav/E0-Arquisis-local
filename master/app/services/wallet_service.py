@@ -190,24 +190,27 @@ class WalletService:
         idpk = data.get("idpk")
         swap_id = data.get("swapId") or data.get("id")
 
+        # E3-043: serializar eventos de un mismo swap antes de leer su estado.
+        # El lock se mantiene hasta el commit de Wallet, ledger, HOLD y outbox.
+        # Dos envelopes distintos no pueden aplicar el mismo settlement en paralelo.
         record: Optional[SwapRecord] = None
         if swap_id:
             record = session.exec(
-                select(SwapRecord).where(SwapRecord.swap_id == swap_id)
+                select(SwapRecord).where(SwapRecord.swap_id == swap_id).with_for_update()
             ).first()
         if record is None and idpk:
             record = session.exec(
-                select(SwapRecord).where(SwapRecord.idpk == idpk)
+                select(SwapRecord).where(SwapRecord.idpk == idpk).with_for_update()
             ).first()
         if record is None and idpk:
             record = session.exec(
                 select(SwapRecord).where(
                     SwapRecord.accept_idempotency_key == idpk
-                )
+                ).with_for_update()
             ).first()
         if record is None and idpk:
             record = session.exec(
-                select(SwapRecord).where(SwapRecord.idempotency_key == idpk)
+                select(SwapRecord).where(SwapRecord.idempotency_key == idpk).with_for_update()
             ).first()
 
         if record is None:

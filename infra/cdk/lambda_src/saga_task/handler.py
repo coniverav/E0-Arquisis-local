@@ -16,6 +16,7 @@ from buyer_acceptance import (
     BuyerAcceptanceInconsistent, verify_buyer_acceptance_identity,
     prepare_buyer_acceptance, complete_buyer_acceptance_attempt,
 )
+from buyer_terminal import finalize_buyer
 
 
 logger = logging.getLogger()
@@ -330,8 +331,13 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             saga_execution_id=event.get("sagaExecutionId"),
         )
     if task == "finalize-saga":
+        if event.get("role") == "BUYER":
+            return finalize_buyer(
+                store, saga_execution_id=event.get("sagaExecutionId"),
+                result=event.get("result"),
+            )
         if event.get("role") != "SELLER":
-            raise SagaTaskNotImplemented("finalize-saga BUYER pendiente de E3-046")
+            raise SagaTaskNotImplemented("finalize-saga requiere rol soportado")
         return finalize_seller(
             store, saga_execution_id=event.get("sagaExecutionId"),
             status=event.get("status"),

@@ -1051,12 +1051,17 @@ class SagaTaskToken(SQLModel, table=True):
     wait_type: str = Field(index=True, nullable=False)
     correlation_idpk: Optional[str] = Field(default=None, index=True)
     swap_id: Optional[str] = Field(default=None, index=True)
-    # WAITING / SUCCEEDED / FAILED / EXPIRED / SUPERSEDED.
+    # WAITING / DISPATCHING / SUCCEEDED / AMBIGUOUS / FAILED / EXPIRED / SUPERSEDED.
     status: str = Field(default="WAITING", index=True, nullable=False)
     timeout_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
     )
     callback_idpk: Optional[str] = Field(default=None, index=True)
+    # E3-047: lease exclusivo para SendTaskSuccess; no modificar task_token.
+    claim_token: Optional[str] = Field(default=None)
+    claim_until: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
     )

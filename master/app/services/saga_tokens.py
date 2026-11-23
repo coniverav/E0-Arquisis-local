@@ -183,12 +183,14 @@ def register_task_token(
         select(SagaTaskToken).where(
             SagaTaskToken.saga_execution_id == execution.id,
             SagaTaskToken.wait_type == wait_type,
-            SagaTaskToken.status == "WAITING",
+            SagaTaskToken.status.in_(("WAITING", "DISPATCHING")),
         )
     ).all()
     for previous in previous_tokens:
         previous.status = "SUPERSEDED"
         previous.completed_at = now
+        previous.claim_token = None
+        previous.claim_until = None
         session.add(previous)
 
     token = SagaTaskToken(
@@ -294,13 +296,17 @@ def expire_waiting_task_tokens(
     now = now or _utcnow()
     expired = session.exec(
         select(SagaTaskToken).where(
-            SagaTaskToken.status == "WAITING",
+            SagaTaskToken.status.in_(("WAITING", "DISPATCHING")),
             SagaTaskToken.timeout_at <= now,
         )
     ).all()
     identifiers: list[int] = []
     for token in expired:
-        token.status = "EXPIRED"
+        # Un send ya reclamado podría haber llegado a AWS antes de caducar:
+        # conservar el caso incierto, no declararlo confirmación ni fracaso.
+        token.status = "AMBIGUOUS" if token.status == "DISPATCHING" else "EXPIRED"
+        token.claim_token = None
+        token.claim_until = None
         token.completed_at = now
         session.add(token)
         if token.id is not None:

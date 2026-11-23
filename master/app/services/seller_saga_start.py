@@ -6,13 +6,14 @@ No hace commit y NO llama AWS ni Wallet. El flag queda apagado por defecto.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import os
 
 from sqlmodel import Session, select
 
 from ..models import Cycle, MarketBid, OfferReservation, OutboundMessage, SwapRecord
 from .outbox_store import enqueue_saga_start
+from .saga_tokens import get_or_create_saga_execution
 from .seller_saga_intent import build_seller_execution_input
 
 
@@ -63,6 +64,21 @@ def enqueue_seller_saga_on_reserve(
             or swap.take_asset != "CR"):
         raise ValueError("SELLER_SAGA_RESERVATION_INCONSISTENT")
 
+    # AD7/AD8: correlación local y outbox participan del MISMO commit que HOLD.
+    # El task token usa idpk para resolver esta ejecución incluso si AWS aún
+    # no confirmó el ARN. El deadline no se inventa en cada reintento.
+    if cycle.market_closes_at.tzinfo is None:
+        raise ValueError("SELLER_MARKET_CLOSES_AT_TIMEZONE_REQUIRED")
+    closes_at = cycle.market_closes_at.astimezone(timezone.utc)
+    timeout_at = closes_at + timedelta(seconds=60)
+    execution, created = get_or_create_saga_execution(
+        session, idpk=bid.idpk, role="SELLER", cycle_id=bid.cycle_id,
+        timeout_at=timeout_at, now=now,
+    )
+    if not created:
+        # No duplicar la intención para una saga preexistente inconsistente.
+        raise RuntimeError("SELLER_SAGA_EXECUTION_ALREADY_EXISTS")
+
     # Idpk + maquina identifican una sola ejecucion en AD7. No generar otro
     # msgId si se procesa el mismo bid ya reservado (lo evita el caller).
     execution_input = build_seller_execution_input(
@@ -71,7 +87,7 @@ def enqueue_seller_saga_on_reserve(
         buyer_city_id=bid.counterpart_city_id, quantity_kwh=bid.quantity,
         give_amount=swap.give_amount, take_amount=swap.take_amount,
         wallet_idempotency_key=swap.idempotency_key,
-        market_closes_at=cycle.market_closes_at,
+        market_closes_at=closes_at,
     )
     # No fijar expires_at del OUTBOX a closesAt: si el relay se recupera luego
     # la saga aun debe iniciar y compensar la reserva, no quedar descartada.

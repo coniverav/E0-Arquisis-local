@@ -6,9 +6,10 @@ se recalculan con la oferta actual.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 
 def _iso8601(value: datetime) -> str:
@@ -48,12 +49,24 @@ def build_seller_execution_input(
     if (not give.is_finite() or not take.is_finite() or give != quantity_kwh
             or take < 0 or take != take.quantize(Decimal("0.01"))):
         raise ValueError("SELLER_INVALID_SWAP_AMOUNTS")
+    closes_at = _iso8601(market_closes_at)
+    # Una identidad de cancelación estable para el futuro adaptador Wallet:
+    # no reutilizar la llave del POST /swaps ni inventar una en cada retry.
+    cancel_key = str(uuid5(NAMESPACE_URL, f"energyshark:seller:cancel:{bid_idpk}"))
     return {
         "schemaVersion": 1,
         "role": "SELLER",
         "idpk": bid_idpk,
         "cycleId": cycle_id,
-        "marketClosesAt": _iso8601(market_closes_at),
+        "marketClosesAt": closes_at,
+        # Contrato plano consumido por los JSONPath de seller.asl.json.
+        # sagaExecutionId es un idpk: PostgresStore._lock_execution permite
+        # resolver esa identidad incluso antes del ACK de StartExecution.
+        "sagaExecutionId": bid_idpk,
+        "offerId": offer_id,
+        "quantity": quantity_kwh,
+        "timeoutAt": _iso8601(market_closes_at + timedelta(seconds=60)),
+        "timeouts": {"proposalSeconds": 30, "terminalSeconds": 30},
         "bid": {
             "idpk": bid_idpk,
             "msgId": bid_msg_id,
@@ -64,6 +77,7 @@ def build_seller_execution_input(
         "swap": {
             "idpk": bid_idpk,
             "idempotencyKey": wallet_idempotency_key,
+            "cancelIdempotencyKey": cancel_key,
             "give": {"asset": "KWH", "amount": str(give)},
             "take": {"asset": "CR", "amount": f"{take:.2f}"},
             "memo": offer_id,

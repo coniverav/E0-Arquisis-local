@@ -34,6 +34,8 @@ from constructs import Construct
 from energyshark_infra.api_routes import API_ROUTES
 from energyshark_infra.config import DeploymentSettings, log_retention_for
 
+AGENT_METRIC_NAMESPACE = "EnergyShark/Host"
+
 
 class ExistingInfrastructureStack(Stack):
     """Recursos E2 reproducibles en una cuenta limpia."""
@@ -60,6 +62,7 @@ class ExistingInfrastructureStack(Stack):
 
         self.vpc = self._network(config)
         self.security_group = self._security_group(config)
+        self.host_log_group = self._host_log_group()
         self.instance = self._compute(config)
         self.bucket = self._storage(config)
         self.distribution = self._frontend(config)
@@ -126,20 +129,63 @@ class ExistingInfrastructureStack(Stack):
             )
         return group
 
+    def _host_log_group(self) -> logs.LogGroup:
+        return logs.LogGroup(
+            self,
+            "HostLogGroup",
+            log_group_name="/energyshark/host",
+            retention=log_retention_for(self.settings.log_retention_days),
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
     def _compute(self, config) -> ec2.Instance:
         role = iam.Role(
             self,
             "ApplicationInstanceRole",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
-            description="Rol del host: Session Manager y CloudWatch agent",
+            description="Rol del host: Session Manager y agente CloudWatch acotado",
             managed_policies=[
+                # AWS lo publica como el conjunto mínimo para Session Manager:
+                # ssm, ssmmessages y ec2messages.
                 iam.ManagedPolicy.from_aws_managed_policy_name(
                     "AmazonSSMManagedInstanceCore"
                 ),
-                iam.ManagedPolicy.from_aws_managed_policy_name(
-                    "CloudWatchAgentServerPolicy"
-                ),
             ],
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                sid="PublishHostMetrics",
+                actions=["cloudwatch:PutMetricData"],
+                resources=["*"],
+                conditions={
+                    "StringEquals": {"cloudwatch:namespace": AGENT_METRIC_NAMESPACE}
+                },
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                sid="WriteAgentLogs",
+                actions=[
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                    "logs:DescribeLogStreams",
+                ],
+                resources=[
+                    self.host_log_group.log_group_arn,
+                    f"{self.host_log_group.log_group_arn}:*",
+                ],
+            )
+        )
+        role.add_to_policy(
+            iam.PolicyStatement(
+                sid="DescribeHostForDimensions",
+                actions=[
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeVolumes",
+                ],
+                resources=["*"],
+            )
         )
 
         instance = ec2.Instance(

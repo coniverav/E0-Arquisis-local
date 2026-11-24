@@ -27,13 +27,17 @@ class InfrastructureBaseTest(unittest.TestCase):
             "EnergySharkDev-Monitoring",
         )
 
-    def test_unmigrated_stack_boundaries_remain_empty(self) -> None:
+    def test_every_stack_boundary_declares_resources(self) -> None:
         for stack in (
             self.stacks.existing,
+            self.stacks.sagas,
             self.stacks.monitoring,
         ):
             template = Template.from_stack(stack).to_json()
-            self.assertEqual(template.get("Resources", {}), {})
+            self.assertTrue(
+                template.get("Resources", {}),
+                f"{stack.stack_name} no declara recursos",
+            )
 
     def test_saga_stack_is_declared_separately(self) -> None:
         template = Template.from_stack(self.stacks.sagas).to_json()

@@ -38,6 +38,7 @@ def build_app(
     existing = ExistingInfrastructureStack(
         app,
         f"{settings.stack_prefix}-ExistingInfrastructure",
+        settings=settings,
         **common,
     )
     sagas = SagasStack(
@@ -49,6 +50,9 @@ def build_app(
     monitoring = MonitoringStack(
         app,
         f"{settings.stack_prefix}-Monitoring",
+        settings=settings,
+        api=existing.api,
+        instance=existing.instance,
         **common,
     )
 

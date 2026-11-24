@@ -1,0 +1,100 @@
+# E3-079: entorno aislado para probar la caída post-commit del outbox.
+#
+# No reutiliza docker-compose.yml a propósito: ese archivo apunta al broker
+# público y a la base de datos del despliegue. Aquí todo es local, efímero y
+# sin credenciales reales. Se levanta con:
+#
+#   docker compose -f docker-compose.e3-079.yml up -d --build db rabbitmq migrate master
+#
+# El relay se arranca y se detiene desde tools/e3_079_outbox_crash.py.
+name: energyshark-e3079
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: e3079
+      POSTGRES_USER: e3079
+      POSTGRES_PASSWORD: e3079
+    # tmpfs: la base desaparece al bajar el entorno; nunca toca un volumen real.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e3079 -d e3079"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: e3079
+      RABBITMQ_DEFAULT_PASS: e3079
+    ports:
+      # Solo para declarar exchanges/colas y leer mensajes desde el driver.
+      - "127.0.0.1:15679:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build: ./master
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://e3079:e3079@db:5432/e3079
+    depends_on:
+      db:
+        condition: service_healthy
+
+  master:
+    build: ./master
+    environment:
+      DATABASE_URL: postgresql+psycopg://e3079:e3079@db:5432/e3079
+      INSTANCE_NAME: master-e3079
+      CITY_ID: KLD
+      RABBITMQ_CENTRAL_ROUTING_KEY: central
+      CORS_ALLOWED_ORIGINS: http://localhost
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Proceso de relay aislado: solo publica outbox hacia RabbitMQ, sin consumidor.
+  # El driver lo arranca y lo detiene para simular la caída del proceso.
+  relay:
+    build: ./connector
+    command: ["python", "relay_only.py"]
+    environment:
+      # RabbitMQ exige que la propiedad user_id del mensaje coincida con el
+      # usuario autenticado; el despliegue real publica como city.KLD.
+      RABBITMQ_URL: amqp://city.KLD:city.KLD@rabbitmq:5672/
+      RABBITMQ_QUEUE: city.KLD.q
+      RABBITMQ_MARKET_QUEUE: market.KLD
+      CITY_ID: KLD
+      RABBITMQ_OUTBOUND_EXCHANGE: energy.x
+      RABBITMQ_MARKET_EXCHANGE: market
+      RABBITMQ_CENTRAL_ROUTING_KEY: central
+      MASTER_OUTBOX_RELAY_CLAIM_URL: http://master:8000/internal/outbox-relay/claims
+      MASTER_OUTBOX_RELAY_RESULT_URL: http://master:8000/internal/outbox-relay
+      E3_BROKER_OUTBOX_RELAY_ENABLED: "true"
+      E3_SAGA_OUTBOX_RELAY_ENABLED: "false"
+      E3_BUYER_CALLBACK_RELAY_ENABLED: "false"
+      E3_OUTBOX_RELAY_POLL_SECONDS: "1"
+      E3_OUTBOX_RELAY_LEASE_SECONDS: "5"
+      CONNECTOR_RETRY_SECONDS: "1"
+    depends_on:
+      master:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    # Sin healthcheck: este proceso no expone HTTP y el driver decide cuándo vive.
+    healthcheck:
+      disable: true

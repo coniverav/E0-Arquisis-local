@@ -173,7 +173,7 @@ class BuyerAcceptanceTests(unittest.TestCase):
                 assert kwargs['idempotency_key'] == KEY
                 return WalletResult(202, {'status': 'accepted'}, True, KEY)
         with patch.object(handler, 'verify_buyer_acceptance_identity',
-                          side_effect=lambda *_args, **_kwargs: {'status': 'SUBMITTED'}), \
+                          side_effect=lambda *_args, **_kwargs: {'status': 'SUBMITTED', 'deadlineAt': NOW + timedelta(seconds=25)}), \
              patch.object(handler, 'prepare_buyer_acceptance',
                           side_effect=lambda *_args, **_kwargs: (order.append('prepared') or {'action': 'POST'})), \
              patch.object(handler, 'complete_buyer_acceptance_attempt') as complete, \
@@ -190,7 +190,8 @@ class BuyerAcceptanceTests(unittest.TestCase):
         class Wallet:
             def accept(self, **kwargs):
                 return WalletResult(200, {'status': 'settled', 'swapId': SWAP}, False, KEY)
-        with patch.object(handler, 'verify_buyer_acceptance_identity', return_value={}), \
+        with patch.object(handler, 'verify_buyer_acceptance_identity',
+                          return_value={'deadlineAt': NOW + timedelta(seconds=25)}), \
              patch.object(handler, 'prepare_buyer_acceptance', return_value={'action': 'POST'}), \
              patch.object(handler, 'complete_buyer_acceptance_attempt'), \
              patch.object(handler, '_complete_known_callback') as callback:

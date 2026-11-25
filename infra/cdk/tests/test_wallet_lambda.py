@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import importlib
 import sys
 import unittest
@@ -68,6 +69,7 @@ class WalletClientTest(unittest.TestCase):
             transport=transport,
             sleep=clock.sleep,
             monotonic=clock.monotonic,
+            uniform=lambda low, high: high,
         )
         return client, quota, transport, clock
 
@@ -174,6 +176,9 @@ class TokenBeforeWalletTest(unittest.TestCase):
 
         class Store:
             status = "WAITING"
+
+            def now(self):
+                return datetime.now(timezone.utc)
 
             def register_task_token(self, **kwargs):
                 order.append("token-committed")

@@ -73,7 +73,7 @@ def _parse_instant(value: Any, field: str) -> datetime:
 
 def _remaining_seconds(context: Any) -> float:
     getter = getattr(context, "get_remaining_time_in_millis", None)
-    return max(0.1, (getter() / 1000.0) - 1.0) if getter else 20.0
+    return max(0.0, (getter() / 1000.0) - 1.0) if getter else 20.0
 
 
 def _build_store() -> PostgresStore:
@@ -182,7 +182,7 @@ def _callback_wallet_task(
     if task == "buyer-acceptance":
         # Un payload falso NO puede sustituir el token válido de una espera:
         # primero verificar idpk, swapId, rol, bid y fila económica en DB.
-        verify_buyer_acceptance_identity(
+        identity = verify_buyer_acceptance_identity(
             store, saga_execution_id=event.get("sagaExecutionId"),
             swap_record_id=event.get("swapRecordId"),
             swap_id=event.get("swapId"), idempotency_key=key,
@@ -193,7 +193,7 @@ def _callback_wallet_task(
     if token["status"] != "WAITING":
         return {"callbackAlreadyCompleted": True}
 
-    deadline = _remaining_seconds(context)
+    timeout_at = _parse_instant(event.get("timeoutAt"), "timeoutAt")
     if task == "seller-proposal":
         swap = event.get("swap")
         if not isinstance(swap, dict):
@@ -208,7 +208,11 @@ def _callback_wallet_task(
         result = wallet.propose(
             idempotency_key=key,
             swap=proposal_body,
-            deadline_seconds=deadline,
+            deadline_seconds=min(
+                _remaining_seconds(context),
+                (min(timeout_at, _parse_instant(proposal_body["expiresAt"], "expiresAt"))
+                 - store.now()).total_seconds(),
+            ),
         )
     elif task == "buyer-acceptance":
         data = {
@@ -225,7 +229,10 @@ def _callback_wallet_task(
             result = wallet.accept(
                 swap_id=data["swap_id"],
                 idempotency_key=key,
-                deadline_seconds=deadline,
+                deadline_seconds=min(
+                    _remaining_seconds(context),
+                    (min(timeout_at, identity["deadlineAt"]) - store.now()).total_seconds(),
+                ),
             )
             returned_swap = result.data.get("swapId")
             if returned_swap is not None and returned_swap != data["swap_id"]:
@@ -252,6 +259,10 @@ def _callback_wallet_task(
 
     known = _known_outcome(result)
     if known is not None:
+        if known["outcome"] == "PROPOSED":
+            # El replay oficial sitúa expiresAt en lastEvent.data. El cuerpo
+            # congelado conserva el mismo vencimiento y evita perderlo en ASL.
+            known["expiresAt"] = proposal_body["expiresAt"]
         _complete_known_callback(
             task_token=str(event["taskToken"]),
             outcome=known,

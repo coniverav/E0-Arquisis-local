@@ -127,7 +127,9 @@
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,
-          "BackoffRate": 2.0
+          "BackoffRate": 2.0,
+          "MaxDelaySeconds": 8,
+          "JitterStrategy": "FULL"
         }
       ],
       "Catch": [
@@ -205,7 +207,9 @@
           ],
           "IntervalSeconds": 2,
           "MaxAttempts": 4,
-          "BackoffRate": 2.0
+          "BackoffRate": 2.0,
+          "MaxDelaySeconds": 8,
+          "JitterStrategy": "FULL"
         }
       ],
       "Catch": [

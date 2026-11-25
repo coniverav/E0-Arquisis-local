@@ -1,7 +1,9 @@
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import json
 from uuid import UUID
 
+from anyio import create_task_group
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, exists, func
@@ -14,6 +16,7 @@ from .models import Demand, Event, ProtocolError
 from .services.budget_carryover import lock_city_ledger
 from .services.negotiation_report_dispatch import process_report_error
 from .services.negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
+from .services.sse_projection import run_sse_projector
 from .schemas import (
     DemandPayload,
     EventOut,
@@ -49,9 +52,21 @@ from .services.negotiation_state import (
     transition_negotiation,
 )
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    async with create_task_group() as tasks:
+        tasks.start_soon(run_sse_projector)
+        try:
+            yield
+        finally:
+            tasks.cancel_scope.cancel()
+
+
 app = FastAPI(
     title="EnergyShark E2 API",
     version="3.0.2",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

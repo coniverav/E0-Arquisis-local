@@ -1,12 +1,9 @@
-"""E3-032/E3-033: authenticated, sanitized, durable SSE event feed.
-
-Browser consumers use streaming fetch + Authorization: Bearer, not EventSource
-with a token in a URL. Backend DB reads are bounded; no browser polling.
-"""
+"""Authenticated SSE replay for the node's shared operator feed."""
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
@@ -16,30 +13,28 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import verify_jwt
 from ..database import engine
+from ..services.sse_projection import BATCH_SIZE
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=['events'])
-MAX_BATCH = 100
 POLL_SECONDS = 1.5
 HEARTBEAT_SECONDS = 15.0
 _CURSOR_RE = re.compile(r'(?:0|[1-9][0-9]{0,18})\Z')
 
 
 def authorize_sse(claims: dict = Depends(verify_jwt)) -> dict[str, Any]:
-    """Match the existing authenticated operator policy for /audit/*.
-
-    Optional Auth0 RBAC hardening: SSE_REQUIRED_SCOPE=read:events.
-    Empty default preserves the current /audit/v3 identity-based access model.
-    """
-    if not isinstance(claims, dict) or not str(claims.get('sub') or '').strip():
+    subject = claims.get('sub') if isinstance(claims, dict) else None
+    if not isinstance(subject, str) or not subject.strip():
         raise HTTPException(status_code=403, detail='User identity required')
-    required = os.getenv('SSE_REQUIRED_SCOPE', '').strip()
-    granted = str(claims.get('scope') or '').split()
-    if required and required not in granted:
+    required = os.getenv('SSE_REQUIRED_SCOPE', '').strip() or 'read:events'
+    scope = claims.get('scope')
+    if not isinstance(scope, str) or required not in scope.split():
         raise HTTPException(status_code=403, detail='Missing SSE permission')
     return claims
 
@@ -55,76 +50,46 @@ def parse_cursor(raw: str | None) -> int:
     return value
 
 
-def project_committed_events(limit: int = MAX_BATCH) -> int:
-    """Publish a bounded batch of *committed* staging rows.
+def read_batch(after_id: int, *, subject: str) -> list[dict]:
+    """Read authorization, the high-water mark and one page in one snapshot."""
+    try:
+        with Session(engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            rows = session.execute(text('''
+                SELECT cursor.last_id, revocation.subject IS NOT NULL AS revoked,
+                       EXISTS (SELECT 1 FROM sse_feed_events WHERE id = :after_id) AS checkpoint,
+                       events.*
+                FROM sse_feed_cursor AS cursor
+                LEFT JOIN sse_feed_revocations AS revocation ON revocation.subject = :subject
+                LEFT JOIN LATERAL (
+                    SELECT id, event_type, source, message_type, status, cycle_id, occurred_at
+                    FROM sse_feed_events
+                    WHERE id > :after_id AND id <= cursor.last_id AND revocation.subject IS NULL
+                    ORDER BY id LIMIT :batch
+                ) AS events ON true
+                WHERE cursor.singleton_id = 1
+                ORDER BY events.id
+            '''), {'after_id': after_id, 'subject': subject, 'batch': BATCH_SIZE}).mappings().all()
+    except SQLAlchemyError as exc:
+        logger.error('SSE replay query failed (%s)', type(exc).__name__)
+        raise HTTPException(status_code=503, detail='SSE replay unavailable') from exc
 
-    The global cursor lock is acquired here, outside business transactions.
-    Two projectors serialize with each other, but never block outbox writers.
-    All inserts, cursor updates and staging deletes commit atomically.
-    """
-    with Session(engine) as session:
-        with session.begin():
-            cursor = int(session.execute(text(
-                'SELECT last_id FROM sse_feed_cursor WHERE singleton_id = 1 FOR UPDATE'
-            )).scalar_one())
-            pending = session.execute(text('''
-                SELECT ingest_id, event_type, source, source_id,
-                       message_type, status, cycle_id, occurred_at
-                FROM sse_feed_pending
-                ORDER BY ingest_id
-                LIMIT :limit
-                FOR UPDATE
-            '''), {'limit': limit}).mappings().all()
-            for row in pending:
-                cursor += 1
-                session.execute(text('''
-                    INSERT INTO sse_feed_events
-                      (id, event_type, source, source_id, message_type,
-                       status, cycle_id, occurred_at)
-                    VALUES
-                      (:id, :event_type, :source, :source_id,
-                       :message_type, :status, :cycle_id, :occurred_at)
-                '''), {
-                    'id': cursor,
-                    'event_type': row['event_type'],
-                    'source': row['source'],
-                    'source_id': row['source_id'],
-                    'message_type': row['message_type'],
-                    'status': row['status'],
-                    'cycle_id': row['cycle_id'],
-                    'occurred_at': row['occurred_at'],
-                })
-                session.execute(text(
-                    'DELETE FROM sse_feed_pending WHERE ingest_id = :ingest_id'
-                ), {'ingest_id': row['ingest_id']})
-            if pending:
-                session.execute(text('''
-                    UPDATE sse_feed_cursor SET last_id = :cursor
-                    WHERE singleton_id = 1
-                '''), {'cursor': cursor})
-        return len(pending)
-
-
-def read_batch(after_id: int) -> list[dict]:
-    """Short, isolated DB session per bounded fetch; no long DB transactions."""
-    project_committed_events()
-    with Session(engine) as session:
-        result = session.execute(text('''
-          SELECT id, event_type, source, message_type, status, cycle_id, occurred_at
-          FROM sse_feed_events
-          WHERE id > :cursor
-          ORDER BY id ASC
-          LIMIT :batch
-        '''), {'cursor': after_id, 'batch': MAX_BATCH})
-        return [dict(row._mapping) for row in result]
-
-
-def last_committed_cursor() -> int:
-    project_committed_events()
-    with Session(engine) as session:
-        return int(session.execute(text(
-            'SELECT last_id FROM sse_feed_cursor WHERE singleton_id = 1'
-        )).scalar_one())
+    if not rows:
+        logger.error('SSE cursor state is missing')
+        raise HTTPException(status_code=503, detail='SSE replay unavailable')
+    state = rows[0]
+    if state['revoked']:
+        raise HTTPException(status_code=403, detail='SSE access revoked')
+    if after_id > state['last_id']:
+        raise HTTPException(status_code=409, detail='SSE cursor is ahead of the server')
+    events = [dict(row) for row in rows if row['id'] is not None]
+    expected_count = min(BATCH_SIZE, state['last_id'] - after_id)
+    if (after_id and not state['checkpoint']) or len(events) != expected_count or any(
+        row['id'] != expected_id for expected_id, row in enumerate(events, start=after_id + 1)
+    ):
+        logger.error('SSE replay history has a gap after cursor %d', after_id)
+        raise HTTPException(status_code=503, detail='SSE replay unavailable')
+    return events
 
 
 def public_event(row: dict) -> dict[str, Any]:
@@ -133,7 +98,6 @@ def public_event(row: dict) -> dict[str, Any]:
     if isinstance(when, datetime):
         when_str = when.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
     else:
-        # The DB driver should return datetime; this is defensive only.
         raise ValueError('Unexpected SSE timestamp')
     return {
         'id': int(row['id']),
@@ -155,51 +119,66 @@ def encode_sse(row: dict) -> str:
     return f"id: {event['id']}\nevent: {event['type']}\ndata: {payload}\n\n"
 
 
-async def sse_messages(request: Request, *, after_id: int, expires_at: int | None):
-    """Stream committed events and keep-alive frames, without busy looping."""
+async def sse_messages(request: Request, *, after_id: int, subject: str, expires_at: int | float):
+    """Stream confirmed events without keeping a DB transaction across frames."""
     cursor = after_id
     last_heartbeat = time.monotonic()
-    try:
-        while not await request.is_disconnected():
-            if expires_at is not None and time.time() >= expires_at:
-                return  # Force client to refresh JWT before reconnecting.
-            rows = await run_in_threadpool(read_batch, cursor)
-            if rows:
-                for row in rows:
-                    if await request.is_disconnected():
-                        return
-                    if expires_at is not None and time.time() >= expires_at:
-                        return
-                    yield encode_sse(row)
-                    cursor = int(row['id'])
-                last_heartbeat = time.monotonic()
-                continue
-            if time.monotonic() - last_heartbeat >= HEARTBEAT_SECONDS:
-                yield ': heartbeat\n\n'
-                last_heartbeat = time.monotonic()
-            await asyncio.sleep(POLL_SECONDS)
-    except asyncio.CancelledError:
-        raise
-    # Do not leak driver errors or internal exceptions as SSE payloads.
+    while time.time() < expires_at and not await request.is_disconnected():
+        try:
+            rows = await run_in_threadpool(read_batch, cursor, subject=subject)
+        except HTTPException:
+            # Headers have already been sent. Close so the client can reconnect.
+            return
+        checked_at = time.monotonic()
+        if time.time() >= expires_at:
+            return
+        if rows:
+            for row in rows:
+                if await request.is_disconnected() or time.time() >= expires_at:
+                    return
+                if time.monotonic() - checked_at >= POLL_SECONDS:
+                    break  # Refresh authorization before sending more to a slow client.
+                yield encode_sse(row)
+                cursor = row['id']
+            last_heartbeat = time.monotonic()
+            continue
+        if checked_at - last_heartbeat >= HEARTBEAT_SECONDS:
+            yield ': heartbeat\n\n'
+            last_heartbeat = checked_at
+        await asyncio.sleep(min(POLL_SECONDS, max(0, expires_at - time.time())))
 
 
-@router.get('/events/stream', summary='E3-033 authenticated SSE feed')
+@router.get(
+    '/events/stream',
+    summary='Replay and stream operator events',
+    response_class=StreamingResponse,
+    responses={
+        200: {'description': 'Event stream', 'content': {'text/event-stream': {}}},
+        400: {'description': 'Malformed Last-Event-ID'},
+        401: {'description': 'Missing, invalid or expired token'},
+        403: {'description': 'Missing permission or revoked access'},
+        409: {'description': 'Last-Event-ID is ahead of the published cursor'},
+        503: {'description': 'Replay or authentication unavailable'},
+    },
+)
 async def stream_events(
     request: Request,
     last_event_id: str | None = Header(None, alias='Last-Event-ID'),
     claims: dict = Depends(authorize_sse),
 ):
+    expires_at = claims.get('exp')
+    if type(expires_at) not in (int, float) or not time.time() < expires_at < float('inf'):
+        raise HTTPException(status_code=401, detail='Invalid or expired SSE token')
     cursor = parse_cursor(last_event_id)
-    newest = await run_in_threadpool(last_committed_cursor)
-    if cursor > newest:
-        raise HTTPException(status_code=409, detail='SSE cursor is ahead of the server')
-    exp_raw = claims.get('exp')
-    expires_at = int(exp_raw) if isinstance(exp_raw, (int, float)) else None
+    subject = claims['sub']
+    await run_in_threadpool(read_batch, cursor, subject=subject)
+    if time.time() >= expires_at:
+        raise HTTPException(status_code=401, detail='Invalid or expired SSE token')
     return StreamingResponse(
-        sse_messages(request, after_id=cursor, expires_at=expires_at),
+        sse_messages(request, after_id=cursor, subject=subject, expires_at=expires_at),
         media_type='text/event-stream',
         headers={
-            'Cache-Control': 'no-cache, no-transform',
+            'Cache-Control': 'no-cache, no-store, no-transform',
             'X-Accel-Buffering': 'no',
         },
     )

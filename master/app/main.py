@@ -37,6 +37,7 @@ from .routers.seller_offer_actions import router as seller_offer_actions_router
 from .routers.market_api import router as market_api_router
 from .routers.cycle_metrics_api import router as cycle_metrics_api_router
 from .routers.audit_v3 import router as audit_v3_router
+from .routers.sse_feed import router as sse_feed_router
 from .routers.negotiations import router as negotiations_router
 from .routers.outbox_relay import router as outbox_relay_router
 from .routers.saga_callbacks import router as saga_callbacks_router
@@ -74,6 +75,7 @@ app.include_router(seller_offer_actions_router)
 app.include_router(market_api_router)
 app.include_router(cycle_metrics_api_router)
 app.include_router(audit_v3_router)
+app.include_router(sse_feed_router)
 app.include_router(outbox_relay_router)
 app.include_router(saga_callbacks_router)
 app.include_router(saga_recovery_router)

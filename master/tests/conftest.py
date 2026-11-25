@@ -21,14 +21,14 @@ def preparar_base_de_pruebas():
 
 @pytest.fixture(autouse=True)
 def aislar_datos_entre_tests(preparar_base_de_pruebas):
-    """Limpia todos los datos antes de cada test."""
+    """Limpia los datos sin eliminar el cursor de control SSE."""
 
     inspector = inspect(engine)
 
     tablas = [
         tabla
         for tabla in inspector.get_table_names(schema="public")
-        if tabla != "alembic_version"
+        if tabla not in ("alembic_version", "sse_feed_cursor")
     ]
 
     if tablas:
@@ -45,6 +45,17 @@ def aislar_datos_entre_tests(preparar_base_de_pruebas):
                     f"TRUNCATE TABLE {nombres} "
                     "RESTART IDENTITY CASCADE"
                 )
+            )
+
+            # Restaurar cursor inicial para cada test.
+            conexion.execute(
+                text("""
+                    INSERT INTO public.sse_feed_cursor
+                        (singleton_id, last_id)
+                    VALUES (1, 0)
+                    ON CONFLICT (singleton_id)
+                    DO UPDATE SET last_id = 0
+                """)
             )
 
     yield

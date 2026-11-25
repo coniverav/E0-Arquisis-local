@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
+from math import ceil
 from typing import Any, Callable, Mapping
 
 
@@ -44,6 +45,7 @@ class PostgresStore:
         self.city_id = city_id
         self.connect = connect
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self.quota_now = now
 
     def register_task_token(
         self,
@@ -89,10 +91,13 @@ class PostgresStore:
                         and existing[2] == wait_type
                         and existing[3] == correlation_idpk
                         and existing[4] == swap_id
-                        and existing[5] == timeout_at
                     )
                     if not same:
                         raise ValueError("Task token reutilizado con otra correlación")
+                    if existing[5] <= now and existing[6] == "WAITING":
+                        raise ValueError("El task token ya está vencido")
+                    # Una reentrega conserva el vencimiento original aunque
+                    # el handler vuelva a calcular su margen de 29 segundos.
                     return {"id": existing[0], "status": existing[6], "created": False}
 
                 cursor.execute(
@@ -152,7 +157,6 @@ class PostgresStore:
         limits = {"wallet:read": 300, "wallet:write": 120}
         if category not in limits:
             raise ValueError("Categoría de cuota no soportada")
-        now = self.now()
         key = f"{self.city_id}:{category}"
         with self.connect(self.dsn) as connection:
             with connection.cursor() as cursor:
@@ -171,18 +175,20 @@ class PostgresStore:
                     (key,),
                 )
                 attempts, blocked_until = cursor.fetchone()
+                now = self._quota_time(cursor)
                 if blocked_until is not None and blocked_until > now:
-                    return max(1, int((blocked_until - now).total_seconds() + 0.999))
+                    return max(1, ceil((blocked_until - now).total_seconds()))
                 recent = sorted(
                     datetime.fromisoformat(value).astimezone(timezone.utc)
                     for value in (attempts or [])
                     if datetime.fromisoformat(value).astimezone(timezone.utc)
                     > now - timedelta(seconds=60)
                 )
-                if len(recent) >= limits[category]:
+                limit = self._limit(cursor, category, limits[category])
+                if len(recent) >= limit:
                     return max(
                         1,
-                        int((recent[0] + timedelta(seconds=60) - now).total_seconds() + 0.999),
+                        ceil((recent[-limit] + timedelta(seconds=60) - now).total_seconds()),
                     )
                 recent.append(now)
                 cursor.execute(
@@ -192,13 +198,35 @@ class PostgresStore:
             connection.commit()
         return 0
 
+    def _quota_time(self, cursor: Any) -> datetime:
+        # La hora se lee después del lock. Todas las réplicas usan el mismo
+        # reloj aunque una Lambda haya esperado para adquirir la fila.
+        if self.quota_now is not None:
+            return self.quota_now()
+        cursor.execute("SELECT clock_timestamp()")
+        return cursor.fetchone()[0]
+
+    @staticmethod
+    def _limit(cursor: Any, category: str, maximum: int) -> int:
+        field = {"wallet:read": "walletReadsPerMinute",
+                 "wallet:write": "walletWritesPerMinute"}[category]
+        cursor.execute(
+            """SELECT status_payload FROM cycles WHERE status_idpk IS NOT NULL
+               ORDER BY market_opens_at DESC NULLS LAST LIMIT 1"""
+        )
+        row = cursor.fetchone()
+        market = (row[0] or {}).get("market") if row else None
+        limits = market.get("limits") if isinstance(market, dict) else None
+        value = limits.get(field) if isinstance(limits, dict) else None
+        return min(maximum, value) if type(value) is int and value > 0 else maximum
+
     def block(self, category: str, seconds: int) -> None:
-        if seconds < 0:
+        if category not in {"wallet:read", "wallet:write"} or seconds < 0:
             raise ValueError("Retry-After inválido")
-        deadline = self.now() + timedelta(seconds=seconds)
         key = f"{self.city_id}:{category}"
         with self.connect(self.dsn) as connection:
             with connection.cursor() as cursor:
+                deadline = self._quota_time(cursor) + timedelta(seconds=seconds)
                 cursor.execute(
                     """
                     INSERT INTO operational_rate_limits (key, attempts, blocked_until)

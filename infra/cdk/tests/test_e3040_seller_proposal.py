@@ -147,6 +147,9 @@ class SellerProposalTest(unittest.TestCase):
     def test_http_202_does_not_complete_callback(self):
         history = []
         class TokenStore:
+            def now(self):
+                return NOW
+
             def register_task_token(self, **kwargs):
                 history.append('token-persisted')
                 return {'status': 'WAITING', 'id': 1}
@@ -183,6 +186,9 @@ class SellerProposalTest(unittest.TestCase):
 
     def test_http_200_proposed_may_resume_callback(self):
         class Store:
+            def now(self):
+                return NOW
+
             def register_task_token(self, **kwargs):
                 return {'status': 'WAITING', 'id': 1}
         class Wallet:
@@ -195,7 +201,8 @@ class SellerProposalTest(unittest.TestCase):
                  'correlationIdpk': IDPK, 'idempotencyKey': IDPK,
                  'operation': 'PROPOSE', 'swap': BODY,
                  'timeoutAt': '2099-01-01T00:00:00Z'}
-        with patch.object(handler, 'prepare_seller_proposal', return_value={}) as prep, \
+        with patch.object(handler, 'prepare_seller_proposal',
+                          return_value={'expiresAt': '2026-11-25T15:00:00Z'}) as prep, \
              patch.object(handler, '_complete_known_callback') as success:
             handler._callback_wallet_task('seller-proposal', event, object(), Store(), Wallet())
         prep.assert_called_once()

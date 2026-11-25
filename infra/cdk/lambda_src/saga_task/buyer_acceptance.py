@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-from errors import WalletRetryable
+from errors import WalletPermanent, WalletRetryable
 
 
 class BuyerAcceptanceInconsistent(ValueError):
@@ -123,7 +123,7 @@ def verify_buyer_acceptance_identity(
         row, saga_execution_id=saga_execution_id, swap_id=swap_id,
         key=idempotency_key,
     )
-    return {"status": status, "attempts": attempts}
+    return {"status": status, "attempts": attempts, "deadlineAt": min(expiry, close)}
 
 
 def prepare_buyer_acceptance(
@@ -149,6 +149,9 @@ def prepare_buyer_acceptance(
                 return {"action": "AWAIT_EVENT", "reason": "TERMINAL_ALREADY_PERSISTED"}
             if status == "ACCEPT_SUBMITTED" and error in (None, "WALLET_TERMINAL_PENDING_EVENT"):
                 return {"action": "AWAIT_EVENT", "reason": "HTTP_ALREADY_ACCEPTED"}
+            if error in {"WalletPermanent", "WalletRejected", "WalletIdempotencyMismatch",
+                         "WalletUnauthorized", "WalletNotFound"}:
+                raise WalletPermanent("Aceptación Wallet rechazada definitivamente")
             if retry_at is not None and _utc(retry_at, "BUYER_ACCEPTANCE_RETRY_INVALID") > now:
                 raise WalletRetryable("Aceptación Wallet en vuelo o en backoff")
             # La verificación criptográfica se ejecutó en el paso E3-045,

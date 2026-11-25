@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 import socket
 import time
 from dataclasses import dataclass
+from http.client import IncompleteRead
 from typing import Any, Callable, Mapping, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -26,6 +29,12 @@ class WalletConfig:
     timeout_seconds: float = 10.0
     max_attempts: int = 4
 
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("Timeout Wallet debe ser positivo y finito")
+        if type(self.max_attempts) is not int or not 1 <= self.max_attempts <= 4:
+            raise ValueError("Wallet admite entre 1 y 4 intentos por invocación")
+
     @classmethod
     def from_secret(cls, secret: Mapping[str, Any]) -> "WalletConfig":
         base_url = secret.get("baseUrl") or secret.get("WALLET_BASE_URL")
@@ -40,8 +49,6 @@ class WalletConfig:
             timeout_seconds=float(secret.get("timeoutSeconds", 10.0)),
             max_attempts=int(secret.get("maxAttempts", 4)),
         )
-        if config.timeout_seconds <= 0 or config.max_attempts <= 0:
-            raise ValueError("Timeout e intentos Wallet deben ser positivos")
         return config
 
 
@@ -98,10 +105,16 @@ class UrllibTransport:
                     _json_object(payload),
                 )
         except HTTPError as exc:
+            # Un proxy puede entregar HTML en un 502/503/504. El código HTTP
+            # conserva su política de reintento aunque el cuerpo no sea JSON.
+            try:
+                data = _json_object(exc.read())
+            except (WalletRetryable, IncompleteRead, OSError):
+                data = {}
             return HttpResponse(
                 exc.code,
                 dict(exc.headers.items()) if exc.headers else {},
-                _json_object(exc.read()),
+                data,
             )
 
 
@@ -111,9 +124,9 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     try:
         value = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise WalletPermanent("Wallet devolvió JSON inválido") from exc
+        raise WalletRetryable("Wallet devolvió JSON inválido") from exc
     if not isinstance(value, dict):
-        raise WalletPermanent("Wallet devolvió un cuerpo no estructurado")
+        raise WalletRetryable("Wallet devolvió un cuerpo no estructurado")
     return value
 
 
@@ -123,7 +136,10 @@ def _retry_after(headers: Mapping[str, str]) -> int | None:
          if name.lower() == "retry-after"),
         None,
     )
-    if value is None or not str(value).isdigit():
+    if value is None:
+        return None
+    value = str(value).strip()
+    if not value.isascii() or not value.isdecimal():
         return None
     return int(value)
 
@@ -139,12 +155,14 @@ class WalletClient:
         transport: Transport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        uniform: Callable[[float, float], float] = random.uniform,
     ) -> None:
         self.config = config
         self.quota = quota
         self.transport = transport or UrllibTransport()
         self.sleep = sleep
         self.monotonic = monotonic
+        self.uniform = uniform
 
     def propose(
         self,
@@ -216,7 +234,7 @@ class WalletClient:
     ) -> WalletResult:
         if method == "POST" and not idempotency_key:
             raise ValueError("Idempotency-Key estable es obligatoria")
-        if deadline_seconds <= 0:
+        if not math.isfinite(deadline_seconds) or deadline_seconds <= 0:
             raise WalletRetryable("No queda tiempo para consultar Wallet")
 
         deadline = self.monotonic() + deadline_seconds
@@ -234,14 +252,11 @@ class WalletClient:
 
         last_error: WalletRetryable | None = None
         for attempt in range(1, self.config.max_attempts + 1):
-            quota_wait = self.quota.reserve(category)
-            if quota_wait:
+            self._remaining(deadline)
+            while (quota_wait := self.quota.reserve(category)):
                 self._wait_or_raise(quota_wait, deadline, "cuota compartida")
-                quota_wait = self.quota.reserve(category)
-                if quota_wait:
-                    raise WalletRateLimited(
-                        f"La cuota compartida exige esperar {quota_wait} segundos"
-                    )
+                self._remaining(deadline)
+            remaining = self._remaining(deadline)
             try:
                 response = self.transport.request(
                     method,
@@ -250,14 +265,15 @@ class WalletClient:
                     body=body,
                     timeout=min(
                         self.config.timeout_seconds,
-                        max(0.1, deadline - self.monotonic()),
+                        remaining,
                     ),
                 )
-            except (TimeoutError, socket.timeout, URLError, OSError) as exc:
+            except (TimeoutError, socket.timeout, URLError, OSError,
+                    IncompleteRead, WalletRetryable) as exc:
                 last_error = WalletRetryable("Fallo transitorio al invocar Wallet")
                 if attempt == self.config.max_attempts:
                     raise last_error from exc
-                self._wait_or_raise(2 ** (attempt - 1), deadline, "backoff")
+                self._wait_or_raise(self._backoff(attempt), deadline, "backoff")
                 continue
 
             if response.status_code in {200, 202}:
@@ -267,36 +283,35 @@ class WalletClient:
                     response.status_code == 202,
                     idempotency_key,
                 )
-            if response.status_code == 429:
-                wait = _retry_after(response.headers)
-                if wait is None:
-                    raise WalletRateLimited("HTTP 429 sin Retry-After válido")
-                self.quota.block(category, wait)
-                last_error = WalletRateLimited(
-                    f"Wallet exige esperar {wait} segundos"
-                )
-                if attempt == self.config.max_attempts:
-                    raise last_error
-                self._wait_or_raise(wait, deadline, "Retry-After")
-                continue
-            if 500 <= response.status_code < 600:
-                retry_after = _retry_after(response.headers) or 0
-                if retry_after:
+            if response.status_code in {429, 500, 502, 503, 504}:
+                retry_after = _retry_after(response.headers)
+                if retry_after is not None:
                     self.quota.block(category, retry_after)
-                last_error = WalletRetryable(
+                error_class = WalletRateLimited if response.status_code == 429 else WalletRetryable
+                last_error = error_class(
                     f"Wallet respondió HTTP {response.status_code}"
                 )
                 if attempt == self.config.max_attempts:
                     raise last_error
                 self._wait_or_raise(
-                    max(retry_after, 2 ** (attempt - 1)),
+                    retry_after if retry_after is not None else self._backoff(attempt),
                     deadline,
-                    "backoff",
+                    "Retry-After" if retry_after is not None else "backoff",
                 )
                 continue
             self._raise_permanent(response)
 
         raise last_error or WalletRetryable("Wallet no entregó respuesta")
+
+    def _backoff(self, attempt: int) -> float:
+        ceiling = min(8.0, 2.0 ** min(attempt - 1, 3))
+        return self.uniform(ceiling / 2, ceiling)
+
+    def _remaining(self, deadline: float) -> float:
+        remaining = deadline - self.monotonic()
+        if remaining <= 0:
+            raise WalletRetryable("Deadline Wallet agotado")
+        return remaining
 
     def _wait_or_raise(self, seconds: int | float, deadline: float, reason: str) -> None:
         if self.monotonic() + seconds >= deadline:
@@ -309,7 +324,8 @@ class WalletClient:
 
     @staticmethod
     def _raise_permanent(response: HttpResponse) -> None:
-        code = response.data.get("code") or response.data.get("error")
+        code = (response.data.get("reason") or response.data.get("code")
+                or response.data.get("error"))
         if response.status_code == 422 and code == "IDEMPOTENCY_MISMATCH":
             raise WalletIdempotencyMismatch("Wallet rechazó la llave idempotente")
         if response.status_code == 401:

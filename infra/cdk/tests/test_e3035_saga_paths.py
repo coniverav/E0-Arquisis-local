@@ -150,7 +150,7 @@ class BuyerPathsTest(unittest.TestCase):
 
     def test_buyer_bad_token_never_calls_wallet(self):
         path, outcome, data = dry_run("buyer.asl.json", errors={
-            "ValidateSwapToken": "Buyer.ExpiredToken"})
+            "ValidateSwapToken": "BuyerExpiredToken"})
         self.assertEqual(outcome, "Succeed")
         self.assertEqual(path[-1], "BuyerRejected")
         self.assertEqual(data["terminal"]["reason"], "INVALID_SWAP_TOKEN")

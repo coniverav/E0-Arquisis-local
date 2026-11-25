@@ -58,6 +58,7 @@ class WalletDeadlineAndRetryTest(unittest.TestCase):
             transport=transport,
             sleep=clock.sleep,
             monotonic=clock.monotonic,
+            uniform=lambda low, high: high,
         )
         return client, transport, clock, quota
 

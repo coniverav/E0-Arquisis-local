@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from math import ceil
 
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.config import CITY_ID
@@ -61,16 +62,17 @@ def reserve(session: Session, category: str, *, now: datetime | None = None) -> 
     """Devuelve 0 al reservar; si se difiere, segundos enteros de espera."""
     if category not in DEFAULT_LIMITS:
         raise ValueError("categoría de límite desconocida")
-    current = _utc(now or datetime.now(timezone.utc))
     bucket = _locked_bucket(session, f"{CITY_ID}:{category}")
+    current = _utc(now or session.exec(text("SELECT clock_timestamp()")).one()[0])
     if bucket.blocked_until is not None and _utc(bucket.blocked_until) > current:
         return max(1, ceil((_utc(bucket.blocked_until) - current).total_seconds()))
     recent = sorted(
         _utc(datetime.fromisoformat(value)) for value in bucket.attempts
         if _utc(datetime.fromisoformat(value)) > current - timedelta(seconds=60)
     )
-    if len(recent) >= _limit(session, category):
-        return max(1, ceil((recent[0] + timedelta(seconds=60) - current).total_seconds()))
+    limit = _limit(session, category)
+    if len(recent) >= limit:
+        return max(1, ceil((recent[-limit] + timedelta(seconds=60) - current).total_seconds()))
     bucket.attempts = [value.isoformat() for value in recent] + [current.isoformat()]
     session.add(bucket)
     session.flush()
@@ -81,8 +83,8 @@ def block(session: Session, category: str, seconds: int, *, now: datetime | None
     """Propaga un Retry-After de Wallet a todas las instancias de la ciudad."""
     if category not in DEFAULT_LIMITS or seconds < 0:
         raise ValueError("bloqueo de límite inválido")
-    current = _utc(now or datetime.now(timezone.utc))
     bucket = _locked_bucket(session, f"{CITY_ID}:{category}")
+    current = _utc(now or session.exec(text("SELECT clock_timestamp()")).one()[0])
     deadline = current + timedelta(seconds=seconds)
     if bucket.blocked_until is None or _utc(bucket.blocked_until) < deadline:
         bucket.blocked_until = deadline

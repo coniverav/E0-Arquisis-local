@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -7,6 +8,10 @@ from ..models import Cycle, NegotiationReport, OutboundMessage
 from .budget_carryover import lock_city_ledger
 from .negotiation_report import generate_negotiation_report, latest_report
 from .market_outbox import enqueue_market_envelope
+
+
+def report_relay_enabled() -> bool:
+    return os.getenv("E3_CYCLE_REPORTS_OUTBOX_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 
 
 def _outbounds(session, report):
@@ -67,6 +72,13 @@ def enqueue_due_negotiation_reports(
         previous = latest_report(session, cycle.cycle_id)
         #Completar el intento diferido con su contenido original antes de corregirlo.
         if previous is not None and previous.status in {"DEFERRED", "EXPIRED", "REJECTED"}:
+            continue
+        # Esperar la confirmación o recuperación del intento en vuelo antes
+        # de crear una corrección que podría llegar antes al broker.
+        if previous is not None and any(
+            row.status == "CLAIMED" and row.lease_until is not None and row.lease_until > now
+            for row in _outbounds(session, previous)
+        ):
             continue
         report = generate_negotiation_report(session, cycle_id=cycle.cycle_id, city_id=city_id, now=now)
         if _outbounds(session, report):

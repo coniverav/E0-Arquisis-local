@@ -72,7 +72,8 @@ def test_dispatch_repeats_same_exchange_and_routing_key():
         payload=payload["payload"], expires_at=None,
     )
     session = MagicMock()
-    session.exec.return_value.all.side_effect = [[], [row], [], [row]]
+    # Claims vencidos, propuestas pendientes y mensajes elegibles, por llamada.
+    session.exec.return_value.all.side_effect = [[], [], [row], [], [], [row]]
     app.dependency_overrides[get_session] = lambda: session
     try:
         with (

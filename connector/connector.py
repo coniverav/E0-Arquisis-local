@@ -394,7 +394,7 @@ async def publish_backend_outbox() -> None:
                                     market_exchange=RABBITMQ_MARKET_EXCHANGE,
                                     central_routing_key=RABBITMQ_CENTRAL_ROUTING_KEY,
                                 )
-                                if item["type"] in {"offer", "offer-updated", "offer-withdrawn", "request"}:
+                                if item["type"] in {"offer", "offer-updated", "offer-withdrawn", "request", "negotiation-report"}:
                                     quota = await client.post(
                                         f"{MASTER_OUTBOUND_AUDIT_URL}/{msg_id}/reserve-quota"
                                     )

@@ -8,6 +8,7 @@ import logging
 import os
 import socket
 import ssl
+from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -141,6 +142,15 @@ async def publish_broker_item(
 ) -> None:
     """Publica exactamente el envelope guardado y exige Basic.Ack."""
 
+    timeout = PUBLISH_TIMEOUT_SECONDS
+    for field in ("expiresAt", "leaseUntil"):
+        value = item.get(field)
+        if value is not None:
+            deadline = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                raise ValueError("OUTBOX_DISPATCH_DEADLINE_EXPIRED")
+            timeout = min(timeout, remaining)
     exchange_name, routing_key = select_outbound_destination(
         item,
         city_id=city_id,
@@ -154,7 +164,7 @@ async def publish_broker_item(
         message,
         routing_key=routing_key,
         mandatory=True,
-        timeout=PUBLISH_TIMEOUT_SECONDS,
+        timeout=timeout,
     )
     if not isinstance(confirmation, Basic.Ack):
         raise RuntimeError("BROKER_PUBLISH_NOT_CONFIRMED")

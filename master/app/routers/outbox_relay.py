@@ -11,7 +11,10 @@ from ..database import get_session
 from ..models import OutboundMessage
 from ..services.operational_rate_limits import reserve as reserve_rate_limit
 from ..services.outbox_claims import claim_batch, finish_claim
-from ..services.negotiation_report_dispatch import mark_negotiation_report_sent
+from ..services.negotiation_report_dispatch import (
+    mark_negotiation_report_sent, expire_report_dispatches, report_relay_enabled,
+)
+from ..services.budget_carryover import lock_city_ledger
 
 
 router = APIRouter(prefix="/internal/outbox-relay", tags=["internal"])
@@ -43,6 +46,7 @@ def _claimed(row: OutboundMessage) -> dict:
         "type": row.message_type,
         "cycleId": row.cycle_id,
         "expiresAt": row.expires_at,
+        "leaseUntil": row.lease_until,
     }
     if row.delivery_kind == "BROKER":
         base.update({
@@ -74,12 +78,16 @@ def claim_outbox(
     payload: RelayClaimIn,
     session: Session = Depends(get_session),
 ):
+    if payload.deliveryKind == "BROKER":
+        lock_city_ledger(session)
+        expire_report_dispatches(session, datetime.now(timezone.utc))
     rows = claim_batch(
         session,
         worker_id=payload.workerId,
         limit=payload.limit,
         lease_seconds=payload.leaseSeconds,
         kinds=(payload.deliveryKind,),
+        include_reports=report_relay_enabled(),
     )
     now = datetime.now(timezone.utc)
     deliverable = []
@@ -111,6 +119,7 @@ def finish_outbox(
     payload: RelayResultIn,
     session: Session = Depends(get_session),
 ):
+    lock_city_ledger(session)
     now = datetime.now(timezone.utc)
     retry_at = (
         now + timedelta(seconds=payload.retryAfterSeconds)

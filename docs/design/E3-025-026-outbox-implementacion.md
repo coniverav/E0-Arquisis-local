@@ -99,3 +99,58 @@ La integración futura debe conservar estos invariantes:
 - [ ] El claim anterior no puede confirmar después de la reclamación nueva.
 - [ ] Una actualización de oferta no adelanta a la oferta inicial.
 - [ ] Pruebas del nuevo módulo y regresión E2 en PostgreSQL de prueba.
+
+## Reportes de cierre E3-050
+
+El scheduler mantiene un solo commit para el estado del ciclo, el reporte y
+su intención en `outbound_messages`. La generación reutiliza la última
+versión si los saldos coinciden. Las correcciones generan otro `idpk` y
+`msgId`. Un retry de transporte conserva el envelope completo. La instrucción
+`REPORT_TOO_EARLY` conserva saldos e `idpk` y crea el intento de negocio E2
+con nuevo `msgId`, disponible en `opensAt`. `CYCLE_EXPIRED` termina el despacho.
+
+El relay verifica la ventana de la Central y vence las intenciones incluso
+con el scheduler detenido. Las versiones de reporte se reclaman en orden por
+ciclo. La generación espera un claim vigente antes de corregir el reporte.
+Una confirmación tardía pierde autoridad cuando la intención fue sustituida
+o rechazada. Antes de publicar, Connector verifica `expiresAt` y `leaseUntil`
+y acota su timeout a ambos. Solo `Basic.Ack` permite finalizar la fila.
+
+Las cuotas existentes continúan aplicándose por categoría. El contrato de
+`negotiation-report` no le asigna la cuota de ofertas, lecturas o escrituras
+Wallet. Un reporte puede salir aunque esos cupos estén agotados.
+
+### Cutover y reversión
+
+`E3_CYCLE_REPORTS_OUTBOX_ENABLED=false` mantiene el despacho E2 y excluye
+reportes de los claims del relay. Con `true`, Master los entrega por claims y
+los excluye del dispatcher E2. También rechaza autorizaciones y resultados
+legados de esos reportes. La configuración local transmite el flag a ambas
+réplicas de Master y conserva `false` como valor predeterminado.
+
+Para cambiar el modo, detener y drenar los publicadores anteriores, configurar
+el mismo valor en todas las réplicas de Master y arrancar el Connector con
+`E3_BROKER_OUTBOX_RELAY_ENABLED=true`. Ese flag selecciona el relay en lugar del
+bucle E2 del Connector. El scheduler puede seguir persistiendo intenciones
+durante el corte. Elegir un momento con margen suficiente antes de `validUntil`.
+Una réplica con configuración antigua o un publicador que ya recibió permiso
+podría aún enviar, por lo que el drenaje forma parte del cambio de modo.
+
+Para revertir, detener y drenar el relay, poner ambos flags en `false` y
+arrancar el publicador E2. Los claims vigentes permanecen excluidos hasta que
+venza su lease. El dispatcher recupera luego esas mismas filas con sus IDs y
+payload originales. Las configuraciones y secretos productivos requieren la
+operación de despliegue autorizada por el equipo.
+
+La recuperación es al menos una vez y puede repetir una publicación cuando
+se pierde la confirmación local. La Central deduplica la operación por `idpk`.
+Si la Central ya cerró la ventana, la recuperación no puede garantizar evitar
+la multa. Tampoco un publisher confirm acredita aceptación del reporte por la
+Central. La meta de recuperación AD8 presupone disponibilidad del broker y
+margen de ventana suficiente.
+
+Pruebas específicas en `master/tests/test_e3050_cycle_reports_outbox.py` y
+regresión de Connector en `connector/tests/test_e3029_e3030_relays.py`, con
+PostgreSQL `energyshark_test_*` y broker simulado.
+
+[Contrato oficial v3.0.2](https://github.com/iic2173/energyshark-contracts/blob/v3.0.2/schemas/amqp/negotiation-report.schema.json).

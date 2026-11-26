@@ -13,7 +13,7 @@ from sqlalchemy import and_, exists, or_
 from sqlalchemy.orm import aliased
 from sqlmodel import Session, select
 
-from ..models import OutboundMessage
+from ..models import Cycle, OutboundMessage
 
 MARKET_TYPES = ("offer", "offer-updated", "offer-withdrawn")
 
@@ -51,6 +51,7 @@ def claim_batch(
     lease_seconds: int = 30,
     now: datetime | None = None,
     kinds: tuple[str, ...] = ("BROKER", "STEP_FUNCTIONS"),
+    include_reports: bool = True,
 ) -> list[OutboundMessage]:
     """Reclama filas elegibles bloqueando con FOR UPDATE SKIP LOCKED.
 
@@ -74,6 +75,17 @@ def claim_batch(
             previous.status != "PUBLISHED",
         )
     )
+    open_report = exists(select(Cycle.cycle_id).where(
+        Cycle.cycle_id == OutboundMessage.cycle_id,
+        Cycle.status_idpk.is_not(None), Cycle.valid_until > now,
+        Cycle.report_window_opens_at <= now, Cycle.scheduler_state != "CLOSED",
+    ))
+    prior_report = exists(select(previous.id).where(
+        previous.cycle_id == OutboundMessage.cycle_id,
+        previous.message_type == "negotiation-report",
+        previous.id < OutboundMessage.id,
+        previous.dispatch_required.is_(True), previous.status != "PUBLISHED",
+    ))
     # Un lease vigente excluye la fila aunque el estado haya quedado en FAILED.
     lease_free = or_(
         OutboundMessage.lease_until.is_(None),
@@ -91,6 +103,8 @@ def claim_batch(
             OutboundMessage.message_type.not_in(MARKET_TYPES),
             ~prior_market_pending,
         ))
+        .where(or_(OutboundMessage.message_type != "negotiation-report",
+                   and_(include_reports, open_report, ~prior_report)))
         .order_by(OutboundMessage.id)
         .limit(limit)
         .with_for_update(skip_locked=True)
@@ -136,7 +150,7 @@ def finish_claim(
     if retry_at is not None:
         retry_at = _utc(retry_at)
     row = session.exec(select(OutboundMessage).where(OutboundMessage.id == row_id).with_for_update()).first()
-    if (row is None or row.status != "CLAIMED" or not claim_token
+    if (row is None or not row.dispatch_required or row.status != "CLAIMED" or not claim_token
             or row.claim_token != claim_token or row.lease_until is None
             or row.lease_until <= now):
         return False

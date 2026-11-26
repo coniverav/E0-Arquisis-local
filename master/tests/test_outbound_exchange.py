@@ -79,6 +79,7 @@ def test_dispatch_repeats_same_exchange_and_routing_key():
         with (
             patch("app.routers.message_audit.lock_city_ledger"),
             patch("app.routers.message_audit.expire_report_dispatches"),
+            patch("app.routers.message_audit.expire_offer_dispatches"),
             patch("app.routers.message_audit.renew_failed_bid_dispatches"),
         ):
             client = TestClient(app)

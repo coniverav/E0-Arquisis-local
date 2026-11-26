@@ -57,8 +57,14 @@ def saga_item():
     }
 
 
-def test_broker_publish_requires_positive_publisher_confirm():
+@pytest.mark.parametrize('kind', ['offer', 'offer-updated', 'offer-withdrawn'])
+def test_broker_publish_requires_positive_publisher_confirm(kind):
     item = broker_item()
+    item['type'] = item['payload']['type'] = kind
+    if kind == 'offer-updated':
+        item['payload']['data']['remaining'] = item['payload']['data'].pop('quantity')
+    elif kind == 'offer-withdrawn':
+        item['payload']['data'] = {'offerId': item['payload']['data']['offerId']}
     directed, market = AsyncMock(), AsyncMock()
     market.publish.return_value = Basic.Ack(delivery_tag=1)
     asyncio.run(publish_broker_item(
@@ -75,6 +81,23 @@ def test_broker_publish_requires_positive_publisher_confirm():
     sent = market.publish.await_args.args[0]
     assert json.loads(sent.body) == item["payload"]
     assert sent.user_id == "city.KLD"
+
+
+def test_lost_broker_confirm_replays_the_stored_envelope():
+    item = broker_item()
+    market = AsyncMock()
+    # El primer envío fue aceptado por el broker pero se perdió su confirm.
+    market.publish.side_effect = [TimeoutError('confirm lost'), Basic.Ack(delivery_tag=2)]
+    kwargs = dict(directed_exchange=AsyncMock(), market_exchange=market,
+                  city_id='KLD', directed_exchange_name='energy.x',
+                  market_exchange_name='market', central_routing_key='central')
+    with pytest.raises(TimeoutError):
+        asyncio.run(publish_broker_item(item, **kwargs))
+    asyncio.run(publish_broker_item(item, **kwargs))
+    assert market.publish.await_count == 2
+    assert [json.loads(call.args[0].body) for call in market.publish.await_args_list] == [
+        item['payload'], item['payload'],
+    ]
 
 
 @pytest.mark.parametrize("confirmation", [Basic.Nack(delivery_tag=1), None])

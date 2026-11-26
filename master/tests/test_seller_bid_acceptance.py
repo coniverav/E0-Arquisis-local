@@ -20,6 +20,7 @@ from app.models import (
     WalletBalanceSnapshot,
 )
 from app.services.seller_bid_acceptance import reserve_incoming_bid
+from app.services.seller_offer_events import withdraw_local_offer
 from app.services.wallet_service import WalletService
 
 
@@ -94,6 +95,31 @@ def _snapshot(s):
             OutboundMessage.cycle_id == s["cycle"],
             OutboundMessage.message_type == "bid-rejected")).all()
         return reservations, swaps, bids, rejected
+
+
+def test_bid_rechecks_withdrawn_offer_even_if_session_cached_active(scenario):
+    with Session(engine) as stale:
+        cached = stale.exec(select(MarketOffer).where(
+            MarketOffer.offer_id == scenario['offer'])).one()
+        assert cached.status == 'ACTIVE'
+        with Session(engine) as writer:
+            assert withdraw_local_offer(writer, offer_id=scenario['offer'])
+            writer.commit()
+        key = str(uuid4())
+        stale.add(MarketBid(
+            idpk=key, msg_id=str(uuid4()), cycle_id=scenario['cycle'],
+            direction='INCOMING', offer_id=scenario['offer'],
+            counterpart_city_id='COR', quantity=80, status='PENDING',
+            created_at=scenario['now'],
+        ))
+        stale.flush()
+        result = reserve_incoming_bid(stale, bid_idpk=key)
+        assert result['status'] == 'REJECTED'
+        assert result['reason'] == 'OFFER_WITHDRAWN'
+        stale.commit()
+    reservations, swaps, bids, rejected = _snapshot(scenario)
+    assert reservations == swaps == []
+    assert len(bids) == len(rejected) == 1
 
 
 def test_dos_bids_40ms_por_ingress_sin_sobreventa(scenario):

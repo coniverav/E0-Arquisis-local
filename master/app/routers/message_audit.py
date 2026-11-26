@@ -31,6 +31,8 @@ from ..schemas import (
     OutboundMessageAuditIn,
     OutboundMessageResultIn,
 )
+from ..services.market_outbox import OFFER_TYPES, own_offer_relay_enabled
+from ..services.seller_offer_events import expire_offer_dispatches
 from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent,
     expire_report_dispatches,
@@ -223,10 +225,14 @@ def list_outbound_dispatch(
     lock_city_ledger(session)
     now = datetime.now(timezone.utc)
     expire_report_dispatches(session, now)
-    if not report_relay_enabled():
+    expire_offer_dispatches(session, now=now)
+    if not report_relay_enabled() or not own_offer_relay_enabled():
         # Rollback del cutover: recuperar claims vencidos sin cambiar envelope.
         for row in session.exec(select(OutboundMessage).where(
-            OutboundMessage.message_type == "negotiation-report",
+            or_(
+                (OutboundMessage.message_type == "negotiation-report") & (not report_relay_enabled()),
+                OutboundMessage.message_type.in_(tuple(OFFER_TYPES)) & (not own_offer_relay_enabled()),
+            ),
             OutboundMessage.status == "CLAIMED",
             OutboundMessage.lease_until <= now,
             OutboundMessage.dispatch_required.is_(True),
@@ -263,6 +269,7 @@ def list_outbound_dispatch(
             previous_market.message_type.in_(market_types),
             previous_market.id < OutboundMessage.id,
             previous_market.status != "PUBLISHED",
+            previous_market.dispatch_required.is_(True),
         )
     )
     messages = session.exec(
@@ -277,6 +284,8 @@ def list_outbound_dispatch(
         # El dispatcher E2 nunca debe interpretar una intención de saga como
         # envelope AMQP. El relay E3 reclama STEP_FUNCTIONS por otra ruta.
         .where(OutboundMessage.delivery_kind == "BROKER")
+        .where(or_(OutboundMessage.message_type.not_in(tuple(OFFER_TYPES)),
+                   not own_offer_relay_enabled()))
         .where(or_(OutboundMessage.message_type != "negotiation-report",
                    not report_relay_enabled()))
         .where(
@@ -335,6 +344,8 @@ def reserve_outbound_quota(
                    and cycle.scheduler_state != "CLOSED"
                    and (message.available_at is None or message.available_at <= now))
         return {"allowed": allowed, "retryAfter": 0}
+    if message.message_type in OFFER_TYPES and own_offer_relay_enabled():
+        raise HTTPException(status_code=409, detail="OFFER_OWNED_BY_RELAY")
     category = (
         "market:offer" if message.message_type in {"offer", "offer-updated", "offer-withdrawn"}
         else "central:request" if message.message_type == "request" and message.request_ask in {"status-statement", "distance-table"}
@@ -376,6 +387,11 @@ def update_outbound_audit(
             status_code=404,
             detail="outbound message not found",
         )
+
+    if message.message_type in OFFER_TYPES and (
+        own_offer_relay_enabled() or message.status == "CLAIMED"
+    ):
+        raise HTTPException(status_code=409, detail="OFFER_OWNED_BY_RELAY")
 
     if message.message_type == "negotiation-report":
         if report_relay_enabled():

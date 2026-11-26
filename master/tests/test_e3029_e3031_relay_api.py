@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from threading import Barrier
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
@@ -16,6 +17,11 @@ from app.services.outbox_store import enqueue_broker, enqueue_saga_start
 
 NOW = datetime.now(timezone.utc)
 MACHINE = "arn:aws:states:us-east-1:123456789012:stateMachine:energyshark-seller"
+
+
+@pytest.fixture(autouse=True)
+def enable_offer_relay(monkeypatch):
+    monkeypatch.setenv("E3_OWN_OFFERS_OUTBOX_ENABLED", "true")
 
 
 def offer(*, cycle_id="cycle-relay-api"):

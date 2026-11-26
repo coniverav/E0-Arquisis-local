@@ -9,6 +9,7 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     Stack,
+    aws_ecr_assets as ecr_assets,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_logs as logs,
@@ -16,7 +17,7 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-from energyshark_infra.config import DeploymentSettings
+from energyshark_infra.config import DeploymentSettings, log_retention_for
 
 
 @dataclass(frozen=True)
@@ -31,7 +32,7 @@ SELLER_TASKS = (
     SagaTask(
         "reject-seller-bid",
         "RejectSellerBidFunctionArn",
-        ("database", "broker"),
+        ("database",),
     ),
     SagaTask(
         "seller-proposal",
@@ -46,7 +47,7 @@ SELLER_TASKS = (
     SagaTask(
         "publish-bid-accepted",
         "PublishBidAcceptedFunctionArn",
-        ("database", "broker"),
+        ("database",),
     ),
     SagaTask("register-callback", "RegisterCallbackFunctionArn", ("database",)),
     SagaTask(
@@ -57,7 +58,7 @@ SELLER_TASKS = (
     SagaTask(
         "compensate-seller",
         "CompensateSellerFunctionArn",
-        ("database", "broker"),
+        ("database",),
     ),
 )
 
@@ -114,7 +115,7 @@ class SagasStack(Stack):
             **kwargs,
         )
         self.settings = settings
-        self._retention = self._log_retention(settings.log_retention_days)
+        self._retention = log_retention_for(settings.log_retention_days)
         self._secret_parameters = self._create_secret_parameters()
         self.task_functions = self._create_task_functions()
 
@@ -134,14 +135,16 @@ class SagasStack(Stack):
         self.connector_instance_profile = iam.CfnInstanceProfile(
             self,
             "ConnectorSagaInstanceProfile",
-            instance_profile_name=(
-                f"energyshark-{settings.environment}-connector-sagas"
-            ),
             roles=[self.connector_saga_role.role_name],
         )
         self.connector_instance_profile.node.add_dependency(
             self.connector_saga_role
         )
+
+        CfnOutput(self, "SellerSagaArn", value=self.seller_state_machine.attr_arn)
+        CfnOutput(self, "BuyerSagaArn", value=self.buyer_state_machine.attr_arn)
+        for output_id, function in self.task_functions.items():
+            CfnOutput(self, output_id, value=function.function_arn)
 
         CfnOutput(
             self,
@@ -163,18 +166,21 @@ class SagasStack(Stack):
         )
         CfnOutput(
             self,
-            "ConnectorSagaInstanceProfileName",
-            value=self.connector_instance_profile.ref,
+            "ConnectorSagaInstanceProfileArn",
+            value=self.connector_instance_profile.attr_arn,
             description="Instance profile para asociar al host de Connector",
         )
 
     def _create_secret_parameters(self) -> dict[str, CfnParameter]:
+        # El parámetro termina en Resource de IAM y debe identificar un único secreto.
+        secret_arn = r"arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}"
         return {
             "database": CfnParameter(
                 self,
                 "DatabaseSecretArn",
                 type="String",
                 no_echo=True,
+                allowed_pattern=secret_arn,
                 description="ARN de Secrets Manager con acceso a PostgreSQL",
             ),
             "wallet": CfnParameter(
@@ -182,14 +188,8 @@ class SagasStack(Stack):
                 "WalletSecretArn",
                 type="String",
                 no_echo=True,
+                allowed_pattern=secret_arn,
                 description="ARN de Secrets Manager con configuración Wallet",
-            ),
-            "broker": CfnParameter(
-                self,
-                "BrokerSecretArn",
-                type="String",
-                no_echo=True,
-                description="ARN de Secrets Manager con configuración RabbitMQ",
             ),
         }
 
@@ -214,7 +214,6 @@ class SagasStack(Stack):
         source: Path,
     ) -> lambda_.DockerImageFunction:
         construct_name = "".join(part.title() for part in task.task_name.split("-"))
-        function_name = f"energyshark-{self.settings.environment}-{task.task_name}"
         role = iam.Role(
             self,
             f"{construct_name}Role",
@@ -224,7 +223,6 @@ class SagasStack(Stack):
         log_group = logs.LogGroup(
             self,
             f"{construct_name}LogGroup",
-            log_group_name=f"/aws/lambda/{function_name}",
             retention=self._retention,
             removal_policy=RemovalPolicy.RETAIN,
         )
@@ -247,7 +245,7 @@ class SagasStack(Stack):
                 )
             )
 
-        if task.task_name in {"seller-proposal", "buyer-acceptance"}:
+        if task.task_name == "seller-proposal":
             # Estas API sólo aceptan Resource:*; el task token es la capacidad
             # efímera que delimita qué espera puede completar la Lambda.
             role.add_to_policy(
@@ -260,10 +258,11 @@ class SagasStack(Stack):
         function = lambda_.DockerImageFunction(
             self,
             f"{construct_name}Function",
-            function_name=function_name,
             description=f"Adaptador de tarea de saga: {task.task_name}",
             architecture=lambda_.Architecture.X86_64,
-            code=lambda_.DockerImageCode.from_image_asset(str(source)),
+            code=lambda_.DockerImageCode.from_image_asset(
+                str(source), platform=ecr_assets.Platform.LINUX_AMD64,
+            ),
             role=role,
             log_group=log_group,
             timeout=Duration.seconds(self.settings.lambda_timeout_seconds),
@@ -309,7 +308,6 @@ class SagasStack(Stack):
             )
 
         construct_name = role.title()
-        machine_name = f"energyshark-{self.settings.environment}-{role}-saga"
         execution_role = iam.Role(
             self,
             f"{construct_name}StateMachineRole",
@@ -326,7 +324,7 @@ class SagasStack(Stack):
             )
         )
         # Estas APIs de entrega de CloudWatch Logs no admiten ARN de recurso.
-        execution_role.add_to_policy(
+        log_delivery = execution_role.add_to_principal_policy(
             iam.PolicyStatement(
                 actions=list(LOG_DELIVERY_ACTIONS),
                 resources=["*"],
@@ -336,15 +334,16 @@ class SagasStack(Stack):
         log_group = logs.LogGroup(
             self,
             f"{construct_name}StateMachineLogGroup",
-            log_group_name=f"/aws/vendedlogs/states/{machine_name}",
             retention=self._retention,
             removal_policy=RemovalPolicy.RETAIN,
         )
         machine = sfn.CfnStateMachine(
             self,
             f"{construct_name}StateMachine",
-            state_machine_name=machine_name,
             state_machine_type="STANDARD",
+            encryption_configuration=sfn.CfnStateMachine.EncryptionConfigurationProperty(
+                type="AWS_OWNED_KEY",
+            ),
             role_arn=execution_role.role_arn,
             definition_string=definition_string,
             definition_substitutions=substitutions,
@@ -353,7 +352,7 @@ class SagasStack(Stack):
                     sfn.CfnStateMachine.LogDestinationProperty(
                         cloud_watch_logs_log_group=(
                             sfn.CfnStateMachine.CloudWatchLogsLogGroupProperty(
-                                log_group_arn=f"{log_group.log_group_arn}:*"
+                                log_group_arn=log_group.log_group_arn
                             )
                         )
                     )
@@ -363,7 +362,7 @@ class SagasStack(Stack):
             ),
         )
         machine.node.add_dependency(log_group)
-        machine.node.add_dependency(execution_role)
+        machine.node.add_dependency(log_delivery.policy_dependable)
 
         version = sfn.CfnStateMachineVersion(
             self,
@@ -392,7 +391,6 @@ class SagasStack(Stack):
         role = iam.Role(
             self,
             "ConnectorSagaRole",
-            role_name=f"energyshark-{self.settings.environment}-connector-sagas",
             assumed_by=iam.ServicePrincipal("ec2.amazonaws.com"),
             description="StartExecution y callbacks de sagas desde Connector EC2",
         )
@@ -411,23 +409,3 @@ class SagasStack(Stack):
             )
         )
         return role
-
-    @staticmethod
-    def _log_retention(days: int) -> logs.RetentionDays:
-        supported = {
-            1: logs.RetentionDays.ONE_DAY,
-            3: logs.RetentionDays.THREE_DAYS,
-            5: logs.RetentionDays.FIVE_DAYS,
-            7: logs.RetentionDays.ONE_WEEK,
-            14: logs.RetentionDays.TWO_WEEKS,
-            30: logs.RetentionDays.ONE_MONTH,
-            60: logs.RetentionDays.TWO_MONTHS,
-            90: logs.RetentionDays.THREE_MONTHS,
-        }
-        try:
-            return supported[days]
-        except KeyError as exc:
-            raise ValueError(
-                f"Retención de logs no soportada: {days}. "
-                f"Use uno de {sorted(supported)}"
-            ) from exc

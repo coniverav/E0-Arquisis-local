@@ -33,6 +33,7 @@
       "Catch": [
         {
           "ErrorEquals": ["SellerInsufficientEnergy"],
+          "ResultPath": null,
           "Next": "RejectBid"
         },
         {
@@ -94,6 +95,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.Timeout"],
+          "ResultPath": null,
           "Next": "ReconcileProposal"
         },
         {
@@ -105,6 +107,7 @@
         },
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
           "Next": "ReconcileProposal"
         }
       ],
@@ -250,6 +253,7 @@
       "Catch": [
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
           "Next": "ReconcileSellerSwap"
         }
       ],
@@ -273,10 +277,12 @@
       "Catch": [
         {
           "ErrorEquals": ["States.Timeout"],
+          "ResultPath": null,
           "Next": "ReconcileSellerSwap"
         },
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
           "Next": "ReconcileSellerSwap"
         }
       ],

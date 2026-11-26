@@ -170,7 +170,7 @@ class LeastPrivilegeTest(unittest.TestCase):
 
     def test_secret_parameters_are_no_echo(self) -> None:
         secrets = no_echo_parameters(self.sagas)
-        self.assertGreaterEqual(len(secrets), 3)
+        self.assertEqual(secrets, {"DatabaseSecretArn", "WalletSecretArn"})
         for name in secrets:
             description = self.sagas["Parameters"][name]["Description"]
             self.assertIn("ARN", description)

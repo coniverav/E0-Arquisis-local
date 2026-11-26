@@ -42,6 +42,7 @@
             "BuyerExpiredToken",
             "BuyerClaimsMismatch"
           ],
+          "ResultPath": null,
           "Next": "SetInvalidTokenResult"
         },
         {
@@ -135,10 +136,12 @@
       "Catch": [
         {
           "ErrorEquals": ["States.Timeout"],
+          "ResultPath": null,
           "Next": "ReconcileBuyerSwap"
         },
         {
           "ErrorEquals": ["WalletRejected"],
+          "ResultPath": null,
           "Next": "SetWalletRejectedResult"
         },
         {
@@ -151,6 +154,7 @@
         },
         {
           "ErrorEquals": ["States.ALL"],
+          "ResultPath": null,
           "Next": "ReconcileBuyerSwap"
         }
       ],

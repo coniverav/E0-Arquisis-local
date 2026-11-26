@@ -8,4 +8,4 @@ Las tareas `waitForTaskToken` deben persistir el token antes de invocar Wallet. 
 
 El `swapToken` permanece en PostgreSQL y las Lambdas lo recuperan mediante la saga o el `SwapRecord`; no se copia al input ni al historial de Step Functions.
 
-Los valores `${...FunctionArn}` son sustituciones resueltas por CDK. No contienen cuentas, regiones, secretos ni ARN productivos. Los handlers declarados fallan de forma segura hasta que las tareas posteriores implementen los adaptadores Wallet y la persistencia token-antes-HTTP.
+Los valores `${...FunctionArn}` son sustituciones resueltas por CDK. No contienen cuentas, regiones, secretos ni ARN productivos. Las ramas de recuperación conservan el input de la operación con `ResultPath: null` en sus `Catch`, para que la siguiente tarea pueda recuperar la saga y el swap.

@@ -311,6 +311,9 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
             now=datetime.now(timezone.utc),
         )
 
+    if task == "finalize-saga" and event.get("role") not in ("BUYER", "SELLER"):
+        raise SagaTaskNotImplemented("finalize-saga requiere rol soportado")
+
     store = _build_store()
     if task == "validate-buyer-token":
         from buyer_validation import validate_buyer_token, jwks_settings
@@ -348,8 +351,6 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
                 store, saga_execution_id=event.get("sagaExecutionId"),
                 result=event.get("result"),
             )
-        if event.get("role") != "SELLER":
-            raise SagaTaskNotImplemented("finalize-saga requiere rol soportado")
         return finalize_seller(
             store, saga_execution_id=event.get("sagaExecutionId"),
             status=event.get("status"),

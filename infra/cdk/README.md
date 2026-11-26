@@ -26,7 +26,7 @@ Los recursos E2 se crean desde cero, sin importar nada. El stack `ExistingInfras
 
 El stack `Monitoring` añade cinco alarmas (5xx, latencia p95, 4xx, estado de la instancia y CPU), un topic SNS con suscripción opcional por correo y un panel de operación.
 
-El stack de sagas crea dos máquinas Standard, versiones con alias `live`, 13 Lambdas y roles mínimos. Las tareas Wallet y de callbacks usan el adaptador durable; las demás fallan de forma segura hasta su implementación.
+El stack de sagas declara dos máquinas Standard, una versión y un alias `live` por máquina, 13 Lambdas y sus roles. Los handlers cubren reservas, propuestas, validación, callbacks, reconciliación y cierre. El procedimiento de E3-055 permite revisar el cambio antes de activar la integración de E3-056. [Guía de despliegue de sagas](../../docs/E3-055-step-functions-iac.md).
 
 `dev`, `staging` y `prod` parametrizan nombres, timeout total, memoria, timeout Lambda y retención de logs. Cuenta y región provienen de `CDK_DEFAULT_ACCOUNT` y `CDK_DEFAULT_REGION`; producción activa protección contra eliminación.
 
@@ -52,7 +52,7 @@ Sin `adminCidr` el grupo de seguridad no abre el puerto 22 y el acceso administr
 
 ## Secretos y despliegue
 
-El despliegue exige los parámetros `DatabaseSecretArn`, `WalletSecretArn` y `BrokerSecretArn`. Solo sus ARN llegan al entorno Lambda; cada rol puede leer exclusivamente los secretos que requiere. No se guardan valores en Git, contexto o CloudFormation.
+El despliegue de sagas exige los parámetros `DatabaseSecretArn` y `WalletSecretArn`. Solo sus ARN llegan al entorno Lambda; cada rol puede leer exclusivamente los secretos que requiere. No se guardan valores en Git, contexto o CloudFormation.
 
 El rol de Step Functions solo invoca sus Lambdas. El rol de Connector limita `StartExecution` a ambos alias. `SendTaskSuccess/Failure` y las APIs de entrega de CloudWatch Logs usan `Resource: *` porque AWS no admite delimitarlas por ARN; no hay permisos administrativos.
 
@@ -64,7 +64,7 @@ El user data instala Docker y, si `appRepositoryUrl` está definido, clona el re
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt -r lambda_src/saga_task/requirements.txt
 .venv/bin/python -m unittest discover -s tests -v
 CDK_OUTDIR=cdk.out .venv/bin/python app.py
 ```

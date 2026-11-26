@@ -38,7 +38,7 @@ def assign_result(data, path, value):
 def select_target(state, error):
     for handler in state.get("Catch", []):
         if error in handler["ErrorEquals"] or "States.ALL" in handler["ErrorEquals"]:
-            return handler["Next"]
+            return handler
     raise AssertionError(f"Error sin manejo: {error}")
 
 
@@ -55,10 +55,14 @@ def dry_run(asl_file, *, responses=None, errors=None):
         state = definition["States"][name]
         state_type = state["Type"]
         if state_type in ("Succeed", "Fail"):
+            if state_type == "Succeed":
+                assert data["idpk"] == "bid-idpk-test"
             return visited, state_type, data
         if state_type == "Task":
             if name in errors:
-                name = select_target(state, errors[name])
+                catcher = select_target(state, errors[name])
+                assign_result(data, catcher.get("ResultPath", "$"), {"Error": errors[name]})
+                name = catcher["Next"]
                 continue
             assign_result(data, state.get("ResultPath", "$"), copy.deepcopy(responses.get(name, {})))
             name = state["Next"]

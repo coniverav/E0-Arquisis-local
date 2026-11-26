@@ -33,7 +33,7 @@ No hay `Action: "*"`, ni `AdministratorAccess`, ni `PowerUserAccess`, ni `iam:*`
 
 ## Secretos
 
-- Los tres parámetros de sagas (`DatabaseSecretArn`, `WalletSecretArn`, `BrokerSecretArn`) ya declaran `NoEcho: true`.
+- E3-077 verificó tres parámetros con `NoEcho: true`. Desde E3-055 las tareas obtienen únicamente `DatabaseSecretArn` y `WalletSecretArn`. El relay de EC2 publica desde outbox con sus propias credenciales.
 - Las Lambdas reciben solo ARN: cada variable terminada en `_SECRET_ARN` referencia un parámetro `NoEcho`, nunca un valor literal. El test `test_lambda_receives_secret_arns_not_values` lo verifica.
 - Cada rol de tarea solo puede leer los secretos que necesita, por ARN.
 - El repositorio no contiene credenciales: `.env.example` es el único archivo con nombre de entorno y no tiene valores reales.

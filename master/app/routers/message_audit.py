@@ -34,6 +34,7 @@ from ..schemas import (
 from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent,
     expire_report_dispatches,
+    report_relay_enabled,
 )
 from ..services.negotiation_state import (
     NEGOTIATION_PROPOSED,
@@ -222,6 +223,16 @@ def list_outbound_dispatch(
     lock_city_ledger(session)
     now = datetime.now(timezone.utc)
     expire_report_dispatches(session, now)
+    if not report_relay_enabled():
+        # Rollback del cutover: recuperar claims vencidos sin cambiar envelope.
+        for row in session.exec(select(OutboundMessage).where(
+            OutboundMessage.message_type == "negotiation-report",
+            OutboundMessage.status == "CLAIMED",
+            OutboundMessage.lease_until <= now,
+            OutboundMessage.dispatch_required.is_(True),
+        ).with_for_update()).all():
+            row.status = "FAILED"
+            row.claim_token = row.lease_owner = row.lease_until = None
     renew_failed_bid_dispatches(session, now=now)
     for proposal in session.exec(select(OutboundMessage).where(
         OutboundMessage.message_type == "negotiation-proposal",
@@ -266,6 +277,8 @@ def list_outbound_dispatch(
         # El dispatcher E2 nunca debe interpretar una intención de saga como
         # envelope AMQP. El relay E3 reclama STEP_FUNCTIONS por otra ruta.
         .where(OutboundMessage.delivery_kind == "BROKER")
+        .where(or_(OutboundMessage.message_type != "negotiation-report",
+                   not report_relay_enabled()))
         .where(
             OutboundMessage.status.in_(
                 [
@@ -310,6 +323,18 @@ def reserve_outbound_quota(
     ).with_for_update()).first()
     if message is None or not message.dispatch_required or message.status not in {OUTBOUND_PENDING, OUTBOUND_FAILED}:
         raise HTTPException(status_code=409, detail="outbound no elegible")
+    if message.message_type == "negotiation-report":
+        if report_relay_enabled():
+            raise HTTPException(status_code=409, detail="REPORT_OWNED_BY_RELAY")
+        cycle = session.get(Cycle, message.cycle_id)
+        now = datetime.now(timezone.utc)
+        allowed = (cycle is not None and cycle.status_idpk is not None
+                   and cycle.valid_until is not None and now < cycle.valid_until
+                   and cycle.report_window_opens_at is not None
+                   and cycle.report_window_opens_at <= now
+                   and cycle.scheduler_state != "CLOSED"
+                   and (message.available_at is None or message.available_at <= now))
+        return {"allowed": allowed, "retryAfter": 0}
     category = (
         "market:offer" if message.message_type in {"offer", "offer-updated", "offer-withdrawn"}
         else "central:request" if message.message_type == "request" and message.request_ask in {"status-statement", "distance-table"}
@@ -353,6 +378,8 @@ def update_outbound_audit(
         )
 
     if message.message_type == "negotiation-report":
+        if report_relay_enabled():
+            raise HTTPException(status_code=409, detail="REPORT_OWNED_BY_RELAY")
         # Coordinar con los errores de reporte: publicación y metadata se confirman
         # juntas. Los resultados tardíos no borran errores de negocio.
         session.exec(select(Cycle).where(Cycle.cycle_id == message.cycle_id).with_for_update()).first()

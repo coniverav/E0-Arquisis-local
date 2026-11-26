@@ -153,3 +153,18 @@ def test_relays_remain_disabled_by_default(monkeypatch):
     monkeypatch.delenv("E3_SAGA_OUTBOX_RELAY_ENABLED", raising=False)
     assert broker_relay_enabled() is False
     assert saga_relay_enabled() is False
+
+
+@pytest.mark.parametrize('field', ['expiresAt', 'leaseUntil'])
+def test_expired_batch_item_is_never_published(field):
+    item = broker_item()
+    item[field] = '2000-01-01T00:00:00Z'
+    directed, market = AsyncMock(), AsyncMock()
+    with pytest.raises(ValueError, match='DEADLINE_EXPIRED'):
+        asyncio.run(publish_broker_item(
+            item, directed_exchange=directed, market_exchange=market,
+            city_id='KLD', directed_exchange_name='energy.x',
+            market_exchange_name='market', central_routing_key='central',
+        ))
+    directed.publish.assert_not_awaited()
+    market.publish.assert_not_awaited()

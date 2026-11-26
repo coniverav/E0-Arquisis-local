@@ -6,11 +6,13 @@ import asyncio
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 import aio_pika
 import httpx
@@ -84,12 +86,27 @@ def _safe_error(exc: Exception) -> str:
     return (_aws_error_code(exc) or type(exc).__name__)[:2000]
 
 
+def _validate_master_origin(url: str) -> None:
+    expected = urlsplit(os.getenv("MASTER_URL", "http://master:8000"))
+    target = urlsplit(url)
+    if (
+        target.scheme not in {"http", "https"}
+        or not target.hostname
+        or target.username is not None or target.password is not None
+        or target.fragment or target.query
+        or (target.scheme, target.hostname, target.port)
+        != (expected.scheme, expected.hostname, expected.port)
+    ):
+        raise ValueError("UNTRUSTED_MASTER_ORIGIN")
+
+
 async def claim_items(
     client: httpx.AsyncClient,
     *,
     kind: Literal["BROKER", "STEP_FUNCTIONS"],
     worker_id: str,
 ) -> list[dict[str, Any]]:
+    _validate_master_origin(CLAIM_URL)
     response = await client.post(CLAIM_URL, json={
         "workerId": worker_id,
         "deliveryKind": kind,
@@ -123,6 +140,7 @@ async def finish_item(
         body["retryAfterSeconds"] = _retry_seconds(item)
     if execution_arn is not None:
         body["executionArn"] = execution_arn
+    _validate_master_origin(RESULT_URL)
     response = await client.post(f"{RESULT_URL}/{item['id']}/result", json=body)
     if response.status_code == 409:
         return False
@@ -171,10 +189,13 @@ async def publish_broker_item(
 
 
 def _base_machine_arn(value: str) -> str:
-    prefix, separator, resource = value.partition(":stateMachine:")
-    if not separator or not resource:
+    match = re.fullmatch(
+        r"(arn:aws(?:-[a-z]+)*:states:[a-z0-9-]+:[0-9]{12}:stateMachine:"
+        r"[A-Za-z0-9_-]{1,80})(?::[A-Za-z0-9_-]{1,80})?", value,
+    )
+    if match is None:
         raise ValueError("INVALID_STATE_MACHINE_ARN")
-    return f"{prefix}:stateMachine:{resource.split(':', 1)[0]}"
+    return match[1]
 
 
 def _execution_arn(machine_arn: str, execution_name: str) -> str:
@@ -213,6 +234,18 @@ def start_execution_once(item: dict[str, Any], *, stepfunctions=None) -> str:
     if not isinstance(decoded, dict) or decoded.get("idpk") != name:
         raise ValueError("INVALID_SAGA_EXECUTION_INPUT")
 
+    role = decoded.get("role")
+    if role not in {"SELLER", "BUYER"}:
+        raise ValueError("INVALID_SAGA_ROLE")
+    configured = os.getenv(f"E3_{role}_STATE_MACHINE_ARN", "").strip()
+    _base_machine_arn(machine_arn)
+    if not configured or machine_arn != configured:
+        raise SagaIdentityMismatch("SAGA_DESTINATION_NOT_ALLOWED")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name):
+        raise ValueError("INVALID_SAGA_EXECUTION_NAME")
+    if decoded.get("sagaExecutionId", name) != name:
+        raise SagaIdentityMismatch("SAGA_EXECUTION_ID_MISMATCH")
+    candidate = _execution_arn(machine_arn, name)
     client = stepfunctions or _stepfunctions_client()
     try:
         result = client.start_execution(
@@ -223,16 +256,15 @@ def start_execution_once(item: dict[str, Any], *, stepfunctions=None) -> str:
     except Exception as exc:
         if _aws_error_code(exc) != "ExecutionAlreadyExists":
             raise
-        candidate = _execution_arn(machine_arn, name)
         known = client.describe_execution(executionArn=candidate)
         same_machine = _base_machine_arn(str(known.get("stateMachineArn", ""))) == _base_machine_arn(machine_arn)
-        if known.get("name", name) != name or known.get("input") != serialized or not same_machine:
+        if known.get("name") != name or known.get("input") != serialized or not same_machine:
             raise SagaIdentityMismatch("EXECUTION_ALREADY_EXISTS_WITH_DIFFERENT_INPUT") from exc
         return candidate
 
     execution_arn = result.get("executionArn")
-    if not isinstance(execution_arn, str) or ":execution:" not in execution_arn:
-        raise RuntimeError("START_EXECUTION_WITHOUT_ARN")
+    if execution_arn != candidate:
+        raise SagaIdentityMismatch("START_EXECUTION_ARN_MISMATCH")
     return execution_arn
 
 
@@ -263,7 +295,7 @@ async def broker_relay_forever(
                 )
                 directed = await channel.get_exchange(directed_exchange_name, ensure=False)
                 market = await channel.get_exchange(market_exchange_name, ensure=False)
-                async with httpx.AsyncClient(timeout=http_timeout) as client:
+                async with httpx.AsyncClient(timeout=http_timeout, trust_env=False, follow_redirects=False) as client:
                     while True:
                         items = await claim_items(client, kind="BROKER", worker_id=worker_id)
                         for item in items:
@@ -305,7 +337,7 @@ async def saga_relay_forever(*, http_timeout: float, reconnect_seconds: float) -
     stepfunctions = _stepfunctions_client()
     while True:
         try:
-            async with httpx.AsyncClient(timeout=http_timeout) as client:
+            async with httpx.AsyncClient(timeout=http_timeout, trust_env=False, follow_redirects=False) as client:
                 while True:
                     items = await claim_items(client, kind="STEP_FUNCTIONS", worker_id=worker_id)
                     for item in items:
@@ -342,6 +374,7 @@ async def saga_relay_forever(*, http_timeout: float, reconnect_seconds: float) -
 
 
 async def claim_buyer_callback_items(client: httpx.AsyncClient) -> list[dict[str, Any]]:
+    _validate_master_origin(CALLBACK_CLAIM_URL)
     response = await client.post(CALLBACK_CLAIM_URL, json={
         "limit": BATCH_SIZE, "leaseSeconds": 15,
     })
@@ -356,6 +389,7 @@ async def finish_buyer_callback_item(
     client: httpx.AsyncClient, item: dict[str, Any], *,
     outcome: Literal["SUCCEEDED", "RETRY", "AMBIGUOUS"],
 ) -> bool:
+    _validate_master_origin(CALLBACK_RESULT_URL)
     response = await client.post(f"{CALLBACK_RESULT_URL}/{item['id']}/result", json={
         "claimToken": item["claimToken"], "outcome": outcome, "retrySeconds": 2,
     })
@@ -367,7 +401,9 @@ async def finish_buyer_callback_item(
 
 def send_buyer_callback_once(item: dict[str, Any], *, stepfunctions=None) -> None:
     """Enviar exclusivamente estado terminal persistido; jamás HTTP 202."""
-    if (not isinstance(item.get("taskToken"), str) or not item["taskToken"]
+    if (not isinstance(item.get("sagaExecutionId"), str) or not item["sagaExecutionId"]
+            or type(item.get("id")) is not int or item["id"] <= 0
+            or not isinstance(item.get("taskToken"), str) or not item["taskToken"]
             or not isinstance(item.get("claimToken"), str) or not item["claimToken"]
             or not isinstance(item.get("swapId"), str) or not item["swapId"]
             or item.get("outcome") not in {"SETTLED", "REJECTED", "EXPIRED", "CANCELLED"}):
@@ -385,7 +421,7 @@ async def buyer_callback_relay_forever(*, http_timeout: float,
     stepfunctions = _stepfunctions_client()
     while True:
         try:
-            async with httpx.AsyncClient(timeout=http_timeout) as client:
+            async with httpx.AsyncClient(timeout=http_timeout, trust_env=False, follow_redirects=False) as client:
                 while True:
                     items = await claim_buyer_callback_items(client)
                     for item in items:

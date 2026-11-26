@@ -19,6 +19,11 @@ from outbox_relay import (
 MACHINE = "arn:aws:states:us-east-1:123456789012:stateMachine:energyshark-seller"
 
 
+@pytest.fixture(autouse=True)
+def configured_saga(monkeypatch):
+    monkeypatch.setenv("E3_SELLER_STATE_MACHINE_ARN", MACHINE)
+
+
 def broker_item():
     idpk, msg_id = str(uuid4()), str(uuid4())
     payload = {

@@ -83,7 +83,7 @@ def reserve_incoming_bid(
         MarketOffer.cycle_id == reference.cycle_id,
         MarketOffer.city_id == CITY_ID,
         MarketOffer.is_local.is_(True),
-    ).with_for_update()).first()
+    ).with_for_update().execution_options(populate_existing=True)).first()
 
     # Proteger además el estado del propio bid ante consumidores concurrentes.
     bid = session.exec(select(MarketBid).where(

@@ -52,6 +52,7 @@ def claim_batch(
     now: datetime | None = None,
     kinds: tuple[str, ...] = ("BROKER", "STEP_FUNCTIONS"),
     include_reports: bool = True,
+    include_offers: bool = True,
 ) -> list[OutboundMessage]:
     """Reclama filas elegibles bloqueando con FOR UPDATE SKIP LOCKED.
 
@@ -101,7 +102,7 @@ def claim_batch(
         .where(or_(OutboundMessage.expires_at.is_(None), OutboundMessage.expires_at > now))
         .where(or_(
             OutboundMessage.message_type.not_in(MARKET_TYPES),
-            ~prior_market_pending,
+            and_(include_offers, ~prior_market_pending),
         ))
         .where(or_(OutboundMessage.message_type != "negotiation-report",
                    and_(include_reports, open_report, ~prior_report)))

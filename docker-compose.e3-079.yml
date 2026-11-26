@@ -53,6 +53,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://e3079:e3079@db:5432/e3079
       INSTANCE_NAME: master-e3079
+      E3_OWN_OFFERS_OUTBOX_ENABLED: "true"
       CITY_ID: KLD
       RABBITMQ_CENTRAL_ROUTING_KEY: central
       CORS_ALLOWED_ORIGINS: http://localhost

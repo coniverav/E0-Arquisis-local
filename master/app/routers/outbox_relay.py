@@ -15,6 +15,8 @@ from ..services.negotiation_report_dispatch import (
     mark_negotiation_report_sent, expire_report_dispatches, report_relay_enabled,
 )
 from ..services.budget_carryover import lock_city_ledger
+from ..services.market_outbox import own_offer_relay_enabled
+from ..services.seller_offer_events import expire_offer_dispatches
 
 
 router = APIRouter(prefix="/internal/outbox-relay", tags=["internal"])
@@ -80,7 +82,9 @@ def claim_outbox(
 ):
     if payload.deliveryKind == "BROKER":
         lock_city_ledger(session)
-        expire_report_dispatches(session, datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        expire_report_dispatches(session, now)
+        expire_offer_dispatches(session, now=now)
     rows = claim_batch(
         session,
         worker_id=payload.workerId,
@@ -88,6 +92,7 @@ def claim_outbox(
         lease_seconds=payload.leaseSeconds,
         kinds=(payload.deliveryKind,),
         include_reports=report_relay_enabled(),
+        include_offers=own_offer_relay_enabled(),
     )
     now = datetime.now(timezone.utc)
     deliverable = []

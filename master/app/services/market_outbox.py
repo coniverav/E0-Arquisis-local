@@ -6,6 +6,7 @@ mediante el mismo commit PostgreSQL.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any, Mapping
 
@@ -17,6 +18,10 @@ from .outbox_store import enqueue_broker
 
 OFFER_TYPES = frozenset({"offer", "offer-updated", "offer-withdrawn"})
 CRITICAL_BROKER_TYPES = OFFER_TYPES | {"negotiation-report"}
+
+
+def own_offer_relay_enabled() -> bool:
+    return os.getenv("E3_OWN_OFFERS_OUTBOX_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def enqueue_market_envelope(

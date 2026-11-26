@@ -34,3 +34,54 @@ Regresión E2: `master/tests/test_seller_offer_events.py`.
 Las pruebas no implican ejecución real en AWS, Wallet o RabbitMQ. Mantener el
 feature flag de saga apagado hasta completar E3-044 a E3-048 y la integración
 end-to-end.
+
+## E3-051 — Publicación de ofertas por relay
+
+Los productores de `offer`, `offer-updated` y `offer-withdrawn` reutilizan
+`outbound_messages`: negocio e intención se confirman en una sola transacción.
+El relay sólo obtiene filas confirmadas y publica el envelope v3 almacenado;
+un replay conserva `msgId`, `idpk`, precio y cantidad. No crea otra intención.
+La confirmación positiva del broker precede a `PUBLISHED`. Si se pierde esa
+confirmación o su registro local, el lease permite repetir el mismo mensaje:
+la entrega es al menos una vez y requiere deduplicación por el receptor.
+
+El orden se conserva por ciclo (una oferta propia por ciudad/ciclo): una fila
+pendiente o reclamada bloquea sus actualizaciones y retiro posteriores. Cada
+actualización refleja el `remaining` confirmado al crearla; no se reescribe un
+mensaje histórico con el saldo de hoy. La última actualización vigente converge
+al saldo PostgreSQL. Precio, retiro, reserva de bids y settlement bloquean y refrescan la oferta
+para evitar reutilizar objetos obsoletos de la sesión. Los HOLD reducen capacidad
+disponible para nuevos bids, pero sólo `swap-settled` descuenta `remaining`.
+Retirar una oferta no libera reservas ni cancela swaps ya aceptados.
+
+Se conserva la cuota compartida `market:offer` configurada por el estado oficial
+para los tres tipos. Una cuota agotada reagenda la misma intención. `lastOfferAt`,
+`closesAt`, `market-closed` y la expiración del outbox impiden nuevos despachos;
+el cierre también invalida claims pendientes. El connector comprueba expiración
+y lease inmediatamente antes de publicar. Un cierre recibido cuando el envío ya
+está en vuelo no puede deshacer la entrega al broker: no se garantiza recepción
+por Central dentro de ventana ni ausencia de sanciones tras el corte.
+
+### Cutover reversible, desactivado por defecto
+
+`E3_OWN_OFFERS_OUTBOX_ENABLED=false` mantiene las ofertas en el dispatcher E2.
+Con `true`, todas las réplicas API excluyen ofertas de la lista E2, rechazan sus
+reservas de cuota/resultados E2 y habilitan su claim E3. No activar en una mezcla
+de réplicas con valores distintos. El perfil local aislado E3-079 lo activa
+explícitamente; la configuración de producción no cambia.
+
+Para activar, detener y drenar los publicadores existentes (incluidos lotes
+obtenidos antes del cambio), configurar el flag en todas las réplicas API y
+arrancar el connector con `E3_BROKER_OUTBOX_RELAY_ENABLED=true`. Este último flag
+selecciona el relay para **todo** el despacho BROKER: coordinar también el flag
+de reportes E3-050 si hay reportes pendientes, para no dejarlos sin publicador.
+No ejecutar los dos bucles sobre las mismas filas. Para revertir, detener y
+drenar el relay, desactivar el flag en todas las réplicas y volver al dispatcher
+E2. Los claims aún vigentes se respetan; al vencer, la ruta E2 recupera las filas
+sin cambiar su envelope. Una publicación aceptada cuyo confirm se perdió puede
+repetirse también durante el rollback.
+
+Validación específica: `master/tests/test_e3051_own_offers_outbox.py`, junto con
+las suites de E3-028, E3-043, relay E3-029 y mercado E2. Se usan PostgreSQL efímero,
+Wallet simulada y confirmaciones AMQP simuladas; no certifica integración con
+servicios productivos.

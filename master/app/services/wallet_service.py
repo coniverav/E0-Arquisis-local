@@ -362,7 +362,7 @@ class WalletService:
             offer = session.exec(
                 select(MarketOffer).where(
                     MarketOffer.offer_id == offer_id
-                ).with_for_update()
+                ).with_for_update().execution_options(populate_existing=True)
             ).first()
             res.status = "COMMITTED"
             if offer is not None:

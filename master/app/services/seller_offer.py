@@ -126,6 +126,7 @@ async def enqueue_seller_offer(
                 .with_for_update()
             ).first()
 
+            now = datetime.now(timezone.utc)  # El lock puede esperar hasta después del corte.
             if not _eligible(cycle, now):
                 return False
             market_state = session.get(MarketCycle, cycle_id)

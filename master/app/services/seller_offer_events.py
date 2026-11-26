@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from uuid import uuid4
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.config import CITY_ID
@@ -30,6 +31,8 @@ def _can_broadcast(session: Session, offer: MarketOffer, now: datetime) -> bool:
         return False
     cycle = session.get(Cycle, offer.cycle_id)
     if cycle is None or cycle.market_last_offer_at is None:
+        return False
+    if cycle.market_opens_at is not None and now < cycle.market_opens_at:
         return False
     if now >= cycle.market_last_offer_at:
         return False
@@ -84,7 +87,6 @@ def change_local_offer_price(
     session: Session, *, offer_id: str, price: Decimal, now: datetime | None = None
 ) -> bool:
     """Reajusta precio para bids FUTUROS. No modifica swaps ya propuestos."""
-    moment = _utc(now)
     try:
         value = Decimal(str(price))
     except (ValueError, InvalidOperation) as exc:
@@ -96,7 +98,8 @@ def change_local_offer_price(
     offer = session.exec(select(MarketOffer).where(
         MarketOffer.offer_id == offer_id, MarketOffer.is_local.is_(True),
         MarketOffer.city_id == CITY_ID,
-    ).with_for_update()).first()
+    ).with_for_update().execution_options(populate_existing=True)).first()
+    moment = _utc(now)  # Releer el reloj después de esperar el lock.
     if offer is None or offer.status != "ACTIVE":
         raise ValueError("Oferta local inexistente o no activa")
     if not _can_broadcast(session, offer, moment):
@@ -115,11 +118,11 @@ def withdraw_local_offer(
     session: Session, *, offer_id: str, now: datetime | None = None
 ) -> bool:
     """Retira la oferta para bids nuevos; no cancela reservas/swap en curso."""
-    moment = _utc(now)
     offer = session.exec(select(MarketOffer).where(
         MarketOffer.offer_id == offer_id, MarketOffer.is_local.is_(True),
         MarketOffer.city_id == CITY_ID,
-    ).with_for_update()).first()
+    ).with_for_update().execution_options(populate_existing=True)).first()
+    moment = _utc(now)
     if offer is None:
         raise ValueError("Oferta local inexistente")
     if offer.status == "WITHDRAWN":
@@ -156,7 +159,7 @@ def close_local_offers(session: Session, *, cycle_id: str, now: datetime | None 
     pending = session.exec(select(OutboundMessage).where(
         OutboundMessage.cycle_id == cycle_id,
         OutboundMessage.message_type.in_(tuple(MARKET_OFFER_TYPES)),
-        OutboundMessage.status.in_(["PENDING", "FAILED"]),
+        OutboundMessage.status.in_(["PENDING", "FAILED", "CLAIMED"]),
         OutboundMessage.dispatch_required.is_(True),
     )).all()
     for item in pending:
@@ -181,3 +184,28 @@ def close_expired_local_offers(session: Session, *, now: datetime | None = None)
         ).distinct()
     ).all()
     return sum(close_local_offers(session, cycle_id=cid, now=moment) for cid in cycles)
+
+
+def expire_offer_dispatches(session: Session, *, now: datetime) -> None:
+    """Vence difusiones pendientes aunque el scheduler esté detenido.
+
+    Conserva la intención inmutable y el remaining económico. El relay ya
+    no puede confirmar un claim cuyo dispatch_required fue revocado.
+    """
+    rows = session.exec(
+        select(OutboundMessage)
+        .outerjoin(Cycle, Cycle.cycle_id == OutboundMessage.cycle_id)
+        .outerjoin(MarketCycle, MarketCycle.cycle_id == OutboundMessage.cycle_id)
+        .where(OutboundMessage.message_type.in_(tuple(MARKET_OFFER_TYPES)))
+        .where(OutboundMessage.dispatch_required.is_(True))
+        .where(or_(OutboundMessage.expires_at <= now,
+                   Cycle.market_last_offer_at <= now,
+                   Cycle.market_closes_at <= now,
+                   MarketCycle.closed_at.is_not(None)))
+        .with_for_update(of=OutboundMessage)
+    ).all()
+    for row in rows:
+        row.dispatch_required = False
+        row.last_error = "MARKET_CLOSED"
+        session.add(row)
+    session.flush()

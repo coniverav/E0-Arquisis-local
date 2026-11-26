@@ -1,5 +1,6 @@
 import importlib.util
 import json
+from fnmatch import fnmatchcase
 import os
 from collections import Counter
 import sys
@@ -163,6 +164,62 @@ class ServerlessInfrastructureTest(unittest.TestCase):
                     )
 
         self.assertTrue(start_execution_found)
+
+    def test_connector_permissions_match_actual_calls(self):
+        profile, = self.resources("AWS::IAM::InstanceProfile").values()
+        role_ref, = profile["Properties"]["Roles"]
+        policy, = (
+            resource["Properties"]["PolicyDocument"]
+            for resource in self.resources("AWS::IAM::Policy").values()
+            if role_ref in resource["Properties"]["Roles"]
+        )
+        statements = {statement["Action"]: statement for statement in policy["Statement"]}
+        self.assertEqual(set(statements), {
+            "states:StartExecution", "states:DescribeExecution", "states:SendTaskSuccess",
+        })
+        self.assertEqual(statements["states:SendTaskSuccess"]["Resource"], "*")
+        resources = statements["states:DescribeExecution"]["Resource"]
+        self.assertEqual(len(resources), 2)
+        for resource, machine in zip(resources, ("SellerStateMachine", "BuyerStateMachine")):
+            parts = resource["Fn::Join"][1]
+            self.assertIn({"Fn::GetAtt": [machine, "Name"]}, parts)
+            self.assertEqual(parts[-1], ":*")
+            self.assertTrue(any(isinstance(part, str) and ":execution:" in part for part in parts))
+
+    def test_describe_scope_allows_only_node_executions(self):
+        profile, = self.resources("AWS::IAM::InstanceProfile").values()
+        role_ref, = profile["Properties"]["Roles"]
+        policy, = (
+            resource["Properties"]["PolicyDocument"]
+            for resource in self.resources("AWS::IAM::Policy").values()
+            if role_ref in resource["Properties"]["Roles"]
+        )
+        statement, = (entry for entry in policy["Statement"]
+                      if entry["Action"] == "states:DescribeExecution")
+        refs = {"AWS::Partition": "aws", "AWS::Region": "us-east-1",
+                "AWS::AccountId": "123456789012"}
+        names = {"SellerStateMachine": "seller-node", "BuyerStateMachine": "buyer-node"}
+        patterns = []
+        for resource in statement["Resource"]:
+            separator, parts = resource["Fn::Join"]
+            resolved = []
+            for part in parts:
+                if isinstance(part, str):
+                    resolved.append(part)
+                elif "Ref" in part:
+                    resolved.append(refs[part["Ref"]])
+                else:
+                    resolved.append(names[part["Fn::GetAtt"][0]])
+            patterns.append(separator.join(resolved))
+        cases = {
+            "arn:aws:states:us-east-1:123456789012:execution:seller-node:op": True,
+            "arn:aws:states:us-east-1:123456789012:execution:buyer-node:op": True,
+            "arn:aws:states:us-east-1:123456789012:execution:other:op": False,
+            "arn:aws:states:us-east-1:999999999999:execution:seller-node:op": False,
+            "arn:aws:states:us-west-2:123456789012:execution:seller-node:op": False,
+        }
+        for arn, allowed in cases.items():
+            self.assertEqual(any(fnmatchcase(arn, pattern) for pattern in patterns), allowed)
 
     def test_connector_role_is_assumable_only_by_ec2(self) -> None:
         roles = self.resources("AWS::IAM::Role")

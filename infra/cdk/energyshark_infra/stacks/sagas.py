@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from aws_cdk import (
+    ArnFormat,
     CfnOutput,
     CfnParameter,
     Duration,
@@ -400,11 +401,25 @@ class SagasStack(Stack):
                 resources=[self.seller_alias.ref, self.buyer_alias.ref],
             )
         )
-        # SendTaskSuccess/Failure se autoriza mediante task token; AWS no ofrece
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["states:DescribeExecution"],
+                resources=[
+                    self.format_arn(
+                        service="states",
+                        resource="execution",
+                        resource_name=f"{machine.attr_name}:*",
+                        arn_format=ArnFormat.COLON_RESOURCE_NAME,
+                    )
+                    for machine in (self.seller_state_machine, self.buyer_state_machine)
+                ],
+            )
+        )
+        # SendTaskSuccess se autoriza mediante task token; AWS no ofrece
         # un ARN de ejecución o máquina utilizable para delimitar estas APIs.
         role.add_to_policy(
             iam.PolicyStatement(
-                actions=["states:SendTaskSuccess", "states:SendTaskFailure"],
+                actions=["states:SendTaskSuccess"],
                 resources=["*"],
             )
         )

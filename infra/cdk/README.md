@@ -54,7 +54,7 @@ Sin `adminCidr` el grupo de seguridad no abre el puerto 22 y el acceso administr
 
 El despliegue de sagas exige los parámetros `DatabaseSecretArn` y `WalletSecretArn`. Solo sus ARN llegan al entorno Lambda; cada rol puede leer exclusivamente los secretos que requiere. No se guardan valores en Git, contexto o CloudFormation.
 
-El rol de Step Functions solo invoca sus Lambdas. El rol de Connector limita `StartExecution` a ambos alias. `SendTaskSuccess/Failure` y las APIs de entrega de CloudWatch Logs usan `Resource: *` porque AWS no admite delimitarlas por ARN; no hay permisos administrativos.
+El rol de Step Functions solo invoca sus Lambdas. El rol de Connector limita `StartExecution` a ambos alias. `DescribeExecution` se acota a las ejecuciones de ambas máquinas. `SendTaskSuccess` y las APIs de entrega de CloudWatch Logs usan `Resource: *` porque AWS no admite delimitarlas por ARN; no hay permisos administrativos.
 
 La estrategia sigue siendo tests, `cdk synth`, `cdk diff`, revisión y despliegue inicial en `dev`. Producción requiere aprobación y rollback. Esta rama no ejecuta `cdk deploy`.
 
@@ -93,3 +93,5 @@ python3 ../../tools/iac_policy_audit.py \
 ## Permisos
 
 El rol de la instancia conserva `AmazonSSMManagedInstanceCore`, la política mínima de AWS para Session Manager, y una política en línea que acota métricas al namespace `EnergyShark/Host` y logs al grupo `/energyshark/host`. No hay acciones comodín ni políticas de administrador en ningún stack. Los recursos comodín que quedan están justificados por API en `docs/E3-077-permisos-minimos-secretos-iac.md`.
+
+La validación de origen, credenciales renovables y asociación del rol al host se documenta en [E3-056](../../docs/E3-056-ec2-stepfunctions-iam.md).

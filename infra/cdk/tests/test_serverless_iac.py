@@ -11,7 +11,10 @@ from unittest.mock import patch
 from aws_cdk.assertions import Template
 
 from app import build_app
-from energyshark_infra.stacks.sagas import LOG_DELIVERY_ACTIONS
+from energyshark_infra.stacks.sagas import (
+    LAMBDA_VPC_ENI_ACTIONS,
+    LOG_DELIVERY_ACTIONS,
+)
 
 
 class ServerlessInfrastructureTest(unittest.TestCase):
@@ -139,6 +142,7 @@ class ServerlessInfrastructureTest(unittest.TestCase):
     def test_iam_uses_only_required_actions_and_justified_wildcards(self) -> None:
         allowed_wildcards = {
             frozenset(LOG_DELIVERY_ACTIONS),
+            frozenset(LAMBDA_VPC_ENI_ACTIONS),
             frozenset(("states:SendTaskSuccess", "states:SendTaskFailure")),
             frozenset(("states:SendTaskSuccess",)),
         }
@@ -172,6 +176,70 @@ class ServerlessInfrastructureTest(unittest.TestCase):
                     )
 
         self.assertTrue(start_execution_found)
+
+    def test_all_lambda_roles_have_only_the_required_vpc_eni_actions(self) -> None:
+        functions = self.resources("AWS::Lambda::Function")
+        policies = self.resources("AWS::IAM::Policy")
+        lambda_role_refs = {
+            function["Properties"]["Role"]["Fn::GetAtt"][0]
+            for function in functions.values()
+        }
+        self.assertEqual(len(functions), 13)
+        self.assertEqual(len(lambda_role_refs), 13)
+
+        ec2_actions_by_role = {}
+        for policy in policies.values():
+            statements = policy["Properties"]["PolicyDocument"]["Statement"]
+            ec2_actions = {
+                action
+                for statement in statements
+                for action in (
+                    [statement["Action"]]
+                    if isinstance(statement["Action"], str)
+                    else statement["Action"]
+                )
+                if action.startswith("ec2:")
+            }
+            if not ec2_actions:
+                continue
+            ec2_statements = [
+                statement
+                for statement in statements
+                if any(
+                    action.startswith("ec2:")
+                    for action in (
+                        [statement["Action"]]
+                        if isinstance(statement["Action"], str)
+                        else statement["Action"]
+                    )
+                )
+            ]
+            self.assertTrue(
+                all(statement["Resource"] == "*" for statement in ec2_statements)
+            )
+            for role in policy["Properties"]["Roles"]:
+                ec2_actions_by_role.setdefault(role["Ref"], set()).update(
+                    ec2_actions
+                )
+
+        self.assertEqual(set(ec2_actions_by_role), lambda_role_refs)
+        for role in lambda_role_refs:
+            self.assertEqual(
+                ec2_actions_by_role[role],
+                set(LAMBDA_VPC_ENI_ACTIONS),
+            )
+
+        profile, = self.resources("AWS::IAM::InstanceProfile").values()
+        connector_role, = profile["Properties"]["Roles"]
+        self.assertNotIn(connector_role["Ref"], ec2_actions_by_role)
+
+        state_machine_roles = {
+            machine["Properties"]["RoleArn"]["Fn::GetAtt"][0]
+            for machine in self.resources(
+                "AWS::StepFunctions::StateMachine"
+            ).values()
+        }
+        self.assertTrue(state_machine_roles.isdisjoint(ec2_actions_by_role))
 
     def test_connector_permissions_match_actual_calls(self):
         profile, = self.resources("AWS::IAM::InstanceProfile").values()

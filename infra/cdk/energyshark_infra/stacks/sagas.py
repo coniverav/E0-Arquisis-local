@@ -100,6 +100,19 @@ LOG_DELIVERY_ACTIONS = (
     "logs:DescribeLogGroups",
 )
 
+# Subconjunto de AWSLambdaVPCAccessExecutionRole necesario para que Lambda
+# administre las interfaces de red de funciones conectadas a una VPC. Los
+# permisos de CloudWatch Logs se conceden por separado y quedan acotados al
+# log group propio de cada tarea.
+LAMBDA_VPC_ENI_ACTIONS = (
+    "ec2:CreateNetworkInterface",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeSubnets",
+    "ec2:DeleteNetworkInterface",
+    "ec2:AssignPrivateIpAddresses",
+    "ec2:UnassignPrivateIpAddresses",
+)
+
 
 class SagasStack(Stack):
     """Step Functions, Lambdas y permisos mínimos para las sagas E3."""
@@ -359,6 +372,12 @@ class SagasStack(Stack):
             removal_policy=RemovalPolicy.RETAIN,
         )
         log_group.grant_write(role)
+        role.add_to_policy(
+            iam.PolicyStatement(
+                actions=list(LAMBDA_VPC_ENI_ACTIONS),
+                resources=["*"],
+            )
+        )
 
         environment = {
             "ENERGYSHARK_ENV": self.settings.environment,

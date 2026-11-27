@@ -1,0 +1,27 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AssumeOnlyEnergySharkCdkDeploymentRoles",
+      "Effect": "Allow",
+      "Action": [
+        "sts:AssumeRole",
+        "sts:TagSession"
+      ],
+      "Resource": [
+        "arn:aws:iam::521294961974:role/cdk-hnb659fds-deploy-role-521294961974-us-east-2",
+        "arn:aws:iam::521294961974:role/cdk-hnb659fds-file-publishing-role-521294961974-us-east-2",
+        "arn:aws:iam::521294961974:role/cdk-hnb659fds-image-publishing-role-521294961974-us-east-2"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:ResourceTag/aws-cdk:bootstrap-role": [
+            "deploy",
+            "file-publishing",
+            "image-publishing"
+          ]
+        }
+      }
+    }
+  ]
+}

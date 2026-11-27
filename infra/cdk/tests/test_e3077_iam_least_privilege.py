@@ -2,8 +2,8 @@
 
 Verifica que ningún rol de la infraestructura declare acciones comodín, que
 los `Resource: "*"` estén justificados por una API que no admite ARN, y que
-los secretos lleguen a las Lambdas solo como referencia a un parámetro
-`NoEcho`.
+los secretos lleguen a las Lambdas solo como referencia a recursos de
+Secrets Manager administrados por el stack.
 """
 
 import json
@@ -27,6 +27,12 @@ WILDCARD_ALLOWED_ACTIONS = {
     "ec2:DescribeInstances",
     "ec2:DescribeTags",
     "ec2:DescribeVolumes",
+    "ec2:CreateNetworkInterface",
+    "ec2:DescribeNetworkInterfaces",
+    "ec2:DescribeSubnets",
+    "ec2:DeleteNetworkInterface",
+    "ec2:AssignPrivateIpAddresses",
+    "ec2:UnassignPrivateIpAddresses",
     "states:SendTaskSuccess",
     "states:SendTaskFailure",
     "logs:CreateLogDelivery",
@@ -168,17 +174,20 @@ class LeastPrivilegeTest(unittest.TestCase):
             self.assertNotEqual(resources, '"*"')
             self.assertNotIn("logs:CreateLogGroup", as_list(statement["Action"]))
 
-    def test_secret_parameters_are_no_echo(self) -> None:
-        secrets = no_echo_parameters(self.sagas)
-        self.assertEqual(secrets, {"DatabaseSecretArn", "WalletSecretArn"})
-        for name in secrets:
-            description = self.sagas["Parameters"][name]["Description"]
-            self.assertIn("ARN", description)
-            self.assertIn("Secrets Manager", description)
+    def test_secret_resources_are_retained_and_generated(self) -> None:
+        secrets = self.resources_of(self.sagas, "AWS::SecretsManager::Secret")
+        self.assertEqual(len(secrets), 2)
+        for resource in secrets.values():
+            self.assertEqual(resource["DeletionPolicy"], "Retain")
+            self.assertNotIn("SecretString", resource["Properties"])
+            self.assertIn("GenerateSecretString", resource["Properties"])
 
     def test_lambda_receives_secret_arns_not_values(self) -> None:
-        secret_parameters = no_echo_parameters(self.sagas)
-        self.assertTrue(secret_parameters)
+        secret_resources = self.resources_of(
+            self.sagas,
+            "AWS::SecretsManager::Secret",
+        )
+        self.assertTrue(secret_resources)
 
         checked = 0
         for function in self.resources_of(
@@ -194,8 +203,8 @@ class LeastPrivilegeTest(unittest.TestCase):
                 checked += 1
                 self.assertIn(
                     value.get("Ref"),
-                    secret_parameters,
-                    f"{key} no referencia un parámetro NoEcho",
+                    secret_resources,
+                    f"{key} no referencia un secreto del stack",
                 )
         self.assertGreater(checked, 0)
 

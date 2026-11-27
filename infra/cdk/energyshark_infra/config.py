@@ -79,6 +79,7 @@ class DeploymentSettings:
     buyer_saga_timeout_seconds: int
     lambda_timeout_seconds: int
     lambda_memory_mb: int
+    lambda_reserved_concurrency: int
     log_retention_days: int
     infrastructure: InfrastructureSettings
 
@@ -146,6 +147,10 @@ def load_settings(app: cdk.App) -> DeploymentSettings:
         ),
         lambda_timeout_seconds=positive_int("lambdaTimeoutSeconds", 25),
         lambda_memory_mb=positive_int("lambdaMemoryMb", 256),
+        lambda_reserved_concurrency=positive_int(
+            "lambdaReservedConcurrency",
+            2,
+        ),
         log_retention_days=positive_int("logRetentionDays", 30),
         infrastructure=InfrastructureSettings(
             network_cidr=required_text("networkCidr", DEFAULT_NETWORK_CIDR),

@@ -43,6 +43,25 @@ class InfrastructureBaseTest(unittest.TestCase):
         template = Template.from_stack(self.stacks.sagas).to_json()
         self.assertTrue(template.get("Resources"))
 
+    def test_sagas_only_scope_does_not_construct_other_stacks(self) -> None:
+        app, stacks = build_app(
+            {
+                "environment": "prod",
+                "deploymentScope": "sagas",
+                "environments": {
+                    "prod": {"stackPrefix": "EnergySharkProd"},
+                },
+            }
+        )
+        self.assertIsNone(stacks.existing)
+        self.assertIsNone(stacks.monitoring)
+        self.assertEqual(stacks.sagas.stack_name, "EnergySharkProd-Sagas")
+        assembly = app.synth()
+        self.assertEqual(
+            [artifact.stack_name for artifact in assembly.stacks],
+            ["EnergySharkProd-Sagas"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

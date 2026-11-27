@@ -26,7 +26,7 @@ Los recursos E2 se crean desde cero, sin importar nada. El stack `ExistingInfras
 
 El stack `Monitoring` añade cinco alarmas (5xx, latencia p95, 4xx, estado de la instancia y CPU), un topic SNS con suscripción opcional por correo y un panel de operación.
 
-El stack de sagas declara dos máquinas Standard, una versión y un alias `live` por máquina, 13 Lambdas y sus roles. Los handlers cubren reservas, propuestas, validación, callbacks, reconciliación y cierre. El procedimiento de E3-055 permite revisar el cambio antes de activar la integración de E3-056. [Guía de despliegue de sagas](../../docs/E3-055-step-functions-iac.md).
+El stack de sagas declara dos máquinas Standard, una versión y un alias `live` por máquina, 13 Lambdas y sus roles. Las Lambdas usan ENI en la VPC existente y un security group sin salida general: PostgreSQL y HTTPS se alcanzan únicamente mediante los proxies privados de EC2. Los handlers cubren reservas, propuestas, validación, callbacks, reconciliación y cierre. [Guía de despliegue de sagas](../../docs/E3-055-step-functions-iac.md).
 
 `dev`, `staging` y `prod` parametrizan nombres, timeout total, memoria, timeout Lambda y retención de logs. Cuenta y región provienen de `CDK_DEFAULT_ACCOUNT` y `CDK_DEFAULT_REGION`; producción activa protección contra eliminación.
 
@@ -52,11 +52,21 @@ Sin `adminCidr` el grupo de seguridad no abre el puerto 22 y el acceso administr
 
 ## Secretos y despliegue
 
-El despliegue de sagas exige los parámetros `DatabaseSecretArn` y `WalletSecretArn`. Solo sus ARN llegan al entorno Lambda; cada rol puede leer exclusivamente los secretos que requiere. No se guardan valores en Git, contexto o CloudFormation.
+`SagasStack` crea los recursos `DatabaseSecret` y `WalletSecret` con un valor bootstrap aleatorio y política `Retain`. CloudFormation no recibe credenciales reales: el operador reemplaza ese valor después del despliegue usando un archivo local fuera del repositorio. Solo los ARN llegan al entorno Lambda y cada rol puede leer exclusivamente el secreto que requiere.
+
+El stack exige la VPC, subred e IP privada de la EC2 existente como parámetros.
+Crea un security group dedicado para los proxies, que debe asociarse manualmente
+a la EC2 antes de validar conectividad; no modifica su grupo actual. No crea NAT,
+RDS, EC2 ni modifica los stacks E2. Los proxies de `docker-compose.prod.yml` se
+ligan a `E3_EC2_PRIVATE_IP`; su valor seguro por defecto es loopback y en
+producción debe reemplazarse explícitamente por la dirección RFC1918 del host.
 
 El rol de Step Functions solo invoca sus Lambdas. El rol de Connector limita `StartExecution` a ambos alias. `DescribeExecution` se acota a las ejecuciones de ambas máquinas. `SendTaskSuccess` y las APIs de entrega de CloudWatch Logs usan `Resource: *` porque AWS no admite delimitarlas por ARN; no hay permisos administrativos.
 
-La estrategia sigue siendo tests, `cdk synth`, `cdk diff`, revisión y despliegue inicial en `dev`. Producción requiere aprobación y rollback. Esta rama no ejecuta `cdk deploy`.
+La preparación E3-055 sintetiza y despliega únicamente `EnergySharkProd-Sagas`
+con los contextos `environment=prod` y `deploymentScope=sagas`. Este último
+evita incluso construir los stacks E2 en la app CDK. Producción requiere
+aprobación y rollback; esta rama no ejecuta `cdk deploy`.
 
 El user data instala Docker y, si `appRepositoryUrl` está definido, clona el repositorio y levanta `docker-compose.prod.yml`. Sin esa clave el host queda sin aplicación y lo informa en `/var/log/energyshark-bootstrap.log`.
 

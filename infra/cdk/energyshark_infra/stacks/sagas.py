@@ -8,12 +8,15 @@ from aws_cdk import (
     CfnOutput,
     CfnParameter,
     Duration,
+    Fn,
     RemovalPolicy,
     Stack,
+    aws_ec2 as ec2,
     aws_ecr_assets as ecr_assets,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_logs as logs,
+    aws_secretsmanager as secretsmanager,
     aws_stepfunctions as sfn,
 )
 from constructs import Construct
@@ -117,7 +120,9 @@ class SagasStack(Stack):
         )
         self.settings = settings
         self._retention = log_retention_for(settings.log_retention_days)
-        self._secret_parameters = self._create_secret_parameters()
+        self._network_parameters = self._create_network_parameters()
+        self._configure_private_network()
+        self._secrets = self._create_secrets()
         self.task_functions = self._create_task_functions()
 
         self.seller_state_machine, self.seller_alias = self._create_state_machine(
@@ -171,28 +176,154 @@ class SagasStack(Stack):
             value=self.connector_instance_profile.attr_arn,
             description="Instance profile para asociar al host de Connector",
         )
+        CfnOutput(
+            self,
+            "DatabaseSecretArn",
+            value=self._secrets["database"].secret_arn,
+            description="Secreto retenido; cargar valor fuera de CloudFormation",
+        )
+        CfnOutput(
+            self,
+            "WalletSecretArn",
+            value=self._secrets["wallet"].secret_arn,
+            description="Secreto retenido; cargar valor fuera de CloudFormation",
+        )
+        CfnOutput(
+            self,
+            "SagaProxySecurityGroupId",
+            value=self.proxy_security_group.security_group_id,
+            description="Asociar manualmente a la EC2 que ejecuta los proxies",
+        )
 
-    def _create_secret_parameters(self) -> dict[str, CfnParameter]:
-        # El parámetro termina en Resource de IAM y debe identificar un único secreto.
-        secret_arn = r"arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}"
+    def _create_network_parameters(self) -> dict[str, CfnParameter]:
         return {
-            "database": CfnParameter(
+            "vpc": CfnParameter(
                 self,
-                "DatabaseSecretArn",
-                type="String",
-                no_echo=True,
-                allowed_pattern=secret_arn,
-                description="ARN de Secrets Manager con acceso a PostgreSQL",
+                "ExistingVpcId",
+                type="AWS::EC2::VPC::Id",
+                description="VPC pública donde ya opera la EC2 de EnergyShark",
             ),
-            "wallet": CfnParameter(
+            "subnet": CfnParameter(
                 self,
-                "WalletSecretArn",
+                "ExistingSubnetId",
+                type="AWS::EC2::Subnet::Id",
+                description="Subred existente de la EC2 para las ENI de Lambda",
+            ),
+            "application_private_ip": CfnParameter(
+                self,
+                "ApplicationPrivateIp",
                 type="String",
-                no_echo=True,
-                allowed_pattern=secret_arn,
-                description="ARN de Secrets Manager con configuración Wallet",
+                allowed_pattern=(
+                    r"^(25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])"
+                    r"(\.(25[0-5]|2[0-4][0-9]|[01]?[0-9]?[0-9])){3}$"
+                ),
+                description="IP privada de EC2; nunca usar la IP pública",
+            ),
+            "database_proxy_port": CfnParameter(
+                self,
+                "DatabaseProxyPort",
+                type="Number",
+                default=15432,
+                min_value=1024,
+                max_value=65535,
+                description="Puerto privado del proxy PostgreSQL en EC2",
+            ),
+            "https_proxy_port": CfnParameter(
+                self,
+                "HttpsProxyPort",
+                type="Number",
+                default=3128,
+                min_value=1024,
+                max_value=65535,
+                description="Puerto privado del proxy HTTPS allowlist en EC2",
             ),
         }
+
+    def _configure_private_network(self) -> None:
+        vpc_id = self._network_parameters["vpc"].value_as_string
+        subnet_id = self._network_parameters["subnet"].value_as_string
+        self._vpc = ec2.Vpc.from_vpc_attributes(
+            self,
+            "ExistingVpc",
+            vpc_id=vpc_id,
+            availability_zones=[Fn.select(0, Fn.get_azs())],
+        )
+        self._lambda_subnet = ec2.Subnet.from_subnet_id(
+            self,
+            "ExistingLambdaSubnet",
+            subnet_id,
+        )
+        self.lambda_security_group = ec2.SecurityGroup(
+            self,
+            "SagaLambdaSecurityGroup",
+            vpc=self._vpc,
+            allow_all_outbound=False,
+            description=(
+                "Lambdas de saga: salida solo a proxies privados de la EC2"
+            ),
+        )
+        self.proxy_security_group = ec2.SecurityGroup(
+            self,
+            "SagaProxySecurityGroup",
+            vpc=self._vpc,
+            allow_all_outbound=True,
+            description=(
+                "Proxies E3 en EC2: entrada solo desde las Lambdas de saga"
+            ),
+        )
+        for name, description in (
+            ("database_proxy_port", "PostgreSQL mediante proxy TCP privado"),
+            ("https_proxy_port", "HTTPS mediante proxy CONNECT con allowlist"),
+        ):
+            port = self._network_parameters[name].value_as_number
+            ec2.CfnSecurityGroupEgress(
+                self,
+                f"SagaLambda{name.title().replace('_', '')}Egress",
+                group_id=self.lambda_security_group.security_group_id,
+                ip_protocol="tcp",
+                from_port=port,
+                to_port=port,
+                destination_security_group_id=(
+                    self.proxy_security_group.security_group_id
+                ),
+                description=description,
+            )
+            ec2.CfnSecurityGroupIngress(
+                self,
+                f"Application{name.title().replace('_', '')}Ingress",
+                group_id=self.proxy_security_group.security_group_id,
+                ip_protocol="tcp",
+                from_port=port,
+                to_port=port,
+                source_security_group_id=(
+                    self.lambda_security_group.security_group_id
+                ),
+                description=description,
+            )
+
+    def _create_secrets(self) -> dict[str, secretsmanager.Secret]:
+        secrets: dict[str, secretsmanager.Secret] = {}
+        for kind in ("database", "wallet"):
+            construct_name = kind.title()
+            secret = secretsmanager.Secret(
+                self,
+                f"{construct_name}Secret",
+                description=(
+                    f"EnergyShark {self.settings.environment}: configuración {kind}"
+                ),
+                generate_secret_string=secretsmanager.SecretStringGenerator(
+                    secret_string_template=json.dumps(
+                        {"configured": False, "kind": kind},
+                        separators=(",", ":"),
+                    ),
+                    generate_string_key="bootstrapNonce",
+                    password_length=32,
+                    exclude_punctuation=True,
+                ),
+            )
+            secret.apply_removal_policy(RemovalPolicy.RETAIN)
+            secrets[kind] = secret
+        return secrets
 
     def _create_task_functions(self) -> dict[str, lambda_.DockerImageFunction]:
         source = Path(__file__).resolve().parents[2] / "lambda_src" / "saga_task"
@@ -233,16 +364,34 @@ class SagasStack(Stack):
             "ENERGYSHARK_ENV": self.settings.environment,
             "CITY_ID": "KLD",
             "SAGA_TASK": task.task_name,
+            "HTTPS_PROXY": Fn.join(
+                "",
+                [
+                    "http://",
+                    self._network_parameters[
+                        "application_private_ip"
+                    ].value_as_string,
+                    ":",
+                    self._network_parameters["https_proxy_port"].value_as_string,
+                ],
+            ),
+            "NO_PROXY": Fn.join(
+                ",",
+                [
+                    "169.254.169.254",
+                    self._network_parameters[
+                        "application_private_ip"
+                    ].value_as_string,
+                ],
+            ),
         }
         for secret_kind in task.secret_kinds:
-            secret_parameter = self._secret_parameters[secret_kind]
-            environment[f"{secret_kind.upper()}_SECRET_ARN"] = (
-                secret_parameter.value_as_string
-            )
+            secret = self._secrets[secret_kind]
+            environment[f"{secret_kind.upper()}_SECRET_ARN"] = secret.secret_arn
             role.add_to_policy(
                 iam.PolicyStatement(
                     actions=["secretsmanager:GetSecretValue"],
-                    resources=[secret_parameter.value_as_string],
+                    resources=[secret.secret_arn],
                 )
             )
 
@@ -268,7 +417,14 @@ class SagasStack(Stack):
             log_group=log_group,
             timeout=Duration.seconds(self.settings.lambda_timeout_seconds),
             memory_size=self.settings.lambda_memory_mb,
+            reserved_concurrent_executions=(
+                self.settings.lambda_reserved_concurrency
+            ),
             environment=environment,
+            vpc=self._vpc,
+            vpc_subnets=ec2.SubnetSelection(subnets=[self._lambda_subnet]),
+            security_groups=[self.lambda_security_group],
+            allow_public_subnet=True,
         )
         function.node.add_dependency(log_group)
         return function

@@ -17,6 +17,7 @@ from .services.budget_carryover import lock_city_ledger
 from .services.negotiation_report_dispatch import process_report_error
 from .services.negotiation_correlation import proposal_negotiation, stop_proposal_dispatches
 from .services.sse_projection import run_sse_projector
+from .services.sse_alerts import run_age_observer
 from .schemas import (
     DemandPayload,
     EventOut,
@@ -57,6 +58,7 @@ from .services.negotiation_state import (
 async def lifespan(_app: FastAPI):
     async with create_task_group() as tasks:
         tasks.start_soon(run_sse_projector)
+        tasks.start_soon(run_age_observer)
         try:
             yield
         finally:

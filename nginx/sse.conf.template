@@ -28,5 +28,16 @@ server {
         add_header Cache-Control "no-cache, no-store, no-transform" always;
     }
 
+    location = /events/search {
+        if ($args != "") { return 400; }
+        if ($request_method !~ ^(POST|OPTIONS)$) { return 405; }
+        client_max_body_size 4k;
+        proxy_pass http://energyshark_backend;
+        proxy_set_header Authorization $http_authorization;
+        proxy_cache off;
+        proxy_hide_header Cache-Control;
+        add_header Cache-Control "no-store" always;
+    }
+
     location / { return 404; }
 }

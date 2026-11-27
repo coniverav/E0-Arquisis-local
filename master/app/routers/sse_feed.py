@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
@@ -148,6 +148,13 @@ async def sse_messages(request: Request, *, after_id: int, subject: str, expires
         await asyncio.sleep(min(POLL_SECONDS, max(0, expires_at - time.time())))
 
 
+def valid_expiry(claims: dict) -> int | float:
+    expiry = claims.get('exp')
+    if type(expiry) not in (int, float) or not time.time() < expiry < float('inf'):
+        raise HTTPException(401, 'Invalid or expired SSE token')
+    return expiry
+
+
 @router.get(
     '/events/stream',
     summary='Replay and stream operator events',
@@ -166,9 +173,7 @@ async def stream_events(
     last_event_id: str | None = Header(None, alias='Last-Event-ID'),
     claims: dict = Depends(authorize_sse),
 ):
-    expires_at = claims.get('exp')
-    if type(expires_at) not in (int, float) or not time.time() < expires_at < float('inf'):
-        raise HTTPException(status_code=401, detail='Invalid or expired SSE token')
+    expires_at = valid_expiry(claims)
     cursor = parse_cursor(last_event_id)
     subject = claims['sub']
     await run_in_threadpool(read_batch, cursor, subject=subject)
@@ -182,3 +187,75 @@ async def stream_events(
             'X-Accel-Buffering': 'no',
         },
     )
+
+
+# Only constant SQL fragments are composed. Values, including idpk, stay bound.
+_CORRELATION = {
+    'cycleId': 'e.cycle_id = :value',
+    'idpk': """
+        (e.source = 'SAGA' AND e.source_id IN (SELECT id FROM saga_executions WHERE idpk = :value))
+        OR (e.source = 'OUTBOUND' AND e.source_id IN (SELECT id FROM outbound_messages WHERE idpk = :value))
+        OR (e.source = 'INBOUND' AND e.source_id IN (SELECT id FROM inbound_messages WHERE idpk = :value))
+    """,
+    'swapId': """
+        (e.source = 'SAGA' AND e.source_id IN (SELECT id FROM saga_executions WHERE swap_id = :value))
+        OR (e.source = 'OUTBOUND' AND e.source_id IN (SELECT id FROM outbound_messages WHERE swap_id = :value))
+        OR (e.source = 'INBOUND' AND e.source_id IN (
+            SELECT id FROM inbound_messages WHERE payload #>> '{data,swapId}' = :value
+        ))
+    """,
+}
+
+
+def _search_events(field: str, value: str, after: int, claims: dict) -> list[dict]:
+    try:
+        with Session(engine) as session:
+            session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            rows = session.execute(text(f"""
+                WITH access AS (
+                    SELECT NOT EXISTS (
+                        SELECT 1 FROM sse_feed_revocations WHERE subject = :subject
+                    ) AS allowed
+                )
+                SELECT access.allowed, page.* FROM access
+                LEFT JOIN LATERAL (
+                    SELECT e.id, e.event_type, e.source, e.message_type, e.status, e.cycle_id, e.occurred_at
+                    FROM sse_feed_events e WHERE access.allowed AND e.id > :after
+                      AND ({_CORRELATION[field]})
+                    ORDER BY e.id LIMIT :batch
+                ) page ON true ORDER BY page.id
+            """), {'subject': claims['sub'], 'after': after, 'value': value, 'batch': BATCH_SIZE}).mappings().all()
+    except SQLAlchemyError:
+        raise HTTPException(503, 'Event search unavailable') from None
+    if not rows[0]['allowed']:
+        raise HTTPException(403, 'SSE access revoked')
+    valid_expiry(claims)
+    return [public_event(row) for row in rows if row['id'] is not None]
+
+
+@router.post(
+    '/events/search', summary='Find published events by one exact correlation',
+    openapi_extra={'requestBody': {'required': True, 'content': {'application/json': {'schema': {
+        'type': 'object', 'additionalProperties': False,
+        'oneOf': [{'required': [field]} for field in _CORRELATION],
+        'properties': {**{field: {'type': 'string', 'minLength': 1, 'maxLength': 256}
+                          for field in _CORRELATION}, 'after': {'type': 'string'}},
+    }}}}},
+)
+async def search_events(request: Request, claims: dict = Depends(authorize_sse)):
+    valid_expiry(claims)
+    # Do not echo rejected inputs (including keys) in validation error responses.
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeError):
+        raise HTTPException(400, 'Invalid search') from None
+    if not isinstance(body, dict):
+        raise HTTPException(400, 'Invalid search')
+    after = body.pop('after', '')
+    if not isinstance(after, str) or len(body) != 1:
+        raise HTTPException(400, 'Invalid search')
+    field, value = next(iter(body.items()))
+    if field not in _CORRELATION or not isinstance(value, str) or not 0 < len(value) <= 256 or '\x00' in value:
+        raise HTTPException(400, 'Invalid search')
+    events = await run_in_threadpool(_search_events, field, value, parse_cursor(after), claims)
+    return JSONResponse({'events': events}, headers={'Cache-Control': 'no-store'})

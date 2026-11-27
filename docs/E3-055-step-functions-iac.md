@@ -13,7 +13,7 @@ group dedicado de los proxies en los puertos:
 
 - `15432`: HAProxy TCP hacia `db:5432` en la red privada de Docker.
 - `3128`: Squid CONNECT con destinos limitados a Wallet, Secrets Manager y
-  Step Functions en `us-east-1`.
+  Step Functions en `us-east-2`.
 
 Los puertos se publican únicamente en la IP privada de EC2 indicada por
 `E3_EC2_PRIVATE_IP`. Su valor seguro por defecto es `127.0.0.1`, por lo que una
@@ -44,8 +44,8 @@ npm install --prefix .venv/cli --no-audit --no-fund aws-cdk@2.1149.0
 JSII_RUNTIME_PACKAGE_CACHE_ROOT=/tmp/jsii-cache \
   .venv/bin/python -m unittest discover -s tests -v
 
-CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-1 \
-AWS_DEFAULT_REGION=us-east-1 AWS_EC2_METADATA_DISABLED=true \
+CDK_DEFAULT_ACCOUNT=111122223333 CDK_DEFAULT_REGION=us-east-2 \
+AWS_DEFAULT_REGION=us-east-2 AWS_EC2_METADATA_DISABLED=true \
 JSII_RUNTIME_PACKAGE_CACHE_ROOT=/tmp/jsii-cache \
   .venv/cli/node_modules/.bin/cdk synth EnergySharkProd-Sagas \
   -c environment=prod -c deploymentScope=sagas --exclusively --no-lookups \
@@ -62,7 +62,7 @@ el output `SagaProxySecurityGroupId`; no se modifica el grupo existente.
 
 ## Orden manual futuro
 
-1. Verificar cuenta/región y ejecutar `cdk bootstrap aws://<cuenta>/us-east-1`.
+1. Verificar cuenta/región y ejecutar `cdk bootstrap aws://<cuenta>/us-east-2`.
 2. Sintetizar y revisar el diff solo con `environment=prod` y
    `deploymentScope=sagas`.
 3. Desplegar únicamente `EnergySharkProd-Sagas` con los parámetros

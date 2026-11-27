@@ -36,7 +36,7 @@ class ProxyAwareClientsTest(unittest.TestCase):
                 "AWS_SECRET_ACCESS_KEY": "unit-test-secret-key",
                 "AWS_SESSION_TOKEN": "unit-test-session-token",
                 "AWS_EC2_METADATA_DISABLED": "true",
-                "AWS_DEFAULT_REGION": "us-east-1",
+                "AWS_DEFAULT_REGION": "us-east-2",
             },
             clear=False,
         )
@@ -44,7 +44,7 @@ class ProxyAwareClientsTest(unittest.TestCase):
     def test_boto3_secrets_manager_and_stepfunctions_use_https_proxy(self) -> None:
         with self.proxy_environment():
             for service in ("secretsmanager", "stepfunctions"):
-                client = boto3.client(service, region_name="us-east-1")
+                client = boto3.client(service, region_name="us-east-2")
                 proxies = client._endpoint.http_session._proxy_config._proxies
                 self.assertEqual(proxies.get("https"), PROXY_URL)
 
@@ -57,14 +57,43 @@ class ProxyAwareClientsTest(unittest.TestCase):
 
 
 class PrivateProxyConfigurationTest(unittest.TestCase):
+    def test_e3_runtime_region_is_consistently_us_east_2(self) -> None:
+        paths = (
+            ".env.example",
+            "docker-compose.yml",
+            "docker-compose.prod.yml",
+            "docs/E3-055-step-functions-iac.md",
+            "infra/proxy/squid-sagas.conf",
+        )
+        content = {
+            path: (REPOSITORY_ROOT / path).read_text(encoding="utf-8")
+            for path in paths
+        }
+        for path, text in content.items():
+            self.assertNotIn("us-east-1", text, path)
+        self.assertIn("AWS_REGION=us-east-2", content[".env.example"])
+        for path in ("docker-compose.yml", "docker-compose.prod.yml"):
+            self.assertIn(
+                "AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-2}",
+                content[path],
+            )
+        self.assertIn(
+            "secretsmanager.us-east-2.amazonaws.com",
+            content["infra/proxy/squid-sagas.conf"],
+        )
+        self.assertIn(
+            "states.us-east-2.amazonaws.com",
+            content["infra/proxy/squid-sagas.conf"],
+        )
+
     def test_squid_is_connect_only_and_has_an_exact_allowlist(self) -> None:
         config = (
             REPOSITORY_ROOT / "infra" / "proxy" / "squid-sagas.conf"
         ).read_text(encoding="utf-8")
         for destination in (
             "wallet.iic2173.org",
-            "secretsmanager.us-east-1.amazonaws.com",
-            "states.us-east-1.amazonaws.com",
+            "secretsmanager.us-east-2.amazonaws.com",
+            "states.us-east-2.amazonaws.com",
         ):
             self.assertIn(f"dstdomain {destination}", config)
         self.assertIn("acl CONNECT method CONNECT", config)

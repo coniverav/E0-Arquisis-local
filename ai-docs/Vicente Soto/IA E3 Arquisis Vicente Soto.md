@@ -143,3 +143,103 @@ Los secretos se reciben como ARN mediante parámetros CloudFormation `NoEcho`. C
 La validación aprobó **18/18 pruebas** de CDK, ASL, configuración, IAM y protección del logging. También pasaron la compilación Python, `git diff --check` y `cdk synth EnergySharkDev-Sagas`. La síntesis se ejecutó localmente sin credenciales ni despliegue; solo se observó una advertencia no bloqueante porque la instalación local de `npx` disponible utiliza Node 20, ya fuera de soporte para la CLI actual.
 
 La implementación quedó en la PR Backend **#104**, commit `824ae43`, dirigida a `feat/e3-015-018-saga-foundation`. No se ejecutó `cdk deploy`, no se modificó producción y la asociación efectiva del instance profile a EC2 continúa pendiente del despliegue IaC.
+
+---
+
+# Cliente Lambda Wallet y callbacks durables
+
+### Prompt relevante
+
+> "Implementa E3-022 y E3-023 de EnergyShark, respetando el enunciado E3 y AD7. Implementa el cliente Lambda para Wallet, usando X-Api-Key desde Secrets Manager, claves de idempotencia estables, manejo de 200/202, 429 con Retry-After, reintentos 5xx con backoff y límites de cuota. Implementa la persistencia durable y correlación del task token antes de invocar Wallet, contemplando la carrera en que el evento llega antes de la respuesta HTTP."
+
+### Resumen de la respuesta y utilidad
+
+Se revisó el `develop` actualizado y se comprobó que las dependencias de persistencia, migración, ASL, Lambdas e IAM habían quedado integradas entre ramas feature, pero todavía no estaban en `develop`. La nueva rama partió del head actual e incorporó esos commits una sola vez. La migración de task tokens se encadenó al head vigente del outbox unificado para evitar dos heads de Alembic.
+
+El cliente Lambda obtiene la configuración Wallet mediante Secrets Manager y envía `X-Api-Key` sin registrarla. Cada escritura exige una `Idempotency-Key` recibida desde la operación y la conserva en timeouts, HTTP 429 y respuestas 5xx. Un HTTP 202 solo representa recepción; un HTTP 200 puede recuperar un estado ya conocido. Los errores 401, 404 y `IDEMPOTENCY_MISMATCH` se clasifican como permanentes. Los cupos de 120 escrituras y 300 lecturas por minuto se coordinan mediante la tabla PostgreSQL ya existente, incluida la propagación de `Retry-After` entre instancias.
+
+Para los pasos con callback, la Lambda guarda y confirma el task token, la ejecución, el rol y las claves `idpk`/`swapId` antes de reservar cuota o abrir la conexión HTTP. Un replay de un token ya completado no vuelve a llamar a Wallet. La prueba de carrera usa una segunda sesión PostgreSQL para simular que el evento Wallet encuentra y completa el token mientras la respuesta HTTP todavía está pendiente.
+
+El artefacto común de las Lambdas pasó a una imagen reproducible de Python 3.12 con `psycopg` fijado. La validación incluyó **632 pruebas y 3 subtests de Master**, **160 pruebas y 12 subtests de Connector**, **26 pruebas de CDK/Lambda** y **8 pruebas focalizadas** de migración, cuota, persistencia y carrera. También pasaron `alembic upgrade head`, `alembic check`, la síntesis CDK y `git diff --check`, usando PostgreSQL temporal aislado.
+
+Los cambios quedaron en la PR Backend **#109**, con los commits `253688a` y `24f928c`. No se desplegó AWS ni se activaron sagas; el feature flag seller permanece desactivado por defecto. Antes del despliegue falta resolver la conectividad privada entre Lambda y PostgreSQL, alinear el input seller actual con el ASL e implementar el relay de callbacks posterior.
+
+---
+
+# Callback de Step Functions desde Connector
+
+### Prompt relevante
+
+> "Implementa E3-024 — Callback Step Functions desde Connector, respetando el enunciado E3, AD5 y AD7. Al recibir eventos Wallet, el Connector debe aplicar el evento al ledger exactamente una vez, localizar el task token por idpk o swapId y reanudar la ejecución mediante SendTaskSuccess o SendTaskFailure. Debe tolerar duplicados, eventos tardíos, desorden y fallas de callback sin corromper el ledger ni la saga."
+
+### Resumen de la respuesta y utilidad
+
+La implementación se realizó en una rama apilada sobre E3-022/023 para reutilizar la persistencia durable y el IAM ya declarados. Master conserva la responsabilidad económica: primero procesa el evento Wallet, confirma el ledger y la auditoría, y solo entonces resuelve el token pendiente. La correlación usa `idpk` como clave preferida y `swapId` como fallback, pero además exige que coincidan el rol seller/buyer y el tipo de espera proposal/terminal; una coincidencia ambigua no reanuda una ejecución al azar.
+
+Connector conserva la respuesta JSON interna de Master sin romper los resultados históricos `ack`, `drop` y `retry`. Con el callback habilitado, entrega a Step Functions el resultado de negocio mediante `SendTaskSuccess`; también soporta `SendTaskFailure` para fallas técnicas. El resultado se registra durablemente en Master usando el hash del token antes de confirmar el mensaje a RabbitMQ. Una falla transitoria de AWS o del registro interno provoca redelivery; el replay vuelve a encontrar el token pendiente sin repetir el asiento del ledger. Los tokens vencidos o ya terminados no reabren la saga, y nunca se escriben tokens completos en logs.
+
+El flujo quedó protegido por `E3_SAGA_CALLBACKS_ENABLED=false` tanto en Master/Master2 como en Connector. También se añadió la región AWS de ejecución y se mantuvo el uso del instance profile, sin credenciales estáticas. Con el flag apagado, la ruta E2 no ejecuta consultas ni callbacks adicionales.
+
+La validación aprobó **637 pruebas y 3 subtests de Master**, **167 pruebas y 12 subtests de Connector**, **23 regresiones focalizadas** de ledger, replay y task tokens, y **6 pruebas de CDK/IAM**. También pasaron `alembic check`, ambos Docker Compose, `git diff --check` y la construcción local de la imagen Connector con `boto3`. Todo se ejecutó con PostgreSQL temporal aislado y servicios AWS simulados; no hubo despliegue ni conexión a producción.
+
+Los cambios quedaron en la PR Backend **#111**, commit `5f49cd7`, dirigida a `feat/e3-015-023-wallet-lambda`. Antes de activar el flag falta desplegar las máquinas Standard, asociar el instance profile a EC2 y validar el callback real en AWS.
+
+---
+
+# Relays confiables de RabbitMQ y Step Functions
+
+### Prompt relevante
+
+> "Implementa E3-029, E3-030 y E3-031 de EnergyShark, respetando el enunciado E3 y AD8. Implementa el relay RabbitMQ con publisher confirms, el relay StartExecution con nombre basado en idpk y reutiliza claims, leases, fencing y SKIP LOCKED para varios relays. Separa BROKER y STEP_FUNCTIONS, agrega pruebas y mantén los feature flags apagados."
+
+### Resumen de la respuesta y utilidad
+
+La implementación partió del `origin/develop` actualizado, que ya contenía el outbox unificado y los claims concurrentes de E3-025/026. Se comprobó que la infraestructura de E3-019–021 todavía no formaba parte de `develop`; esto no impedía probar localmente los relays apagados, pero sí activarlos.
+
+El relay Broker reclama únicamente filas `BROKER`, publica el envelope persistido con sus `msgId` e `idpk` originales y exige un publisher confirm `Basic.Ack` antes de marcarlo como `PUBLISHED`. Un NACK, canal cerrado o confirmación perdida deja la intención recuperable con backoff. El publicador E2 y el relay nuevo son alternativas excluyentes controladas por un flag para evitar doble despacho durante el cutover.
+
+El relay de sagas reclama solo filas `STEP_FUNCTIONS` y llama `StartExecution` usando `execution_name = idpk` y el input serializado almacenado. Si AWS informa `ExecutionAlreadyExists`, deriva el ARN y usa `DescribeExecution` para adoptar únicamente una ejecución con la misma máquina, nombre e input. Master persiste el ARN confirmado y rechaza un ARN incompatible con la intención original.
+
+Ambos relays reutilizan `SELECT FOR UPDATE SKIP LOCKED`, leases y claim tokens con fencing. Las pruebas verifican lotes disjuntos entre workers, recuperación de leases, callbacks tardíos rechazados, reintentos con identidades estables y separación estricta de destinos. Los flags `E3_BROKER_OUTBOX_RELAY_ENABLED` y `E3_SAGA_OUTBOX_RELAY_ENABLED` permanecen en `false`.
+
+La validación aprobó **629 pruebas y 3 subtests de Master** y **167 pruebas y 12 subtests de Connector**. Después del endurecimiento final aprobaron además **34 pruebas focalizadas de Master** y **7 del Connector**. También pasaron `alembic upgrade head`, `alembic check`, una actualización desde el head previo conservando una fila sintética, ambos Docker Compose, la construcción/importación de la imagen Connector y `git diff --check`. No se accedió a AWS ni RabbitMQ reales.
+
+Los cambios quedaron en la PR Backend **#112**, commit `12d2982`, dirigida a `develop`. Antes de activar los relays seguía pendiente integrar E3-019–021, conceder `states:DescribeExecution` con mínimo privilegio y ejecutar un cutover coordinado sin mantener simultáneamente el publicador E2 y el relay Broker.
+
+---
+
+# Preparación privada del despliegue de sagas
+
+### Prompt relevante
+
+> "Implementa la preparación técnica de E3-055 y E3-056. Prioriza la solución Lambda en VPC más proxies privados en la EC2 existente, sin NAT Gateway, RDS, nuevas EC2 ni exposición pública de PostgreSQL. Configura secretos, IAM, ARN y feature flags, y asegura que el despliegue objetivo sea exclusivamente EnergySharkProd-Sagas."
+
+### Resumen de la respuesta y utilidad
+
+Se preparó una arquitectura que reutiliza la EC2 y PostgreSQL existentes sin modificar los stacks de infraestructura E2. Las Lambdas se ubican en la VPC con un security group sin salida general. HAProxy ofrece un acceso TCP privado a PostgreSQL y Squid actúa como proxy HTTPS CONNECT con una allowlist limitada a Wallet/JWKS, Secrets Manager y Step Functions. Ambos puertos se enlazan a la IP privada configurada de EC2 y usan loopback como valor seguro por defecto.
+
+El stack crea dos secretos retenidos, uno para PostgreSQL y otro para Wallet, con valores bootstrap no sensibles. Las credenciales reales se cargan después por un canal operativo fuera de Git y CloudFormation. Las Lambdas reciben solo los ARN y sus roles leen exclusivamente el secreto requerido. También se añadió concurrencia reservada para acotar conexiones hacia la EC2.
+
+Para Connector se mantuvo IAM de mínimo privilegio mediante instance profile y credenciales temporales de IMDSv2, sin claves estáticas en Compose. Los ARN y flags seller/buyer se propagaron a Master, Master2, Scheduler y Connector según su responsabilidad, siempre desactivados por defecto.
+
+El contexto `deploymentScope=sagas` evita construir `ExistingInfrastructure` y `Monitoring`; la síntesis produjo solo `EnergySharkProd-Sagas`, con 13 Lambdas, dos máquinas Standard, dos secretos, dos security groups y ningún NAT, RDS o EC2 nueva. La validación aprobó **159 pruebas de CDK/Lambda** y **29 pruebas de Connector**, además de Compose, los parsers reales de HAProxy y Squid, el escaneo de secretos y `git diff --check`.
+
+La preparación quedó integrada mediante la PR Backend **#141**, commit `563085d`. No se ejecutaron bootstrap, deploy, cambios IAM ni activación de sagas. La asociación de security groups e instance profile, carga de secretos y prueba Lambda→proxies permanecen como pasos manuales del despliegue.
+
+---
+
+# Corrección regional del despliegue de sagas
+
+### Prompt relevante
+
+> "Crea una rama nueva desde origin/develop y corrige la configuración de E3-055/E3-056 para desplegar las sagas en us-east-2, donde está la EC2 productiva. Revisa Squid, variables de entorno, Compose, documentación y pruebas, manteniendo Wallet y JWKS en sus dominios oficiales."
+
+### Resumen de la respuesta y utilidad
+
+Se detectó que la preparación privada estaba alineada parcialmente con `us-east-1`, mientras la EC2 productiva se encuentra en `us-east-2`. Se actualizaron `AWS_REGION`, los fallbacks de Compose, los endpoints regionales permitidos por Squid y los comandos de síntesis y bootstrap. Wallet REST y JWKS conservaron sus dominios oficiales no regionales.
+
+Se añadió una prueba que revisa conjuntamente `.env.example`, ambos Compose, la guía de despliegue y la configuración de Squid, fallando si esos archivos operativos vuelven a mezclar regiones. Las referencias a `us-east-1` para certificados ACM de CloudFront, evidencia histórica de Prowler y ARN sintéticos de otras pruebas se conservaron porque no configuran las sagas productivas.
+
+La validación aprobó **160 pruebas de CDK/Lambda** y **29 pruebas de Connector**. Compose y el parser real de Squid fueron válidos, y `cdk synth` offline generó únicamente `EnergySharkProd-Sagas` en `us-east-2`. No se ejecutaron consultas, bootstrap ni despliegues AWS.
+
+La corrección quedó integrada mediante la PR Backend **#142**, commit `f935509`. El `.env` productivo no fue modificado y debe actualizarse manualmente antes del despliegue.

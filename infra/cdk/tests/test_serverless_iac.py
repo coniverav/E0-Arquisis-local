@@ -94,12 +94,20 @@ class ServerlessInfrastructureTest(unittest.TestCase):
             self.assertEqual(properties["PackageType"], "Image")
             self.assertEqual(properties["Timeout"], 20)
             self.assertEqual(properties["MemorySize"], 384)
+            self.assertEqual(properties["ReservedConcurrentExecutions"], 2)
             variables = properties["Environment"]["Variables"]
             self.assertEqual(variables["ENERGYSHARK_ENV"], "dev")
             tasks.add(variables["SAGA_TASK"])
             self.assertIn("ImageUri", properties["Code"])
             self.assertNotIn("FunctionName", properties)
             self.assertEqual(properties["Architectures"], ["x86_64"])
+            self.assertEqual(
+                properties["VpcConfig"]["SubnetIds"],
+                [{"Ref": "ExistingSubnetId"}],
+            )
+            self.assertEqual(len(properties["VpcConfig"]["SecurityGroupIds"]), 1)
+            self.assertIn("HTTPS_PROXY", variables)
+            self.assertIn("NO_PROXY", variables)
             group = properties["LoggingConfig"]["LogGroup"]["Ref"]
             log = self.resources("AWS::Logs::LogGroup")[group]
             self.assertEqual(log["Properties"]["RetentionInDays"], 7)
@@ -110,19 +118,19 @@ class ServerlessInfrastructureTest(unittest.TestCase):
         self.assertIn("buyer-acceptance", tasks)
         self.assertIn("finalize-saga", tasks)
 
-    def test_secret_parameters_have_no_values_in_template(self) -> None:
-        parameters = self.template["Parameters"]
-        for name in ("DatabaseSecretArn", "WalletSecretArn"):
-            self.assertEqual(parameters[name]["Type"], "String")
-            self.assertTrue(parameters[name]["NoEcho"])
-            self.assertNotIn("Default", parameters[name])
-            pattern = parameters[name]["AllowedPattern"]
-            arn = "arn:aws:secretsmanager:us-east-2:111122223333:secret:dev/db-aBc123"
-            self.assertRegex(arn, f"^{pattern}$")
-            for wildcard in ("*", arn[:-6] + "*"):
-                self.assertNotRegex(wildcard, f"^{pattern}$")
+    def test_secret_resources_have_only_generated_bootstrap_values(self) -> None:
+        secrets = self.resources("AWS::SecretsManager::Secret")
+        self.assertEqual(len(secrets), 2)
+        for resource in secrets.values():
+            properties = resource["Properties"]
+            self.assertNotIn("SecretString", properties)
+            generated = properties["GenerateSecretString"]
+            template = json.loads(generated["SecretStringTemplate"])
+            self.assertFalse(template["configured"])
+            self.assertIn(template["kind"], {"database", "wallet"})
+            self.assertEqual(generated["GenerateStringKey"], "bootstrapNonce")
+            self.assertEqual(resource["DeletionPolicy"], "Retain")
 
-        self.assertNotIn("BrokerSecretArn", parameters)
         rendered = json.dumps(self.template)
         self.assertNotIn("x-api-key", rendered.lower())
         self.assertNotIn("postgresql://", rendered.lower())
@@ -160,7 +168,7 @@ class ServerlessInfrastructureTest(unittest.TestCase):
                     self.assertIsInstance(statement["Resource"], dict)
                     self.assertIn(
                         statement["Resource"]["Ref"],
-                        ("DatabaseSecretArn", "WalletSecretArn"),
+                        self.resources("AWS::SecretsManager::Secret"),
                     )
 
         self.assertTrue(start_execution_found)
@@ -238,15 +246,30 @@ class ServerlessInfrastructureTest(unittest.TestCase):
             "AWS::StepFunctions::StateMachineAlias": 2,
             "AWS::IAM::Role": 1,
             "AWS::IAM::InstanceProfile": 1,
+            "AWS::SecretsManager::Secret": 2,
         }
         types = Counter()
         targets = set()
         for name, output in self.template["Outputs"].items():
+            if name == "SagaProxySecurityGroupId":
+                target, attribute = output["Value"]["Fn::GetAtt"]
+                self.assertEqual(attribute, "GroupId")
+                self.assertEqual(
+                    self.template["Resources"][target]["Type"],
+                    "AWS::EC2::SecurityGroup",
+                )
+                continue
             self.assertTrue(name.endswith("Arn"))
             value = output["Value"]
             if "Ref" in value:
                 target = value["Ref"]
-                self.assertIn(target, self.resources("AWS::StepFunctions::StateMachineAlias"))
+                self.assertIn(
+                    target,
+                    {
+                        **self.resources("AWS::StepFunctions::StateMachineAlias"),
+                        **self.resources("AWS::SecretsManager::Secret"),
+                    },
+                )
             else:
                 target, attribute = value["Fn::GetAtt"]
                 self.assertEqual(attribute, "Arn")
@@ -254,6 +277,47 @@ class ServerlessInfrastructureTest(unittest.TestCase):
             targets.add(target)
             types[self.template["Resources"][target]["Type"]] += 1
         self.assertEqual(types, expected)
+
+    def test_private_network_allows_only_ec2_proxy_ports(self) -> None:
+        parameters = self.template["Parameters"]
+        self.assertEqual(parameters["ExistingVpcId"]["Type"], "AWS::EC2::VPC::Id")
+        self.assertEqual(
+            parameters["ExistingSubnetId"]["Type"],
+            "AWS::EC2::Subnet::Id",
+        )
+        self.assertEqual(parameters["DatabaseProxyPort"]["Default"], 15432)
+        self.assertEqual(parameters["HttpsProxyPort"]["Default"], 3128)
+        self.assertNotIn("ApplicationSecurityGroupId", parameters)
+
+        egress = self.resources("AWS::EC2::SecurityGroupEgress")
+        ingress = self.resources("AWS::EC2::SecurityGroupIngress")
+        self.assertEqual(len(self.resources("AWS::EC2::SecurityGroup")), 2)
+        self.assertEqual(len(egress), 2)
+        self.assertEqual(len(ingress), 2)
+        expected_ports = {
+            json.dumps({"Ref": "DatabaseProxyPort"}, sort_keys=True),
+            json.dumps({"Ref": "HttpsProxyPort"}, sort_keys=True),
+        }
+        for rules, peer_key in (
+            (egress, "DestinationSecurityGroupId"),
+            (ingress, "SourceSecurityGroupId"),
+        ):
+            self.assertEqual(
+                {
+                    json.dumps(rule["Properties"]["FromPort"], sort_keys=True)
+                    for rule in rules.values()
+                },
+                expected_ports,
+            )
+            for rule in rules.values():
+                properties = rule["Properties"]
+                self.assertIn(peer_key, properties)
+                self.assertNotIn("CidrIp", properties)
+                self.assertNotIn("CidrIpv6", properties)
+
+        self.assertFalse(self.resources("AWS::EC2::NatGateway"))
+        self.assertFalse(self.resources("AWS::RDS::DBInstance"))
+        self.assertFalse(self.resources("AWS::EC2::Instance"))
 
 
 class SagaTaskArtifactTest(unittest.TestCase):

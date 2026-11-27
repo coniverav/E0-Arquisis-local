@@ -33,8 +33,8 @@ No hay `Action: "*"`, ni `AdministratorAccess`, ni `PowerUserAccess`, ni `iam:*`
 
 ## Secretos
 
-- E3-077 verificó tres parámetros con `NoEcho: true`. Desde E3-055 las tareas obtienen únicamente `DatabaseSecretArn` y `WalletSecretArn`. El relay de EC2 publica desde outbox con sus propias credenciales.
-- Las Lambdas reciben solo ARN: cada variable terminada en `_SECRET_ARN` referencia un parámetro `NoEcho`, nunca un valor literal. El test `test_lambda_receives_secret_arns_not_values` lo verifica.
+- `SagasStack` crea y retiene `DatabaseSecret` y `WalletSecret` con un valor bootstrap generado. Las credenciales reales se cargan fuera de CloudFormation y Git. El relay de EC2 publica desde outbox con su instance profile.
+- Las Lambdas reciben solo ARN: cada variable terminada en `_SECRET_ARN` referencia un recurso de Secrets Manager, nunca un valor literal. El test `test_lambda_receives_secret_arns_not_values` lo verifica.
 - Cada rol de tarea solo puede leer los secretos que necesita, por ARN.
 - El repositorio no contiene credenciales: `.env.example` es el único archivo con nombre de entorno y no tiene valores reales.
 
@@ -85,7 +85,7 @@ python3 tools/iac_policy_audit.py infra/cdk/cdk.out/EnergySharkDev-Sagas.templat
 
 | Archivo | Cobertura |
 | :--- | :--- |
-| `infra/cdk/tests/test_e3077_iam_least_privilege.py` | 9 tests: sin acciones comodín, recursos comodín justificados, una sola política administrada, condición de namespace, logs acotados, `NoEcho`, ARN en variables, sin credenciales en templates |
+| `infra/cdk/tests/test_e3077_iam_least_privilege.py` | Sin acciones comodín, recursos comodín justificados, logs acotados, secretos retenidos, ARN en variables y ausencia de credenciales en templates |
 | `tools/tests/test_iac_secrets_scan.py` | 9 tests: detección por tipo, `.env.example` ignorado, exclusiones de build, repositorio limpio |
 | `tools/tests/test_iac_policy_audit.py` | 9 tests: resolución de `GetAtt`, `Ref`, `Sub`, `Join` y extracción de políticas |
 

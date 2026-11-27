@@ -20,6 +20,58 @@ services:
     networks:
       - energyshark_net
 
+  # Acceso PostgreSQL para Lambda sin cambiar ni reiniciar el contenedor db.
+  # El host publica este puerto solo en su IP privada; AWS SG admite únicamente
+  # el security group creado para las Lambdas de saga.
+  saga-db-proxy:
+    image: haproxy:3.0-alpine@sha256:7430e63d3052198b18a40665b59a5826bc428e8bceb0c561d82258149ef855ee
+    container_name: saga-db-proxy
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./infra/proxy/haproxy-postgres.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "${E3_EC2_PRIVATE_IP:-127.0.0.1}:${E3_POSTGRES_PROXY_PORT:-15432}:15432"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "haproxy", "-c", "-f", "/usr/local/etc/haproxy/haproxy.cfg"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    networks:
+      - energyshark_net
+
+  # Squid sólo permite CONNECT:443 hacia Wallet/JWKS, Secrets Manager y
+  # Step Functions. No registra headers ni cuerpos que puedan contener secretos.
+  saga-https-proxy:
+    image: ubuntu/squid:6.6-24.04_edge@sha256:d9c34c5ab74c6dd41cf1070d9b4221aac072e67e983527ca2d41512958f77506
+    container_name: saga-https-proxy
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./infra/proxy/squid-sagas.conf:/etc/squid/squid.conf:ro
+    tmpfs:
+      - /run
+      - /var/log/squid
+      - /var/spool/squid
+    ports:
+      - "${E3_EC2_PRIVATE_IP:-127.0.0.1}:${E3_HTTPS_PROXY_PORT:-3128}:3128"
+    healthcheck:
+      test: ["CMD", "pebble", "health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    networks:
+      - energyshark_net
+
   migrate:
     image: ${ECR_REPOSITORY}:api-${IMAGE_TAG}
     container_name: migrate
@@ -49,6 +101,10 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master
+      E3_SELLER_SAGA_ENABLED: ${E3_SELLER_SAGA_ENABLED:-false}
+      E3_BUYER_SAGA_ENABLED: ${E3_BUYER_SAGA_ENABLED:-false}
+      E3_SELLER_STATE_MACHINE_ARN: ${E3_SELLER_STATE_MACHINE_ARN:-}
+      E3_BUYER_STATE_MACHINE_ARN: ${E3_BUYER_STATE_MACHINE_ARN:-}
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
@@ -90,6 +146,10 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INSTANCE_NAME: master2
+      E3_SELLER_SAGA_ENABLED: ${E3_SELLER_SAGA_ENABLED:-false}
+      E3_BUYER_SAGA_ENABLED: ${E3_BUYER_SAGA_ENABLED:-false}
+      E3_SELLER_STATE_MACHINE_ARN: ${E3_SELLER_STATE_MACHINE_ARN:-}
+      E3_BUYER_STATE_MACHINE_ARN: ${E3_BUYER_STATE_MACHINE_ARN:-}
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CITY_ID: ${CITY_ID}
       RABBITMQ_CENTRAL_ROUTING_KEY: ${RABBITMQ_CENTRAL_ROUTING_KEY}
@@ -131,6 +191,10 @@ services:
       NEW_RELIC_MONITOR_MODE: ${NEW_RELIC_MONITOR_MODE:-true}
       NEW_RELIC_LOG: ${NEW_RELIC_LOG:-stdout}
       DATABASE_URL: ${DATABASE_URL}
+      E3_SELLER_SAGA_ENABLED: ${E3_SELLER_SAGA_ENABLED:-false}
+      E3_BUYER_SAGA_ENABLED: ${E3_BUYER_SAGA_ENABLED:-false}
+      E3_SELLER_STATE_MACHINE_ARN: ${E3_SELLER_STATE_MACHINE_ARN:-}
+      E3_BUYER_STATE_MACHINE_ARN: ${E3_BUYER_STATE_MACHINE_ARN:-}
       CYCLE_REPORT_WINDOW_SECONDS: ${CYCLE_REPORT_WINDOW_SECONDS}
       CYCLE_SCHEDULER_POLL_SECONDS: ${CYCLE_SCHEDULER_POLL_SECONDS}
       CITY_ID: ${CITY_ID}
@@ -194,6 +258,10 @@ services:
       E3_SELLER_STATE_MACHINE_ARN: ${E3_SELLER_STATE_MACHINE_ARN:-}
       E3_BUYER_STATE_MACHINE_ARN: ${E3_BUYER_STATE_MACHINE_ARN:-}
       AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE: IPv4
+      AWS_METADATA_SERVICE_TIMEOUT: ${AWS_METADATA_SERVICE_TIMEOUT:-2}
+      AWS_METADATA_SERVICE_NUM_ATTEMPTS: ${AWS_METADATA_SERVICE_NUM_ATTEMPTS:-3}
+      NO_PROXY: ${NO_PROXY:-169.254.169.254}
     depends_on:
       master:
         condition: service_healthy

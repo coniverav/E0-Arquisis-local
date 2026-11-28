@@ -8,6 +8,7 @@
         "cloudformation:CreateChangeSet",
         "cloudformation:CreateStack",
         "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
         "cloudformation:DescribeChangeSet",
         "cloudformation:DescribeStackEvents",
         "cloudformation:DescribeStackResource",
@@ -229,20 +230,30 @@
     },
     {
       "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": [
+        "arn:aws:ec2:us-east-2:521294961974:vpc/vpc-0e7ee77fd065bea62",
+        "arn:aws:ec2:us-east-2:521294961974:security-group/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
       "Action": [
         "ec2:AuthorizeSecurityGroupEgress",
         "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:CreateSecurityGroup",
         "ec2:CreateTags",
         "ec2:DeleteSecurityGroup",
         "ec2:DeleteTags",
         "ec2:RevokeSecurityGroupEgress",
         "ec2:RevokeSecurityGroupIngress"
       ],
-      "Resource": "*",
+      "Resource": "arn:aws:ec2:us-east-2:521294961974:security-group/*",
       "Condition": {
-        "StringEquals": {
-          "ec2:Region": "us-east-2"
+        "StringEqualsIfExists": {
+          "ec2:CreateAction": "CreateSecurityGroup"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:us-east-2:521294961974:vpc/vpc-0e7ee77fd065bea62"
         }
       }
     },

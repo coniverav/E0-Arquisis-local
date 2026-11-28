@@ -321,6 +321,7 @@ class SagasStack(Stack):
             secret = secretsmanager.Secret(
                 self,
                 f"{construct_name}Secret",
+                secret_name=f"{self.stack_name}-{construct_name}",
                 description=(
                     f"EnergyShark {self.settings.environment}: configuración {kind}"
                 ),

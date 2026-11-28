@@ -124,8 +124,14 @@ class ServerlessInfrastructureTest(unittest.TestCase):
     def test_secret_resources_have_only_generated_bootstrap_values(self) -> None:
         secrets = self.resources("AWS::SecretsManager::Secret")
         self.assertEqual(len(secrets), 2)
+        expected_names = {
+            "EnergySharkDev-Sagas-Database",
+            "EnergySharkDev-Sagas-Wallet",
+        }
+        actual_names = set()
         for resource in secrets.values():
             properties = resource["Properties"]
+            actual_names.add(properties["Name"])
             self.assertNotIn("SecretString", properties)
             generated = properties["GenerateSecretString"]
             template = json.loads(generated["SecretStringTemplate"])
@@ -133,6 +139,9 @@ class ServerlessInfrastructureTest(unittest.TestCase):
             self.assertIn(template["kind"], {"database", "wallet"})
             self.assertEqual(generated["GenerateStringKey"], "bootstrapNonce")
             self.assertEqual(resource["DeletionPolicy"], "Retain")
+            self.assertEqual(resource["UpdateReplacePolicy"], "Retain")
+
+        self.assertEqual(actual_names, expected_names)
 
         rendered = json.dumps(self.template)
         self.assertNotIn("x-api-key", rendered.lower())

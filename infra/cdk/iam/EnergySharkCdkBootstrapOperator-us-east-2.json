@@ -1,0 +1,132 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ManageOnlyCdkToolkitStack",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateChangeSet",
+        "cloudformation:CreateStack",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStacks",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:UpdateStack",
+        "cloudformation:UpdateTerminationProtection"
+      ],
+      "Resource": "arn:aws:cloudformation:us-east-2:521294961974:stack/CDKToolkit/*"
+    },
+    {
+      "Sid": "CloudFormationBootstrapReadsWithoutResourceScope",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeAccountLimits",
+        "cloudformation:ListStacks",
+        "cloudformation:ValidateTemplate"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ManageOnlyDefaultBootstrapRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:PutRolePermissionsBoundary",
+        "iam:PutRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRoleDescription"
+      ],
+      "Resource": "arn:aws:iam::521294961974:role/cdk-hnb659fds-*-role-521294961974-us-east-2"
+    },
+    {
+      "Sid": "ReadOnlyPoliciesAttachedByBootstrap",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicyVersions"
+      ],
+      "Resource": [
+        "arn:aws:iam::521294961974:policy/EnergySharkCdkBootstrapBoundary-us-east-2",
+        "arn:aws:iam::521294961974:policy/EnergySharkSagasCfnExecution-us-east-2",
+        "arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess",
+        "arn:aws:iam::aws:policy/ReadOnlyAccess"
+      ]
+    },
+    {
+      "Sid": "CreateAndConfigureBootstrapBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy",
+        "s3:GetBucketAcl",
+        "s3:GetBucketLifecycleConfiguration",
+        "s3:GetBucketLocation",
+        "s3:GetBucketPolicy",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutBucketAcl",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketLifecycleConfiguration",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning"
+      ],
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-521294961974-us-east-2"
+    },
+    {
+      "Sid": "CreateAndConfigureBootstrapRepository",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:CreateRepository",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:DeleteRepository",
+        "ecr:DeleteRepositoryPolicy",
+        "ecr:DescribeRepositories",
+        "ecr:GetLifecyclePolicy",
+        "ecr:GetRepositoryPolicy",
+        "ecr:ListTagsForResource",
+        "ecr:PutImageScanningConfiguration",
+        "ecr:PutImageTagMutability",
+        "ecr:PutLifecyclePolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:TagResource",
+        "ecr:UntagResource"
+      ],
+      "Resource": "arn:aws:ecr:us-east-2:521294961974:repository/cdk-hnb659fds-container-assets-521294961974-us-east-2"
+    },
+    {
+      "Sid": "ManageBootstrapVersionParameter",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:AddTagsToResource",
+        "ssm:DeleteParameter",
+        "ssm:GetParameter",
+        "ssm:ListTagsForResource",
+        "ssm:PutParameter",
+        "ssm:RemoveTagsFromResource"
+      ],
+      "Resource": "arn:aws:ssm:us-east-2:521294961974:parameter/cdk-bootstrap/hnb659fds/version"
+    }
+  ]
+}

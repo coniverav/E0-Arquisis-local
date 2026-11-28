@@ -1,0 +1,251 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": [
+        "arn:aws:s3:::cdk-hnb659fds-assets-521294961974-us-east-2",
+        "arn:aws:s3:::cdk-hnb659fds-assets-521294961974-us-east-2/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:BatchGetImage",
+        "ecr:DescribeImages",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:GetRepositoryPolicy"
+      ],
+      "Resource": "arn:aws:ecr:us-east-2:521294961974:repository/cdk-hnb659fds-container-assets-521294961974-us-east-2"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:CreateRole",
+      "Resource": "arn:aws:iam::521294961974:role/EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:PutRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy",
+        "iam:UpdateRoleDescription"
+      ],
+      "Resource": "arn:aws:iam::521294961974:role/EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:AddRoleToInstanceProfile",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:GetInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile"
+      ],
+      "Resource": "arn:aws:iam::521294961974:instance-profile/EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::521294961974:role/EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "ec2.amazonaws.com",
+            "lambda.amazonaws.com",
+            "states.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": "lambda:CreateFunction",
+      "Resource": "arn:aws:lambda:us-east-2:521294961974:function:EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:DeleteFunction",
+        "lambda:DeleteFunctionConcurrency",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:GetFunctionConcurrency",
+        "lambda:ListTags",
+        "lambda:PutFunctionConcurrency",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration"
+      ],
+      "Resource": "arn:aws:lambda:us-east-2:521294961974:function:EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "logs:CreateLogGroup",
+      "Resource": "arn:aws:logs:us-east-2:521294961974:log-group:EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:DeleteLogGroup",
+        "logs:DeleteRetentionPolicy",
+        "logs:ListTagsForResource",
+        "logs:PutRetentionPolicy",
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "Resource": "arn:aws:logs:us-east-2:521294961974:log-group:EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "logs:DescribeLogGroups",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:CreateSecret",
+      "Resource": "arn:aws:secretsmanager:us-east-2:521294961974:secret:EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:ListSecretVersionIds",
+        "secretsmanager:TagResource",
+        "secretsmanager:UntagResource",
+        "secretsmanager:UpdateSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:us-east-2:521294961974:secret:EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetRandomPassword",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "states:CreateStateMachine",
+      "Resource": "arn:aws:states:us-east-2:521294961974:stateMachine:EnergySharkProd-Sagas-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "states:CreateStateMachineAlias",
+        "states:DeleteStateMachine",
+        "states:DeleteStateMachineAlias",
+        "states:DeleteStateMachineVersion",
+        "states:DescribeStateMachine",
+        "states:DescribeStateMachineAlias",
+        "states:ListStateMachineAliases",
+        "states:ListStateMachineVersions",
+        "states:ListTagsForResource",
+        "states:PublishStateMachineVersion",
+        "states:TagResource",
+        "states:UntagResource",
+        "states:UpdateStateMachine",
+        "states:UpdateStateMachineAlias"
+      ],
+      "Resource": "arn:aws:states:us-east-2:521294961974:stateMachine:EnergySharkProd-Sagas-*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/Environment": "prod",
+          "aws:RequestTag/ManagedBy": "AWS-CDK",
+          "aws:RequestTag/Project": "EnergyShark",
+          "ec2:Region": "us-east-2"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DeleteTags",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:us-east-2:521294961974:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Environment": "prod",
+          "aws:ResourceTag/ManagedBy": "AWS-CDK",
+          "aws:ResourceTag/Project": "EnergyShark",
+          "ec2:Region": "us-east-2"
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:Region": "us-east-2"
+        }
+      }
+    }
+  ]
+}

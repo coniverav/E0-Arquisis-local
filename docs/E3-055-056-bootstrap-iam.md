@@ -138,9 +138,10 @@ Casos mínimos para registrar antes del despliegue:
 | Mismo `PassRole` a ECS o sobre un rol ajeno | `implicitDeny` |
 | Crear/actualizar `EnergySharkProd-Sagas` | permitido por la boundary |
 | Modificar `ExistingInfrastructure` o `Monitoring` | `implicitDeny` |
-| `cloudformation:DeleteStack` | `implicitDeny` |
-| Crear un security group en `us-east-2` con las etiquetas requeridas | `allowed` |
-| Crear el security group en otra región o sin etiquetas | `implicitDeny` |
+| Eliminar `EnergySharkProd-Sagas` para recuperar `ROLLBACK_COMPLETE` | `allowed` |
+| Eliminar otro stack | `implicitDeny` |
+| Crear un security group en la VPC productiva y etiquetarlo | `allowed` |
+| Crear el security group en otra VPC/región | `implicitDeny` |
 
 Para `iam:PassRole` se debe incluir el contexto
 `iam:PassedToService=lambda.amazonaws.com` (o el servicio correspondiente). El
@@ -179,11 +180,25 @@ desactivados y seguir la instalación/rollback de `E3-055-step-functions-iac.md`
 
 - CloudFormation: validación, listados y límites de cuenta no admiten ARN.
 - `sts:GetCallerIdentity` y `ecr:GetAuthorizationToken` no admiten ARN.
-- EC2 `Describe*` no admite ARN; creación y reglas de security groups requieren
-  alcance amplio en parte de su ciclo, acotado por región y etiquetas cuando el
-  API las expone.
+- EC2 `Describe*` no admite ARN. La creación y mutación de security groups se
+  limita a la VPC productiva y a ARN de security group; ya no usa `Resource: *`.
 - `logs:DescribeLogGroups` y `secretsmanager:GetRandomPassword` no ofrecen un
   recurso concreto.
+
+## Autorización de security groups
+
+`CreateSecurityGroup` autoriza dos recursos: la VPC existente exacta y el
+security group todavía sin identificador. AWS advierte que exigir tags en esa
+acción no es compatible con CloudFormation, por lo que el aislamiento se hace
+por cuenta, región y VPC. `CreateTags` queda limitado al ARN de security group,
+a la misma VPC y, cuando AWS expone la clave, a
+`ec2:CreateAction=CreateSecurityGroup`; CfnExecution además exige las tres
+etiquetas del proyecto. Las mutaciones y el rollback requieren que el grupo ya
+conserve esas etiquetas.
+
+Referencias: [autorización EC2 por acción y recurso](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ec2.html),
+[etiquetado durante creación](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/supported-iam-actions-tagging.html)
+y [limitación de CloudFormation con tags obligatorios](https://docs.aws.amazon.com/vpc/latest/userguide/vpc-policy-examples.html).
 
 ## Riesgos y revisión manual
 
@@ -191,9 +206,10 @@ desactivados y seguir la instalación/rollback de `E3-055-step-functions-iac.md`
   El prefijo de rol, `iam:PassRole`, la boundary de bootstrap y la revisión del
   change set reducen el riesgo, pero no reemplazan una boundary separada para
   roles de aplicación. Incorporarla exigiría cambiar el stack CDK.
-- Los nombres físicos los asigna CloudFormation. Antes del primer deploy hay
-  que confirmar en el template/change set que conservan el prefijo
-  `EnergySharkProd-Sagas-` esperado por la política.
+- Los secretos tienen nombres explícitos `EnergySharkProd-Sagas-Database` y
+  `EnergySharkProd-Sagas-Wallet`; sus ARN agregan el sufijo propio de Secrets
+  Manager y siguen cubiertos por el prefijo IAM. CloudFormation asigna los
+  nombres restantes, que deben conservar el prefijo del stack en el change set.
 - La boundary restringe deliberadamente el lookup role; por eso `--no-lookups`
   es obligatorio.
 - Policy Simulator y Access Analyzer son controles previos; el primer deploy

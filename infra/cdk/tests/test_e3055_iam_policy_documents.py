@@ -22,6 +22,15 @@ BOOTSTRAP_STACK_ARN = (
 BOOTSTRAP_VERSION_PARAMETER_ARN = (
     f"arn:aws:ssm:{REGION}:{ACCOUNT}:parameter/cdk-bootstrap/hnb659fds/version"
 )
+PRODUCTION_VPC_ARN = (
+    f"arn:aws:ec2:{REGION}:{ACCOUNT}:vpc/vpc-0e7ee77fd065bea62"
+)
+SECURITY_GROUP_ARN = f"arn:aws:ec2:{REGION}:{ACCOUNT}:security-group/*"
+REQUIRED_TAGS = {
+    "Project": "EnergyShark",
+    "Environment": "prod",
+    "ManagedBy": "AWS-CDK",
+}
 
 FILES = {
     "bootstrap": "EnergySharkCdkBootstrapOperator-us-east-2.json",
@@ -152,7 +161,7 @@ class IamPolicyDocumentsTest(unittest.TestCase):
                 name,
             )
 
-        self.assertNotIn(
+        self.assertIn(
             "cloudformation:DeleteStack",
             all_actions(self.policies["boundary"]),
         )
@@ -267,11 +276,6 @@ class IamPolicyDocumentsTest(unittest.TestCase):
             "AWS::SecretsManager::Secret",
             "AWS::StepFunctions::StateMachine",
         }
-        required_tags = {
-            "Project": "EnergyShark",
-            "Environment": "prod",
-            "ManagedBy": "AWS-CDK",
-        }
         for logical_id, resource in template["Resources"].items():
             if resource["Type"] not in tag_restricted_types:
                 continue
@@ -279,7 +283,207 @@ class IamPolicyDocumentsTest(unittest.TestCase):
                 tag["Key"]: tag["Value"]
                 for tag in resource.get("Properties", {}).get("Tags", [])
             }
-            self.assertEqual(actual_tags, required_tags, logical_id)
+            self.assertEqual(actual_tags, REQUIRED_TAGS, logical_id)
+
+        secrets = {
+            resource["Properties"]["Name"]: resource
+            for resource in template["Resources"].values()
+            if resource["Type"] == "AWS::SecretsManager::Secret"
+        }
+        self.assertEqual(
+            set(secrets),
+            {
+                "EnergySharkProd-Sagas-Database",
+                "EnergySharkProd-Sagas-Wallet",
+            },
+        )
+        for resource in secrets.values():
+            self.assertEqual(resource["DeletionPolicy"], "Retain")
+            self.assertEqual(resource["UpdateReplacePolicy"], "Retain")
+
+    def test_execution_policy_covers_resource_lifecycle_and_rollback(self) -> None:
+        required_by_resource = {
+            "AWS::EC2::SecurityGroup": {
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteSecurityGroup",
+                "ec2:DeleteTags",
+                "ec2:DescribeSecurityGroups",
+                "ec2:RevokeSecurityGroupEgress",
+            },
+            "AWS::EC2::SecurityGroupEgress": {
+                "ec2:AuthorizeSecurityGroupEgress",
+                "ec2:RevokeSecurityGroupEgress",
+            },
+            "AWS::EC2::SecurityGroupIngress": {
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+            },
+            "AWS::IAM::InstanceProfile": {
+                "iam:AddRoleToInstanceProfile",
+                "iam:CreateInstanceProfile",
+                "iam:DeleteInstanceProfile",
+                "iam:GetInstanceProfile",
+                "iam:RemoveRoleFromInstanceProfile",
+            },
+            "AWS::IAM::Policy": {
+                "iam:DeleteRolePolicy",
+                "iam:GetRolePolicy",
+                "iam:PutRolePolicy",
+            },
+            "AWS::IAM::Role": {
+                "iam:CreateRole",
+                "iam:DeleteRole",
+                "iam:GetRole",
+                "iam:PassRole",
+                "iam:TagRole",
+                "iam:UntagRole",
+                "iam:UpdateAssumeRolePolicy",
+            },
+            "AWS::Lambda::Function": {
+                "lambda:CreateFunction",
+                "lambda:DeleteFunction",
+                "lambda:GetFunction",
+                "lambda:GetFunctionConfiguration",
+                "lambda:ListTags",
+                "lambda:TagResource",
+                "lambda:UntagResource",
+                "lambda:UpdateFunctionCode",
+                "lambda:UpdateFunctionConfiguration",
+            },
+            "AWS::Logs::LogGroup": {
+                "logs:CreateLogGroup",
+                "logs:DeleteLogGroup",
+                "logs:PutRetentionPolicy",
+                "logs:TagResource",
+                "logs:UntagResource",
+            },
+            "AWS::SecretsManager::Secret": {
+                "secretsmanager:CreateSecret",
+                "secretsmanager:DeleteSecret",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetRandomPassword",
+                "secretsmanager:TagResource",
+                "secretsmanager:UntagResource",
+                "secretsmanager:UpdateSecret",
+            },
+            "AWS::StepFunctions::StateMachine": {
+                "states:CreateStateMachine",
+                "states:DeleteStateMachine",
+                "states:DescribeStateMachine",
+                "states:TagResource",
+                "states:UntagResource",
+                "states:UpdateStateMachine",
+            },
+            "AWS::StepFunctions::StateMachineAlias": {
+                "states:CreateStateMachineAlias",
+                "states:DeleteStateMachineAlias",
+                "states:DescribeStateMachineAlias",
+                "states:UpdateStateMachineAlias",
+            },
+            "AWS::StepFunctions::StateMachineVersion": {
+                "states:DeleteStateMachineVersion",
+                "states:PublishStateMachineVersion",
+            },
+        }
+        _, stacks = build_app(
+            {
+                "environment": "prod",
+                "deploymentScope": "sagas",
+                "environments": {"prod": {"stackPrefix": "EnergySharkProd"}},
+            }
+        )
+        template = Template.from_stack(stacks.sagas).to_json()
+        present_types = {
+            resource["Type"] for resource in template["Resources"].values()
+        }
+        execution_actions = all_actions(self.policies["execution"])
+        for resource_type, required_actions in required_by_resource.items():
+            self.assertIn(resource_type, present_types)
+            self.assertTrue(
+                required_actions <= execution_actions,
+                f"{resource_type}: {required_actions - execution_actions}",
+            )
+
+    def test_security_group_permissions_are_limited_to_production_vpc(self) -> None:
+        execution = self.policies["execution"]["Statement"]
+        boundary = self.policies["boundary"]["Statement"]
+
+        execution_create = [
+            statement
+            for statement in execution
+            if as_list(statement["Action"]) == ["ec2:CreateSecurityGroup"]
+        ]
+        self.assertEqual(len(execution_create), 2)
+        self.assertEqual(
+            {statement["Resource"] for statement in execution_create},
+            {PRODUCTION_VPC_ARN, SECURITY_GROUP_ARN},
+        )
+        self.assertTrue(
+            all("Condition" not in statement for statement in execution_create)
+        )
+
+        create_tags, = (
+            statement
+            for statement in execution
+            if as_list(statement["Action"]) == ["ec2:CreateTags"]
+        )
+        self.assertEqual(create_tags["Resource"], SECURITY_GROUP_ARN)
+        self.assertEqual(
+            create_tags["Condition"]["StringEqualsIfExists"]["ec2:CreateAction"],
+            "CreateSecurityGroup",
+        )
+        self.assertEqual(
+            create_tags["Condition"]["ArnEquals"]["ec2:Vpc"],
+            PRODUCTION_VPC_ARN,
+        )
+        for key, value in REQUIRED_TAGS.items():
+            self.assertEqual(
+                create_tags["Condition"]["StringEquals"][f"aws:RequestTag/{key}"],
+                value,
+            )
+
+        mutation, = (
+            statement
+            for statement in execution
+            if "ec2:DeleteSecurityGroup" in as_list(statement["Action"])
+        )
+        self.assertEqual(mutation["Resource"], SECURITY_GROUP_ARN)
+        self.assertEqual(
+            mutation["Condition"]["ArnEquals"]["ec2:Vpc"],
+            PRODUCTION_VPC_ARN,
+        )
+        for key, value in REQUIRED_TAGS.items():
+            self.assertEqual(
+                mutation["Condition"]["StringEquals"][f"aws:ResourceTag/{key}"],
+                value,
+            )
+
+        boundary_create, = (
+            statement
+            for statement in boundary
+            if as_list(statement["Action"]) == ["ec2:CreateSecurityGroup"]
+        )
+        self.assertEqual(
+            set(boundary_create["Resource"]),
+            {PRODUCTION_VPC_ARN, SECURITY_GROUP_ARN},
+        )
+        boundary_mutation, = (
+            statement
+            for statement in boundary
+            if "ec2:DeleteSecurityGroup" in as_list(statement["Action"])
+        )
+        self.assertEqual(boundary_mutation["Resource"], SECURITY_GROUP_ARN)
+        self.assertEqual(
+            boundary_mutation["Condition"]["ArnEquals"]["ec2:Vpc"],
+            PRODUCTION_VPC_ARN,
+        )
+        self.assertEqual(
+            boundary_mutation["Condition"]["StringEqualsIfExists"][
+                "ec2:CreateAction"
+            ],
+            "CreateSecurityGroup",
+        )
 
     def test_boundary_does_not_allow_other_stack_or_bootstrap_mutation(self) -> None:
         rendered = json.dumps(self.policies["boundary"])
@@ -294,17 +498,9 @@ class IamPolicyDocumentsTest(unittest.TestCase):
             "cloudformation:GetTemplateSummary",
             "cloudformation:ListStacks",
             "cloudformation:ValidateTemplate",
-            "ec2:AuthorizeSecurityGroupEgress",
-            "ec2:AuthorizeSecurityGroupIngress",
-            "ec2:CreateSecurityGroup",
-            "ec2:CreateTags",
-            "ec2:DeleteSecurityGroup",
-            "ec2:DeleteTags",
             "ec2:DescribeSecurityGroups",
             "ec2:DescribeSubnets",
             "ec2:DescribeVpcs",
-            "ec2:RevokeSecurityGroupEgress",
-            "ec2:RevokeSecurityGroupIngress",
             "ecr:GetAuthorizationToken",
             "logs:DescribeLogGroups",
             "secretsmanager:GetRandomPassword",

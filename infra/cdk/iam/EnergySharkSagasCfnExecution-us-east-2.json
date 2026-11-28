@@ -204,17 +204,29 @@
     },
     {
       "Effect": "Allow",
-      "Action": [
-        "ec2:CreateSecurityGroup",
-        "ec2:CreateTags"
-      ],
-      "Resource": "*",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:us-east-2:521294961974:vpc/vpc-0e7ee77fd065bea62"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:us-east-2:521294961974:security-group/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:us-east-2:521294961974:security-group/*",
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/Environment": "prod",
           "aws:RequestTag/ManagedBy": "AWS-CDK",
-          "aws:RequestTag/Project": "EnergyShark",
-          "ec2:Region": "us-east-2"
+          "aws:RequestTag/Project": "EnergyShark"
+        },
+        "StringEqualsIfExists": {
+          "ec2:CreateAction": "CreateSecurityGroup"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:us-east-2:521294961974:vpc/vpc-0e7ee77fd065bea62"
         }
       }
     },
@@ -223,6 +235,7 @@
       "Action": [
         "ec2:AuthorizeSecurityGroupEgress",
         "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateTags",
         "ec2:DeleteSecurityGroup",
         "ec2:DeleteTags",
         "ec2:RevokeSecurityGroupEgress",
@@ -233,8 +246,10 @@
         "StringEquals": {
           "aws:ResourceTag/Environment": "prod",
           "aws:ResourceTag/ManagedBy": "AWS-CDK",
-          "aws:ResourceTag/Project": "EnergyShark",
-          "ec2:Region": "us-east-2"
+          "aws:ResourceTag/Project": "EnergyShark"
+        },
+        "ArnEquals": {
+          "ec2:Vpc": "arn:aws:ec2:us-east-2:521294961974:vpc/vpc-0e7ee77fd065bea62"
         }
       }
     },

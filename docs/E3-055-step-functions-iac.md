@@ -22,11 +22,12 @@ en `127.0.0.1:5433`.
 
 ## Secretos
 
-CDK crea `DatabaseSecret` y `WalletSecret` con valores iniciales no sensibles y
-política `RETAIN`. Los valores reales se cargan después por un canal operativo
-fuera de Git, Compose, logs y CloudFormation. No se entregan secretos mediante
-parámetros de stack. Las Lambdas reciben solamente los ARN y tienen permiso de
-lectura sobre esos dos recursos.
+CDK crea `EnergySharkProd-Sagas-Database` y
+`EnergySharkProd-Sagas-Wallet` con valores iniciales no sensibles y política
+`RETAIN`. El prefijo cambia con el ambiente. Los valores reales se cargan
+después por un canal operativo fuera de Git, Compose, logs y CloudFormation. No
+se entregan secretos mediante parámetros de stack. Las Lambdas reciben
+solamente los ARN y tienen permiso de lectura sobre esos dos recursos.
 
 El secreto de base acepta `DATABASE_URL` apuntando a `<ip-privada>:15432`. El
 de Wallet acepta `baseUrl`, `apiKey`, `jwksUrl` e `issuer`; `baseUrl` conserva
@@ -79,3 +80,30 @@ Mantener ambos flags en `false` durante instalación y validación. Ante un fall
 desactivarlos, detener los proxies y retirar la asociación IAM nueva. No se
 elimina el stack mientras existan ejecuciones y no se recrea ni restaura la base
 de datos. Los secretos retenidos sobreviven a un eventual retiro del stack.
+
+### Recuperación del primer despliegue fallido
+
+Un stack en `ROLLBACK_COMPLETE` solo admite eliminación. Antes de reintentar:
+
+1. Publicar como versiones predeterminadas las policies corregidas
+   `EnergySharkSagasCfnExecution-us-east-2` y
+   `EnergySharkCdkBootstrapBoundary-us-east-2`.
+2. Guardar eventos, recursos y los 15 nombres físicos de log groups como
+   evidencia. `DELETE_SKIPPED` confirma la retención.
+3. Verificar por nombre exacto que los dos secretos no existan. Si alguno
+   existe, no eliminarlo: revisar su valor y adoptar/importar el recurso antes
+   de otro despliegue.
+4. Desactivar temporalmente termination protection y eliminar únicamente el
+   stack fallido. La boundary permite `DeleteStack` solo para
+   `EnergySharkProd-Sagas`.
+5. Confirmar `DELETE_COMPLETE`; los log groups retenidos quedarán huérfanos y
+   no deben borrarse hasta conservar su evidencia y completar un despliegue
+   nuevo exitoso.
+6. Repetir synth/diff y desplegar con la VPC
+   `vpc-0e7ee77fd065bea62`. Mantener los feature flags apagados.
+
+Los secretos con `DELETE_SKIPPED` pero sin identificador físico no prueban que
+exista un recurso administrable. Si la consulta por los dos nombres exactos no
+encuentra secretos, no requieren limpieza. Cualquier borrado de log groups
+retenidos es una acción manual posterior, usando la lista exacta del intento
+fallido.

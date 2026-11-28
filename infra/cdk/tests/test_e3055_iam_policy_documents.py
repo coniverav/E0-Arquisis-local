@@ -19,6 +19,9 @@ STACK_ARN = f"arn:aws:cloudformation:{REGION}:{ACCOUNT}:stack/EnergySharkProd-Sa
 BOOTSTRAP_STACK_ARN = (
     f"arn:aws:cloudformation:{REGION}:{ACCOUNT}:stack/CDKToolkit/*"
 )
+BOOTSTRAP_VERSION_PARAMETER_ARN = (
+    f"arn:aws:ssm:{REGION}:{ACCOUNT}:parameter/cdk-bootstrap/hnb659fds/version"
+)
 
 FILES = {
     "bootstrap": "EnergySharkCdkBootstrapOperator-us-east-2.json",
@@ -183,6 +186,28 @@ class IamPolicyDocumentsTest(unittest.TestCase):
         execution_actions = all_actions(self.policies["execution"])
         self.assertTrue(execution_actions <= boundary_actions)
         self.assertTrue(EXPECTED_PUBLISHING_ACTIONS <= boundary_actions)
+
+    def test_cfn_execution_reads_only_exact_bootstrap_version_parameter(self) -> None:
+        execution_ssm_statements = [
+            statement
+            for statement in self.policies["execution"]["Statement"]
+            if any(action.startswith("ssm:") for action in as_list(statement["Action"]))
+        ]
+        self.assertEqual(len(execution_ssm_statements), 1)
+        statement, = execution_ssm_statements
+        self.assertEqual(as_list(statement["Action"]), ["ssm:GetParameters"])
+        self.assertEqual(statement["Resource"], BOOTSTRAP_VERSION_PARAMETER_ARN)
+
+        boundary_matches = [
+            statement
+            for statement in self.policies["boundary"]["Statement"]
+            if statement["Resource"] == BOOTSTRAP_VERSION_PARAMETER_ARN
+        ]
+        self.assertEqual(len(boundary_matches), 1)
+        self.assertTrue(
+            {"ssm:GetParameter", "ssm:GetParameters"}
+            <= set(as_list(boundary_matches[0]["Action"]))
+        )
 
     def test_execution_policy_covers_services_in_synthesized_sagas_stack(self) -> None:
         _, stacks = build_app(

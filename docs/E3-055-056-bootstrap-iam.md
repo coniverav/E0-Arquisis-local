@@ -104,6 +104,9 @@ aws iam list-attached-role-policies \
 
 Los cinco roles deben mostrar la boundary y el rol `cfn-exec` debe tener
 `EnergySharkSagasCfnExecution-us-east-2`, nunca `AdministratorAccess`.
+Esa política permite `ssm:GetParameters` únicamente sobre
+`/cdk-bootstrap/hnb659fds/version`, que CloudFormation consulta al preparar el
+change set para validar la versión del bootstrap.
 
 ## Simulación de permisos
 

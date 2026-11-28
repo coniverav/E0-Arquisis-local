@@ -26,6 +26,11 @@
     },
     {
       "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": "arn:aws:ssm:us-east-2:521294961974:parameter/cdk-bootstrap/hnb659fds/version"
+    },
+    {
+      "Effect": "Allow",
       "Action": "iam:CreateRole",
       "Resource": "arn:aws:iam::521294961974:role/EnergySharkProd-Sagas-*",
       "Condition": {

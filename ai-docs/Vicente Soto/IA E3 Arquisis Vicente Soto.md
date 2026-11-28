@@ -243,3 +243,41 @@ Se añadió una prueba que revisa conjuntamente `.env.example`, ambos Compose, l
 La validación aprobó **160 pruebas de CDK/Lambda** y **29 pruebas de Connector**. Compose y el parser real de Squid fueron válidos, y `cdk synth` offline generó únicamente `EnergySharkProd-Sagas` en `us-east-2`. No se ejecutaron consultas, bootstrap ni despliegues AWS.
 
 La corrección quedó integrada mediante la PR Backend **#142**, commit `f935509`. El `.env` productivo no fue modificado y debe actualizarse manualmente antes del despliegue.
+
+---
+
+# Permisos de red para Lambdas en VPC
+
+### Prompt relevante
+
+> "Actualiza `develop` y corrige los permisos VPC de E3-055/E3-056. Incorpora en los roles de las 13 Lambdas los permisos EC2 requeridos para administrar interfaces de red, tomando como referencia `AWSLambdaVPCAccessExecutionRole`. Prefiere una política inline, no amplíes Step Functions ni Connector y comprueba los permisos en el template sintetizado."
+
+### Resumen de la respuesta y utilidad
+
+La revisión confirmó que las 13 funciones estaban conectadas a la VPC, pero sus roles no incluían las acciones necesarias para crear y administrar ENI. Aunque el stack sintetizaba correctamente, las Lambdas habrían fallado al inicializar su red durante un despliegue real.
+
+Se añadió a cada rol Lambda solamente el subconjunto EC2 requerido: creación, descripción y eliminación de interfaces, además de asignación y liberación de direcciones IP privadas. Estas acciones usan `Resource: "*"` porque AWS no permite acotarlas de forma útil durante el ciclo de creación de ENI. Los permisos de logs y secretos permanecieron separados, y no se modificaron los roles de Connector ni Step Functions.
+
+La prueba inspecciona el template sintetizado y verifica que existen 13 funciones y 13 roles distintos, que todos contienen exactamente las seis acciones de ENI y que ningún rol ajeno las recibe. La suite CDK/Lambda aprobó **161 pruebas** y `cdk synth` offline generó solamente `EnergySharkProd-Sagas` en `us-east-2`.
+
+La corrección quedó integrada mediante la PR Backend **#144**, commit `55d3939`. No se ejecutó bootstrap, deploy ni ninguna modificación sobre AWS o EC2.
+
+---
+
+# Políticas IAM para bootstrap y despliegue de sagas
+
+### Prompt relevante
+
+> "Prepara los documentos IAM reales necesarios para realizar el bootstrap y despliegue seguro de E3-055/E3-056. Genera políticas separadas para el operador de bootstrap, la ejecución de CloudFormation, la permissions boundary y el caller de despliegue. Verifica `iam:PassRole`, publicación ECR/S3, mínimo privilegio y documenta la creación desde consola y los comandos posteriores desde WSL, sin modificar AWS."
+
+### Resumen de la respuesta y utilidad
+
+Se revisaron el template de `EnergySharkProd-Sagas`, el bootstrap estándar de CDK y los assets producidos por la síntesis. El stack requiere publicación de la plantilla por S3 y de la imagen común de las Lambdas por ECR, por lo que ambos roles publisher son necesarios. También se confirmó que el despliegue crea 13 Lambdas, dos máquinas Standard, 16 roles, dos secretos y los security groups privados ya definidos.
+
+Se generaron cuatro políticas administradas por el cliente: una autorización temporal para crear exclusivamente `CDKToolkit`, una política de ejecución CloudFormation limitada a los recursos de `EnergySharkProd-Sagas`, una permissions boundary para los roles del bootstrap y una política permanente que permite a `grupo10` asumir únicamente los roles deploy, file-publishing e image-publishing. No se utilizó `AdministratorAccess`; `iam:PassRole` quedó limitado por ARN y servicio destino, y `ExistingInfrastructure` y `Monitoring` quedaron fuera del alcance.
+
+La guía explica el orden de creación desde la consola, el bootstrap en `us-east-2`, las comprobaciones posteriores, casos positivos y negativos para IAM Policy Simulator, `cdk diff`, deploy exclusivo y rollback. También registra las acciones que AWS obliga a declarar con `Resource: "*"` y el riesgo residual de `iam:PutRolePolicy`, cuyo contenido no puede restringirse mediante condiciones IAM.
+
+Las pruebas focalizadas aprobaron **9/9** casos y la suite CDK/Lambda completa aprobó **170/170**. La síntesis offline produjo únicamente `EnergySharkProd-Sagas`; el escaneo de secretos y `git diff --check` también fueron correctos. Access Analyzer, Policy Simulator, bootstrap y deploy quedaron expresamente como validaciones manuales posteriores y no se realizaron llamadas a AWS.
+
+Los documentos quedaron en la PR Backend **#145**, commit `831b4a8`, todavía dirigida a `develop` al momento de registrar esta entrada.

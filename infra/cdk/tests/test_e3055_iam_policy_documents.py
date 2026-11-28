@@ -91,6 +91,26 @@ class IamPolicyDocumentsTest(unittest.TestCase):
             self.assertNotIn('"Action": "*"', rendered, name)
             self.assertNotIn('"Action": ["*"]', rendered, name)
 
+    def test_s3_lifecycle_actions_use_official_iam_names(self) -> None:
+        actions = {
+            action
+            for policy in self.policies.values()
+            for action in all_actions(policy)
+        }
+        self.assertTrue(
+            {
+                "s3:GetLifecycleConfiguration",
+                "s3:PutLifecycleConfiguration",
+            }
+            <= all_actions(self.policies["bootstrap"])
+        )
+        self.assertTrue(
+            {
+                "s3:GetBucketLifecycleConfiguration",
+                "s3:PutBucketLifecycleConfiguration",
+            }.isdisjoint(actions)
+        )
+
     def test_deploy_caller_assumes_only_required_bootstrap_roles(self) -> None:
         caller = self.policies["caller"]
         statement, = caller["Statement"]
